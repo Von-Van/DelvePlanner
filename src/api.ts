@@ -1,12 +1,35 @@
 import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
 
+export const planStatuses = [
+  "planning",
+  "active",
+  "on_hold",
+  "complete",
+  "cancelled",
+] as const;
+export const planColors = [
+  "sage",
+  "clay",
+  "ochre",
+  "lake",
+  "plum",
+  "stone",
+] as const;
+export const milestoneStatuses = ["pending", "complete", "skipped"] as const;
+export const taskStatuses = ["todo", "in_progress", "blocked", "done"] as const;
+export const taskPriorities = ["low", "normal", "high", "critical"] as const;
+
+const daySchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+const timestampSchema = z.string().datetime({ offset: true });
+const revisionSchema = z.number().int().positive();
+
 export const eventSchema = z
   .object({
     id: z.string().uuid(),
     title: z.string(),
     notes: z.string(),
-    startAtUtc: z.string().datetime({ offset: true }),
+    startAtUtc: timestampSchema,
     timeZone: z.string(),
     durationMinutes: z.number().int().min(5).max(1440),
     reminderMinutesBefore: z.number().int().min(0).max(10_080).nullable(),
@@ -18,9 +41,71 @@ export const eventSchema = z
       "error",
       "expired",
     ]),
-    revision: z.number().int().positive(),
-    createdAt: z.string().datetime({ offset: true }),
-    updatedAt: z.string().datetime({ offset: true }),
+    planId: z.string().uuid().nullable(),
+    location: z.string(),
+    workstreamId: z.string().uuid().nullable(),
+    ownerId: z.string().uuid().nullable(),
+    revision: revisionSchema,
+    createdAt: timestampSchema,
+    updatedAt: timestampSchema,
+  })
+  .strict();
+
+export const personSchema = z
+  .object({
+    id: z.string().uuid(),
+    displayName: z.string(),
+    role: z.string(),
+    email: z.string().nullable(),
+    notes: z.string(),
+    revision: revisionSchema,
+    createdAt: timestampSchema,
+    updatedAt: timestampSchema,
+  })
+  .strict();
+
+export const workstreamSchema = z
+  .object({
+    id: z.string().uuid(),
+    planId: z.string().uuid(),
+    name: z.string(),
+    description: z.string(),
+    sortOrder: z.number().int().nonnegative(),
+    revision: revisionSchema,
+    createdAt: timestampSchema,
+    updatedAt: timestampSchema,
+  })
+  .strict();
+
+export const planSchema = z
+  .object({
+    id: z.string().uuid(),
+    title: z.string(),
+    description: z.string(),
+    status: z.enum(planStatuses),
+    startDate: daySchema.nullable(),
+    targetDate: daySchema.nullable(),
+    color: z.enum(planColors).nullable(),
+    archived: z.boolean(),
+    revision: revisionSchema,
+    createdAt: timestampSchema,
+    updatedAt: timestampSchema,
+  })
+  .strict();
+
+export const milestoneSchema = z
+  .object({
+    id: z.string().uuid(),
+    planId: z.string().uuid(),
+    title: z.string(),
+    description: z.string(),
+    targetDate: daySchema.nullable(),
+    status: z.enum(milestoneStatuses),
+    workstreamId: z.string().uuid().nullable(),
+    sortOrder: z.number().int().nonnegative(),
+    revision: revisionSchema,
+    createdAt: timestampSchema,
+    updatedAt: timestampSchema,
   })
   .strict();
 
@@ -35,36 +120,108 @@ export const reminderChangeSchema = z.discriminatedUnion("action", [
     .strict(),
 ]);
 
+export const linkChangeSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("unchanged") }).strict(),
+  z.object({ action: z.literal("clear") }).strict(),
+  z.object({ action: z.literal("set"), id: z.string().uuid() }).strict(),
+]);
+
 export const taskSchema = z
   .object({
     id: z.string().uuid(),
     title: z.string(),
-    day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-    completed: z.boolean(),
-    completedAt: z.string().datetime({ offset: true }).nullable(),
-    sortOrder: z.number().int(),
-    createdAt: z.string().datetime({ offset: true }),
-    updatedAt: z.string().datetime({ offset: true }),
+    description: z.string(),
+    planId: z.string().uuid().nullable(),
+    milestoneId: z.string().uuid().nullable(),
+    workstreamId: z.string().uuid().nullable(),
+    ownerId: z.string().uuid().nullable(),
+    dueDate: daySchema.nullable(),
+    scheduledDay: daySchema.nullable(),
+    status: z.enum(taskStatuses),
+    priority: z.enum(taskPriorities),
+    completedAt: timestampSchema.nullable(),
+    sortOrder: z.number().int().nonnegative(),
+    revision: revisionSchema,
+    createdAt: timestampSchema,
+    updatedAt: timestampSchema,
   })
   .strict();
+
+const planSummarySchema = z
+  .object({
+    plan: planSchema,
+    milestoneCount: z.number().int().nonnegative(),
+    taskCount: z.number().int().nonnegative(),
+    completedTaskCount: z.number().int().nonnegative(),
+    overdueTaskCount: z.number().int().nonnegative(),
+    nextMilestone: milestoneSchema.nullable(),
+  })
+  .strict();
+
+const planWorkspaceSchema = z
+  .object({
+    plan: planSchema,
+    workstreams: z.array(workstreamSchema),
+    milestones: z.array(milestoneSchema),
+    tasks: z.array(taskSchema),
+    events: z.array(eventSchema),
+  })
+  .strict();
+
+const personSummarySchema = z
+  .object({
+    person: personSchema,
+    openTaskCount: z.number().int().nonnegative(),
+    openTasks: z.array(taskSchema),
+    upcomingEvents: z.array(eventSchema),
+  })
+  .strict();
+
+const planDeletionSchema = z
+  .object({
+    deletedWorkstreams: z.number().int().nonnegative(),
+    deletedMilestones: z.number().int().nonnegative(),
+    deletedTasks: z.number().int().nonnegative(),
+    detachedTasks: z.number().int().nonnegative(),
+    detachedEvents: z.number().int().nonnegative(),
+  })
+  .strict();
+
+const recordReferenceSchema = z.union([
+  z.object({ id: z.string().uuid() }).strict(),
+  z.object({ newTitle: z.string().min(1).max(140) }).strict(),
+]);
+
+const dayChangeSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("unchanged") }).strict(),
+  z.object({ action: z.literal("clear") }).strict(),
+  z.object({ action: z.literal("set"), day: daySchema }).strict(),
+]);
+
+const titleSchema = z.string().min(1).max(140);
+const descriptionSchema = z.string().max(2000);
+const targetSchema = {
+  expectedRevision: revisionSchema,
+};
 
 export const operationSchema = z.discriminatedUnion("type", [
   z
     .object({
       type: z.literal("create_event"),
-      title: z.string().min(1).max(140),
+      title: titleSchema,
       notes: z.string(),
-      startAtUtc: z.string().datetime({ offset: true }),
+      startAtUtc: timestampSchema,
       timeZone: z.string(),
       durationMinutes: z.number().int().min(5).max(1440),
       reminderMinutesBefore: z.number().int().min(0).max(10_080).nullable(),
+      plan: recordReferenceSchema.nullable(),
     })
     .strict(),
   z
     .object({
       type: z.literal("update_event"),
       eventId: z.string().uuid(),
-      expectedRevision: z.number().int().positive(),
+      ...targetSchema,
       title: z.string().nullable(),
       notes: z.string().nullable(),
       durationMinutes: z.number().int().min(5).max(1440).nullable(),
@@ -75,23 +232,137 @@ export const operationSchema = z.discriminatedUnion("type", [
     .object({
       type: z.literal("delete_event"),
       eventId: z.string().uuid(),
-      expectedRevision: z.number().int().positive(),
+      ...targetSchema,
     })
     .strict(),
   z
     .object({
       type: z.literal("reschedule_event"),
       eventId: z.string().uuid(),
-      expectedRevision: z.number().int().positive(),
-      title: z.string().min(1).max(140).nullable(),
+      ...targetSchema,
+      title: titleSchema.nullable(),
       notes: z.string().max(800).nullable(),
-      startAtUtc: z.string().datetime({ offset: true }),
+      startAtUtc: timestampSchema,
       timeZone: z.string(),
       durationMinutes: z.number().int().min(5).max(1440).nullable(),
       reminderChange: reminderChangeSchema,
     })
     .strict(),
+  z
+    .object({
+      type: z.literal("set_event_plan"),
+      eventId: z.string().uuid(),
+      ...targetSchema,
+      plan: recordReferenceSchema.nullable(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("create_plan"),
+      title: titleSchema,
+      description: descriptionSchema,
+      status: z.enum(planStatuses),
+      startDate: daySchema.nullable(),
+      targetDate: daySchema.nullable(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("update_plan"),
+      planId: z.string().uuid(),
+      ...targetSchema,
+      title: titleSchema.nullable(),
+      description: descriptionSchema.nullable(),
+      status: z.enum(planStatuses).nullable(),
+      startDate: daySchema.nullable(),
+      targetDate: daySchema.nullable(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("create_milestone"),
+      plan: recordReferenceSchema,
+      title: titleSchema,
+      description: descriptionSchema,
+      targetDate: daySchema.nullable(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("update_milestone"),
+      milestoneId: z.string().uuid(),
+      ...targetSchema,
+      title: titleSchema.nullable(),
+      description: descriptionSchema.nullable(),
+      targetDate: daySchema.nullable(),
+      status: z.enum(milestoneStatuses).nullable(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("delete_milestone"),
+      milestoneId: z.string().uuid(),
+      ...targetSchema,
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("create_task"),
+      title: titleSchema,
+      description: descriptionSchema,
+      plan: recordReferenceSchema.nullable(),
+      milestone: recordReferenceSchema.nullable(),
+      scheduledDay: daySchema.nullable(),
+      dueDate: daySchema.nullable(),
+      status: z.enum(taskStatuses),
+      priority: z.enum(taskPriorities),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("update_task"),
+      taskId: z.string().uuid(),
+      ...targetSchema,
+      title: titleSchema.nullable(),
+      description: descriptionSchema.nullable(),
+      status: z.enum(taskStatuses).nullable(),
+      priority: z.enum(taskPriorities).nullable(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("schedule_task"),
+      taskId: z.string().uuid(),
+      ...targetSchema,
+      scheduledDay: dayChangeSchema,
+      dueDate: dayChangeSchema,
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("set_task_plan"),
+      taskId: z.string().uuid(),
+      ...targetSchema,
+      plan: recordReferenceSchema.nullable(),
+      milestone: recordReferenceSchema.nullable(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("delete_task"),
+      taskId: z.string().uuid(),
+      ...targetSchema,
+    })
+    .strict(),
 ]);
+
+const proposalReferenceSchema = z
+  .object({
+    id: z.string().uuid(),
+    kind: z.enum(["event", "plan", "milestone", "task"]),
+    title: z.string(),
+  })
+  .strict();
 
 export const plannerResponseSchema = z.discriminatedUnion("kind", [
   z
@@ -100,7 +371,8 @@ export const plannerResponseSchema = z.discriminatedUnion("kind", [
       proposalId: z.string().uuid(),
       summary: z.string().min(1).max(280),
       operations: z.array(operationSchema).min(1).max(12),
-      expiresAt: z.string().datetime({ offset: true }),
+      references: z.array(proposalReferenceSchema),
+      expiresAt: timestampSchema,
     })
     .strict(),
   z
@@ -111,8 +383,22 @@ export const plannerResponseSchema = z.discriminatedUnion("kind", [
     .strict(),
 ]);
 
+const appliedProposalSchema = z
+  .object({
+    eventIds: z.array(z.string().uuid()),
+    planIds: z.array(z.string().uuid()),
+    milestoneIds: z.array(z.string().uuid()),
+    taskIds: z.array(z.string().uuid()),
+  })
+  .strict();
+
 const agendaSchema = z
-  .object({ events: z.array(eventSchema), tasks: z.array(taskSchema) })
+  .object({
+    events: z.array(eventSchema),
+    tasks: z.array(taskSchema),
+    dueTasks: z.array(taskSchema),
+    milestones: z.array(milestoneSchema),
+  })
   .strict();
 const statusSchema = z
   .object({
@@ -191,6 +477,10 @@ const databaseStatusSchema = z
   .strict();
 const importPreviewSchema = z
   .object({
+    personCount: z.number().int().nonnegative(),
+    planCount: z.number().int().nonnegative(),
+    workstreamCount: z.number().int().nonnegative(),
+    milestoneCount: z.number().int().nonnegative(),
     eventCount: z.number().int().nonnegative(),
     taskCount: z.number().int().nonnegative(),
     earliestDay: z.string().nullable(),
@@ -205,9 +495,57 @@ const fileActionResultSchema = z
   .strict();
 
 export type ScheduleEvent = z.infer<typeof eventSchema>;
-export type DailyTask = z.infer<typeof taskSchema>;
+export type Plan = z.infer<typeof planSchema>;
+export type PlanStatus = Plan["status"];
+export type PlanColor = NonNullable<Plan["color"]>;
+export type PlanSummary = z.infer<typeof planSummarySchema>;
+export type PlanWorkspace = z.infer<typeof planWorkspaceSchema>;
+export type PlanDeletion = z.infer<typeof planDeletionSchema>;
+export type LinkChange = z.infer<typeof linkChangeSchema>;
+export type Person = z.infer<typeof personSchema>;
+export type PersonSummary = z.infer<typeof personSummarySchema>;
+export type Workstream = z.infer<typeof workstreamSchema>;
+export type Agenda = z.infer<typeof agendaSchema>;
+export type Milestone = z.infer<typeof milestoneSchema>;
+export type MilestoneStatus = Milestone["status"];
+export type Task = z.infer<typeof taskSchema>;
+export type TaskStatus = Task["status"];
+export type TaskPriority = Task["priority"];
 export type PlannerResponse = z.infer<typeof plannerResponseSchema>;
+export type Proposal = Extract<PlannerResponse, { kind: "proposal" }>;
+export type ProposalOperation = Proposal["operations"][number];
+export type ProposalReference = z.infer<typeof proposalReferenceSchema>;
+export type RecordReference = z.infer<typeof recordReferenceSchema>;
+export type DayChange = z.infer<typeof dayChangeSchema>;
+export type AppliedProposal = z.infer<typeof appliedProposalSchema>;
 export type ReminderChange = z.infer<typeof reminderChangeSchema>;
+
+export type PlanInput = Pick<
+  Plan,
+  "title" | "description" | "status" | "startDate" | "targetDate" | "color"
+>;
+export type MilestoneInput = Pick<
+  Milestone,
+  "title" | "description" | "targetDate" | "status" | "workstreamId"
+>;
+export type TaskInput = Pick<
+  Task,
+  | "title"
+  | "description"
+  | "planId"
+  | "milestoneId"
+  | "workstreamId"
+  | "ownerId"
+  | "dueDate"
+  | "scheduledDay"
+  | "status"
+  | "priority"
+>;
+export type PersonInput = Pick<
+  Person,
+  "displayName" | "role" | "email" | "notes"
+>;
+export type WorkstreamInput = Pick<Workstream, "name" | "description">;
 export type OllamaStatus = z.infer<typeof statusSchema>;
 export type CommandErrorPayload = z.infer<typeof commandErrorSchema>;
 export type LocalDateTimeResolution = z.infer<
@@ -230,6 +568,10 @@ export class DayPlanError extends Error {
   }
 }
 
+export function messageFor(cause: unknown) {
+  return cause instanceof Error ? cause.message : String(cause);
+}
+
 async function invokeCommand<T>(name: string, args?: Record<string, unknown>) {
   try {
     return await invoke<T>(name, args);
@@ -246,6 +588,79 @@ export const api = {
       await invokeCommand("list_agenda", { day, timeZone }),
     );
   },
+  async listWeek(startDay: string, timeZone: string) {
+    return agendaSchema.parse(
+      await invokeCommand("list_week", { startDay, timeZone }),
+    );
+  },
+  async listPeople() {
+    return z
+      .array(personSummarySchema)
+      .parse(await invokeCommand("list_people"));
+  },
+  async createPerson(input: PersonInput) {
+    return personSchema.parse(await invokeCommand("create_person", { input }));
+  },
+  async updatePerson(input: PersonInput & { id: string; revision: number }) {
+    return personSchema.parse(await invokeCommand("update_person", { input }));
+  },
+  async deletePerson(id: string, revision: number) {
+    await invokeCommand("delete_person", { id, revision });
+  },
+  async createWorkstream(input: WorkstreamInput & { planId: string }) {
+    return workstreamSchema.parse(
+      await invokeCommand("create_workstream", { input }),
+    );
+  },
+  async updateWorkstream(
+    input: WorkstreamInput & { id: string; revision: number },
+  ) {
+    return workstreamSchema.parse(
+      await invokeCommand("update_workstream", { input }),
+    );
+  },
+  async deleteWorkstream(id: string, revision: number) {
+    await invokeCommand("delete_workstream", { id, revision });
+  },
+  /** Plans with progress; overdue counts are relative to `today`, a local day. */
+  async listPlans(today: string) {
+    return z
+      .array(planSummarySchema)
+      .parse(await invokeCommand("list_plans", { today }));
+  },
+  async getPlanWorkspace(id: string) {
+    return planWorkspaceSchema.parse(
+      await invokeCommand("get_plan_workspace", { id }),
+    );
+  },
+  async createPlan(input: PlanInput) {
+    return planSchema.parse(await invokeCommand("create_plan", { input }));
+  },
+  async updatePlan(
+    input: PlanInput & { id: string; revision: number; archived: boolean },
+  ) {
+    return planSchema.parse(await invokeCommand("update_plan", { input }));
+  },
+  async deletePlan(id: string, revision: number) {
+    return planDeletionSchema.parse(
+      await invokeCommand("delete_plan", { id, revision }),
+    );
+  },
+  async createMilestone(input: MilestoneInput & { planId: string }) {
+    return milestoneSchema.parse(
+      await invokeCommand("create_milestone", { input }),
+    );
+  },
+  async updateMilestone(
+    input: MilestoneInput & { id: string; revision: number },
+  ) {
+    return milestoneSchema.parse(
+      await invokeCommand("update_milestone", { input }),
+    );
+  },
+  async deleteMilestone(id: string, revision: number) {
+    await invokeCommand("delete_milestone", { id, revision });
+  },
   async createEvent(input: {
     title: string;
     notes: string;
@@ -253,6 +668,10 @@ export const api = {
     timeZone: string;
     durationMinutes: number;
     reminderMinutesBefore: number | null;
+    planId: string | null;
+    location: string;
+    workstreamId: string | null;
+    ownerId: string | null;
   }) {
     return eventSchema.parse(await invokeCommand("create_event", { input }));
   },
@@ -264,7 +683,11 @@ export const api = {
     startAtUtc?: string;
     timeZone?: string;
     durationMinutes?: number;
+    location?: string;
     reminderChange?: ReminderChange;
+    planChange?: LinkChange;
+    workstreamChange?: LinkChange;
+    ownerChange?: LinkChange;
   }) {
     return eventSchema.parse(await invokeCommand("update_event", { input }));
   },
@@ -283,14 +706,14 @@ export const api = {
       await invokeCommand("reschedule_event", { input }),
     );
   },
-  async createTask(input: { title: string; day: string }) {
+  async createTask(input: TaskInput) {
     return taskSchema.parse(await invokeCommand("create_task", { input }));
   },
-  async updateTask(input: { id: string; title?: string; completed?: boolean }) {
+  async updateTask(input: TaskInput & { id: string; revision: number }) {
     return taskSchema.parse(await invokeCommand("update_task", { input }));
   },
-  async deleteTask(id: string) {
-    await invokeCommand("delete_task", { id });
+  async deleteTask(id: string, revision: number) {
+    await invokeCommand("delete_task", { id, revision });
   },
   async status() {
     return statusSchema.parse(await invokeCommand("current_ollama_status"));
@@ -307,19 +730,25 @@ export const api = {
   async removeModel() {
     await invokeCommand("remove_ollama_model");
   },
-  async propose(command: string, day: string, timeZone: string) {
+  async propose(
+    command: string,
+    day: string,
+    timeZone: string,
+    activePlanId: string | null = null,
+  ) {
     return plannerResponseSchema.parse(
       await invokeCommand("propose_schedule_changes", {
         command,
         day,
         timeZone,
+        activePlanId,
       }),
     );
   },
   async apply(proposalId: string) {
-    return z
-      .array(eventSchema)
-      .parse(await invokeCommand("apply_schedule_changes", { proposalId }));
+    return appliedProposalSchema.parse(
+      await invokeCommand("apply_schedule_changes", { proposalId }),
+    );
   },
   async discardProposal(proposalId: string) {
     await invokeCommand("discard_schedule_proposal", { proposalId });

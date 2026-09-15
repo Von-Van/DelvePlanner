@@ -10,7 +10,7 @@ pub enum AppError {
     Validation(String),
     #[error("The requested record no longer exists.")]
     NotFound,
-    #[error("This schedule item changed after the proposal was created. Review the agenda and try again.")]
+    #[error("This item changed after it was loaded or proposed. Review the latest version and try again.")]
     Conflict,
     #[error("DayPlan's local AI runtime is unavailable. Restart it from Settings and try again.")]
     OllamaUnavailable,

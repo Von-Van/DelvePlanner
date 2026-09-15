@@ -4,13 +4,19 @@ pub mod error;
 pub mod model;
 pub mod runtime;
 
-use agent::{OllamaStatus, PlannerAgent};
-use db::{backups_for_path, restore_backup, DueReminder, PlannerDatabase, CURRENT_SCHEMA_VERSION};
+use agent::{OllamaStatus, PlannerAgent, PlannerRequest};
+use db::{
+    backups_for_path, parse_export_bundle, restore_backup, CandidateRequest, DueReminder,
+    PlannerDatabase, CURRENT_SCHEMA_VERSION,
+};
 use error::{AppError, CommandError};
 use model::{
-    CreateEventInput, CreateTaskInput, DailyTask, DatabaseStatus, ExportBundle, ImportPreview,
-    LocalDateTimeInput, LocalDateTimeResolution, PlannerResponse, RescheduleEventInput,
-    ScheduleEvent, UpdateEventInput, UpdateTaskInput,
+    Agenda, AppliedProposal, CreateEventInput, CreateMilestoneInput, CreatePersonInput,
+    CreatePlanInput, CreateTaskInput, CreateWorkstreamInput, DatabaseStatus, ExportBundle,
+    ImportPreview, LocalDateTimeInput, LocalDateTimeResolution, Milestone, Person, PersonSummary,
+    Plan, PlanDeletion, PlanSummary, PlanWorkspace, PlannerResponse, RescheduleEventInput,
+    ScheduleEvent, Task, UpdateEventInput, UpdateMilestoneInput, UpdatePersonInput,
+    UpdatePlanInput, UpdateTaskInput, UpdateWorkstreamInput, Workstream,
 };
 use runtime::OllamaRuntimeManager;
 use serde::Serialize;
@@ -62,13 +68,6 @@ impl DatabaseRuntime {
             },
         }
     }
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct Agenda {
-    events: Vec<ScheduleEvent>,
-    tasks: Vec<DailyTask>,
 }
 
 #[derive(Serialize)]
@@ -133,12 +132,130 @@ fn list_agenda(
     day: String,
     time_zone: String,
 ) -> Result<Agenda, CommandError> {
+    with_database(&state, |database| database.agenda(&day, 1, &time_zone))
+}
+
+#[tauri::command]
+fn list_week(
+    state: State<'_, AppState>,
+    start_day: String,
+    time_zone: String,
+) -> Result<Agenda, CommandError> {
     with_database(&state, |database| {
-        Ok(Agenda {
-            events: database.events_for_day(&day, &time_zone)?,
-            tasks: database.tasks_for_day(&day)?,
-        })
+        database.agenda(&start_day, 7, &time_zone)
     })
+}
+
+#[tauri::command]
+fn list_people(state: State<'_, AppState>) -> Result<Vec<PersonSummary>, CommandError> {
+    with_database(&state, |database| database.list_people())
+}
+
+#[tauri::command]
+fn create_person(
+    state: State<'_, AppState>,
+    input: CreatePersonInput,
+) -> Result<Person, CommandError> {
+    with_database(&state, |database| database.create_person(input))
+}
+
+#[tauri::command]
+fn update_person(
+    state: State<'_, AppState>,
+    input: UpdatePersonInput,
+) -> Result<Person, CommandError> {
+    with_database(&state, |database| database.update_person(input))
+}
+
+#[tauri::command]
+fn delete_person(
+    state: State<'_, AppState>,
+    id: String,
+    revision: i64,
+) -> Result<(), CommandError> {
+    with_database(&state, |database| database.delete_person(&id, revision))
+}
+
+#[tauri::command]
+fn create_workstream(
+    state: State<'_, AppState>,
+    input: CreateWorkstreamInput,
+) -> Result<Workstream, CommandError> {
+    with_database(&state, |database| database.create_workstream(input))
+}
+
+#[tauri::command]
+fn update_workstream(
+    state: State<'_, AppState>,
+    input: UpdateWorkstreamInput,
+) -> Result<Workstream, CommandError> {
+    with_database(&state, |database| database.update_workstream(input))
+}
+
+#[tauri::command]
+fn delete_workstream(
+    state: State<'_, AppState>,
+    id: String,
+    revision: i64,
+) -> Result<(), CommandError> {
+    with_database(&state, |database| database.delete_workstream(&id, revision))
+}
+
+#[tauri::command]
+fn list_plans(state: State<'_, AppState>, today: String) -> Result<Vec<PlanSummary>, CommandError> {
+    with_database(&state, |database| database.list_plans(&today))
+}
+
+#[tauri::command]
+fn get_plan_workspace(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<PlanWorkspace, CommandError> {
+    with_database(&state, |database| database.plan_workspace(&id))
+}
+
+#[tauri::command]
+fn create_plan(state: State<'_, AppState>, input: CreatePlanInput) -> Result<Plan, CommandError> {
+    with_database(&state, |database| database.create_plan(input))
+}
+
+#[tauri::command]
+fn update_plan(state: State<'_, AppState>, input: UpdatePlanInput) -> Result<Plan, CommandError> {
+    with_database(&state, |database| database.update_plan(input))
+}
+
+#[tauri::command]
+fn delete_plan(
+    state: State<'_, AppState>,
+    id: String,
+    revision: i64,
+) -> Result<PlanDeletion, CommandError> {
+    with_database(&state, |database| database.delete_plan(&id, revision))
+}
+
+#[tauri::command]
+fn create_milestone(
+    state: State<'_, AppState>,
+    input: CreateMilestoneInput,
+) -> Result<Milestone, CommandError> {
+    with_database(&state, |database| database.create_milestone(input))
+}
+
+#[tauri::command]
+fn update_milestone(
+    state: State<'_, AppState>,
+    input: UpdateMilestoneInput,
+) -> Result<Milestone, CommandError> {
+    with_database(&state, |database| database.update_milestone(input))
+}
+
+#[tauri::command]
+fn delete_milestone(
+    state: State<'_, AppState>,
+    id: String,
+    revision: i64,
+) -> Result<(), CommandError> {
+    with_database(&state, |database| database.delete_milestone(&id, revision))
 }
 
 #[tauri::command]
@@ -191,24 +308,18 @@ fn reschedule_event(
 }
 
 #[tauri::command]
-fn create_task(
-    state: State<'_, AppState>,
-    input: CreateTaskInput,
-) -> Result<DailyTask, CommandError> {
+fn create_task(state: State<'_, AppState>, input: CreateTaskInput) -> Result<Task, CommandError> {
     with_database(&state, |database| database.create_task(input))
 }
 
 #[tauri::command]
-fn update_task(
-    state: State<'_, AppState>,
-    input: UpdateTaskInput,
-) -> Result<DailyTask, CommandError> {
+fn update_task(state: State<'_, AppState>, input: UpdateTaskInput) -> Result<Task, CommandError> {
     with_database(&state, |database| database.update_task(input))
 }
 
 #[tauri::command]
-fn delete_task(state: State<'_, AppState>, id: String) -> Result<(), CommandError> {
-    with_database(&state, |database| database.delete_task(&id))
+fn delete_task(state: State<'_, AppState>, id: String, revision: i64) -> Result<(), CommandError> {
+    with_database(&state, |database| database.delete_task(&id, revision))
 }
 
 #[tauri::command]
@@ -289,9 +400,7 @@ async fn select_planner_import(
     let contents = fs::read_to_string(path)
         .map_err(AppError::from)
         .map_err(CommandError::from)?;
-    let bundle: ExportBundle = serde_json::from_str(&contents)
-        .map_err(AppError::from)
-        .map_err(CommandError::from)?;
+    let bundle = parse_export_bundle(&contents).map_err(CommandError::from)?;
     let preview = PlannerDatabase::preview_import(&bundle).map_err(CommandError::from)?;
     let token = Uuid::new_v4().to_string();
     state
@@ -450,7 +559,7 @@ async fn export_diagnostic_bundle(
         ollama_phase: model.phase,
         model_license: model.model_license,
         model_storage_bytes: model.storage_bytes,
-        privacy_note: "Commands, event/task titles, notes, proposal contents, and database paths are excluded.",
+        privacy_note: "Commands, plan/milestone/event/task titles, people, workstreams, notes, descriptions, locations, proposal contents, and database paths are excluded.",
     };
     let app_for_dialog = app.clone();
     let path = tauri::async_runtime::spawn_blocking(move || {
@@ -550,19 +659,32 @@ async fn propose_schedule_changes(
     command: String,
     day: String,
     time_zone: String,
+    active_plan_id: Option<String>,
 ) -> Result<PlannerResponse, CommandError> {
     state
         .ollama
         .ensure_started(&state.agent)
         .await
         .map_err(CommandError::from)?;
-    let referenced_ids = state.agent.referenced_event_ids();
+    let referenced_ids = state.agent.referenced_ids();
     let candidates = with_database(&state, |database| {
-        database.candidate_events(&command, &day, &time_zone, &referenced_ids, 60)
+        database.planner_candidates(&CandidateRequest {
+            command: &command,
+            selected_day: &day,
+            time_zone: &time_zone,
+            referenced_ids: &referenced_ids,
+            active_plan_id: active_plan_id.as_deref(),
+        })
     })?;
     state
         .agent
-        .propose(&command, &day, &time_zone, &candidates)
+        .propose(PlannerRequest {
+            command: &command,
+            selected_day: &day,
+            time_zone: &time_zone,
+            active_plan_id: active_plan_id.as_deref(),
+            candidates: &candidates,
+        })
         .await
         .map_err(CommandError::from)
 }
@@ -571,16 +693,15 @@ async fn propose_schedule_changes(
 fn apply_schedule_changes(
     state: State<'_, AppState>,
     proposal_id: String,
-) -> Result<Vec<ScheduleEvent>, CommandError> {
+) -> Result<AppliedProposal, CommandError> {
     let proposal = state
         .agent
         .claim_pending(&proposal_id)
         .map_err(CommandError::from)?;
     let result = with_database(&state, |database| database.apply_proposal(&proposal));
-    let applied = result.is_ok();
     state
         .agent
-        .finish_pending(&proposal_id, applied)
+        .finish_pending(&proposal_id, result.as_ref().ok())
         .map_err(CommandError::from)?;
     result
 }
@@ -748,7 +869,23 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             list_agenda,
+            list_week,
             database_status,
+            list_people,
+            create_person,
+            update_person,
+            delete_person,
+            create_workstream,
+            update_workstream,
+            delete_workstream,
+            list_plans,
+            get_plan_workspace,
+            create_plan,
+            update_plan,
+            delete_plan,
+            create_milestone,
+            update_milestone,
+            delete_milestone,
             create_event,
             update_event,
             delete_event,

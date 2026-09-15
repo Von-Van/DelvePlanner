@@ -10,6 +10,8 @@ permissions:
 
 jobs:
   validate-tag:
+    # Until the updater key is configured, Unsigned Pre-release handles tags instead.
+    if: vars.TAURI_UPDATER_PUBKEY != ''
     runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.version.outputs.version }}

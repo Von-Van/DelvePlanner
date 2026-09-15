@@ -1,21 +1,23 @@
 # DayPlan — Local AI Desktop Planner
 
-DayPlan is a local-first day planner for macOS and Windows. It combines a timed agenda, daily tasks, per-event reminders, recovery tools, and a natural-language planner that turns messy requests into reviewed schedule changes.
+DayPlan is a local-first planner for macOS and Windows that turns plans into days. It connects long-range plans—launches, charity streams, trips, research projects—to what actually has to happen this week and today. It combines plans with milestones, workstreams, owners, and tasks; a Today agenda and a Week view; a run of show for event days; per-event reminders; recovery tools; and a natural-language planner that turns messy requests into reviewed changes.
 
-> “Move gym to 6pm tomorrow, add dentist Thursday at 2pm, push everything after lunch back 30 minutes.”
+> “Move gym to 6pm tomorrow, mark Book venue done, and add a Rent cameras task to Charity Week due October 9.”
 
 The important engineering idea is the permission boundary, not the chat box: the model never receives a database handle and cannot write planner data. It may only return one schema-constrained proposal or one clarification question. DayPlan validates the response, presents a readable preview, and mutates SQLite only after explicit user confirmation.
 
 ## What the app includes
 
-| Area            | What it does                                                              | Where it runs                              |
-| --------------- | ------------------------------------------------------------------------- | ------------------------------------------ |
-| Day agenda      | Displays timed events, overlapping events, and daily tasks                | React renderer + Rust repository           |
-| Manual planning | Creates, edits, reschedules, and deletes events with revision checks      | Typed Tauri commands + Rust transactions   |
-| AI planner      | Converts natural language into a preview of permitted schedule operations | Managed local Ollama + Rust `PlannerAgent` |
-| Reminders       | Stores one optional reminder per event and retries interrupted delivery   | SQLite outbox + native notification plugin |
-| Data safety     | Migrates, checks, backs up, exports, imports, and restores local data     | Rust + SQLite                              |
-| Distribution    | Produces signed macOS and Windows installers and user-approved updates    | GitHub Actions + Tauri updater             |
+| Area            | What it does                                                                          | Where it runs                              |
+| --------------- | ------------------------------------------------------------------------------------- | ------------------------------------------ |
+| Today and Week  | Timed events, overlapping events, scheduled and due tasks, milestones, plan filter    | React renderer + Rust repository           |
+| Plans           | Overview with attention signals, timeline, filtered tasks, schedule, run of show      | React renderer + Rust repository           |
+| Teams           | Workstreams inside a plan and people who own tasks and events                         | React renderer + Rust repository           |
+| Manual planning | Creates, edits, and deletes plans, milestones, tasks, and events with revision checks | Typed Tauri commands + Rust transactions   |
+| AI planner      | Converts natural language into a preview of permitted event, plan, and task changes   | Managed local Ollama + Rust `PlannerAgent` |
+| Reminders       | Stores one optional reminder per event and retries interrupted delivery               | SQLite outbox + native notification plugin |
+| Data safety     | Migrates, checks, backs up, exports, imports, and restores local data                 | Rust + SQLite                              |
+| Distribution    | Produces macOS and Windows installers; signed builds add user-approved updates        | GitHub Actions + Tauri updater             |
 
 The desktop edition is single-device and requires no account, API key, hosted backend, or cloud AI. The earlier SwiftUI / SwiftData / WidgetKit app remains available on the [`ios-swiftui`](https://github.com/Von-Van/DayPlan/tree/ios-swiftui) branch; its data is intentionally separate.
 
@@ -26,7 +28,9 @@ The renderer is intentionally the least-trusted application layer. It can reques
 ```mermaid
 flowchart TB
   subgraph presentation["1. Presentation layer — React + TypeScript"]
-    Agenda["Agenda and tasks"]
+    Agenda["Today and Week agendas"]
+    Plans["Plans: overview, timeline, tasks, schedule, run of show"]
+    People["People and workstreams"]
     PlannerUI["Natural-language input and proposal preview"]
     Settings["Onboarding, settings, import/export, recovery"]
     Boundary["Zod response validation"]
@@ -57,6 +61,8 @@ flowchart TB
   end
 
   Agenda --> Commands
+  Plans --> Commands
+  People --> Commands
   PlannerUI --> Boundary --> Commands
   Settings --> Commands
   Commands --> Models
@@ -84,21 +90,107 @@ flowchart TB
 
 ### Repository map
 
-| Path                                                   | Responsibility                                                                               |
-| ------------------------------------------------------ | -------------------------------------------------------------------------------------------- |
-| [`src/`](src/)                                         | React views, interaction state, accessibility, styling, and strict frontend schemas          |
-| [`src/api.ts`](src/api.ts)                             | Typed renderer-facing command client and Zod response boundary                               |
-| [`src-tauri/src/lib.rs`](src-tauri/src/lib.rs)         | Tauri application composition, IPC commands, native plugins, tray, and reminder worker       |
-| [`src-tauri/src/model.rs`](src-tauri/src/model.rs)     | Domain records, AI mutation union, proposal types, and shared limits                         |
-| [`src-tauri/src/db.rs`](src-tauri/src/db.rs)           | SQLite repository, transactions, migrations, backups, imports, and reminder outbox           |
-| [`src-tauri/src/agent.rs`](src-tauri/src/agent.rs)     | Prompt/context construction, tool schema, ambiguity rules, validation, and session proposals |
-| [`src-tauri/src/runtime.rs`](src-tauri/src/runtime.rs) | Bundled Ollama process, private endpoint, model download, diagnostics, and lifecycle         |
-| [`eval/`](eval/)                                       | Hand-labeled commands and machine-readable evaluation results                                |
+| Path                                                             | Responsibility                                                                            |
+| ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| [`src/`](src/)                                                   | React views, interaction state, accessibility, styling, and strict frontend schemas       |
+| [`src/api.ts`](src/api.ts)                                       | Typed renderer-facing command client and Zod response boundary                            |
+| [`src/planning.ts`](src/planning.ts)                             | Pure plan signals: attention, next milestone, upcoming items, timeline, run of show, week |
+| [`src/proposals.ts`](src/proposals.ts)                           | Readable previews of AI proposal operations                                               |
+| [`src-tauri/src/lib.rs`](src-tauri/src/lib.rs)                   | Tauri application composition, IPC commands, native plugins, tray, and reminder worker    |
+| [`src-tauri/src/model.rs`](src-tauri/src/model.rs)               | Domain records, AI mutation union, proposal types, and shared limits                      |
+| [`src-tauri/src/db.rs`](src-tauri/src/db.rs)                     | SQLite repository, transactions, migrations, backups, imports, and reminder outbox        |
+| [`src-tauri/src/db/planning.rs`](src-tauri/src/db/planning.rs)   | Plan, milestone, and task repository: validation, revisions, archive and delete rules     |
+| [`src-tauri/src/db/team.rs`](src-tauri/src/db/team.rs)           | People and workstreams: link validation and detach-on-delete rules                        |
+| [`src-tauri/src/db/proposals.rs`](src-tauri/src/db/proposals.rs) | AI candidate ranking and atomic, revision-checked proposal application                    |
+| [`src-tauri/src/agent.rs`](src-tauri/src/agent.rs)               | Planner session, pending proposals, and the local model request                           |
+| [`src-tauri/src/agent/`](src-tauri/src/agent/)                   | Prompts and output grammar, deterministic pre-checks, and reply resolution                |
+| [`src-tauri/src/runtime.rs`](src-tauri/src/runtime.rs)           | Bundled Ollama process, private endpoint, model download, diagnostics, and lifecycle      |
+| [`eval/`](eval/)                                                 | Hand-labeled commands and machine-readable evaluation results                             |
 
 ## Core data schema
 
 ```mermaid
 erDiagram
+  PLAN ||--o{ MILESTONE : "checkpoints"
+  PLAN ||--o{ WORKSTREAM : "streams of work"
+  PLAN |o--o{ TASK : "optional membership"
+  PLAN |o--o{ SCHEDULE_EVENT : "optional membership"
+  MILESTONE |o--o{ TASK : "optional"
+  WORKSTREAM |o--o{ TASK : "optional, same plan"
+  WORKSTREAM |o--o{ MILESTONE : "optional, same plan"
+  WORKSTREAM |o--o{ SCHEDULE_EVENT : "optional, same plan"
+  PERSON |o--o{ TASK : "owns"
+  PERSON |o--o{ SCHEDULE_EVENT : "owns"
+
+  PLAN {
+    uuid id PK
+    string title
+    string description
+    string status "planning | active | on_hold | complete | cancelled"
+    date start_date "nullable"
+    date target_date "nullable"
+    string color "nullable, fixed palette"
+    boolean archived
+    integer revision
+    datetime created_at
+    datetime updated_at
+  }
+
+  WORKSTREAM {
+    uuid id PK
+    uuid plan_id FK
+    string name "unique per plan, case-insensitive"
+    string description
+    integer sort_order
+    integer revision
+    datetime created_at
+    datetime updated_at
+  }
+
+  PERSON {
+    uuid id PK
+    string display_name
+    string role
+    string email "nullable"
+    string notes
+    integer revision
+    datetime created_at
+    datetime updated_at
+  }
+
+  MILESTONE {
+    uuid id PK
+    uuid plan_id FK
+    uuid workstream_id FK "nullable"
+    string title
+    string description
+    date target_date "nullable"
+    string status "pending | complete | skipped"
+    integer sort_order
+    integer revision
+    datetime created_at
+    datetime updated_at
+  }
+
+  TASK {
+    uuid id PK
+    string title
+    string description
+    uuid plan_id FK "nullable"
+    uuid milestone_id FK "nullable, same plan"
+    uuid workstream_id FK "nullable, same plan"
+    uuid owner_id FK "nullable"
+    date due_date "nullable"
+    date scheduled_day "nullable"
+    string status "todo | in_progress | blocked | done"
+    string priority "low | normal | high | critical"
+    datetime completed_at "set only when done"
+    integer sort_order
+    integer revision
+    datetime created_at
+    datetime updated_at
+  }
+
   SCHEDULE_EVENT {
     uuid id PK
     string title
@@ -110,27 +202,25 @@ erDiagram
     string reminder_status
     uuid notification_id "nullable, unique"
     string reminder_last_error "nullable"
+    uuid plan_id FK "nullable"
+    uuid workstream_id FK "nullable, same plan"
+    uuid owner_id FK "nullable"
+    string location
     integer revision
     datetime created_at
     datetime updated_at
   }
-
-  DAILY_TASK {
-    uuid id PK
-    string title
-    date day
-    boolean completed
-    datetime completed_at "nullable"
-    integer sort_order
-    datetime created_at
-    datetime updated_at
-  }
-
 ```
 
-`ScheduleEvent` is revisioned so manual edits and AI proposals can detect stale data. Times are persisted in UTC alongside their IANA time zone. Reminder offset, status, internal notification ID, and retry error are columns on the event itself; together they form the transactional reminder outbox that startup reconciliation processes. `DailyTask` is intentionally separate from timed events, and task reminders are outside the current scope.
+Every record is revisioned so manual edits and AI proposals can detect stale data. Times are persisted in UTC alongside their IANA time zone. Reminder offset, status, internal notification ID, and retry error are columns on the event itself; together they form the transactional reminder outbox that startup reconciliation processes.
 
-AI proposals are not database records. They live only in memory, expire after ten minutes, and contain up to twelve operations from the closed `create_event`, `update_event`, `delete_event`, and `reschedule_event` union.
+A `Plan` is a long-range container and may exist without dates. Items without a plan remain fully valid, so DayPlan still works as a plain day planner. A `Milestone` is a checkpoint rather than work; only user decisions (`pending`, `complete`, `skipped`) are stored, and "upcoming" or "overdue" are derived from dates. A `Task` is work that needs doing, kept separate from `ScheduleEvent` (a block of time). A task no longer needs a calendar day: it can be scheduled onto a day, due by a day, or live only inside a plan, but it must have at least one of those so it always appears somewhere. A task's milestone and workstream must belong to the task's plan. The Today view lists tasks scheduled for the selected day plus tasks due that day and milestones on that day; the Week view shows the same for seven days. Both can be filtered by plan. Task reminders remain outside the current scope.
+
+A `Workstream` is a named stream of work inside one plan, such as Production or Sponsors, with progress derived from its tasks. A `Person` is a local label for whoever owns a task or event—never an account. Deleting a workstream or person keeps their work and clears the link, advancing revisions. A plan's run of show lists one day's events in order with owners, locations, live/next status, gaps, and overlaps.
+
+Archiving is the normal way to put a plan away; it hides the plan from navigation and keeps everything. A plan must be archived before it can be deleted permanently. Deletion runs in one transaction and is previewed in the confirmation: the plan's workstreams, milestones, and undated, unscheduled tasks are deleted, while its dated tasks and all of its events stay on the calendar without a plan or workstream (their revisions advance). Owners stay assigned. Deleting a milestone keeps its tasks in the plan.
+
+AI proposals are not database records. They live only in memory, expire after ten minutes, and contain up to twelve operations from a closed union of event, plan, milestone, and task operations (listed below).
 
 ## How an AI command moves through the system
 
@@ -142,53 +232,67 @@ sequenceDiagram
   participant DB as SQLite repository
   participant LLM as Managed qwen3:8b
 
-  User->>UI: Enter a messy schedule request
-  UI->>Agent: propose_schedule_changes(command, day, timeZone)
-  Agent->>DB: Rank relevant event candidates
-  DB-->>Agent: At most 60 events, without notes
-  Agent->>LLM: Date/time context, candidates, four session turns, one tool schema
-  LLM-->>Agent: Exactly one proposal or clarification
-  Agent->>Agent: Deserialize and validate fields, references, limits, and ambiguity
-  Agent-->>UI: Clarification or server-owned proposalId + preview
+  User->>UI: Enter a messy request (from Today or inside a plan)
+  UI->>Agent: propose_schedule_changes(command, day, timeZone, activePlanId)
+  Agent->>DB: Rank candidate events, plans, milestones, and tasks
+  DB-->>Agent: Relevant records only
+  Agent->>Agent: Deterministic pre-checks (unsupported, ambiguous, missing targets)
+  Agent->>LLM: Scoped prompt, local-time context, session turns, output grammar
+  LLM-->>Agent: One JSON proposal or clarification, shaped by the grammar
+  Agent->>Agent: Convert local times to UTC, drop no-ops, resolve references, recheck limits
+  Agent-->>UI: Clarification or server-owned proposalId + titled preview
   User->>UI: Apply proposal
   UI->>Agent: apply_schedule_changes(proposalId)
-  Agent->>DB: Recheck expiry, IDs, and revisions, then apply one transaction
-  DB-->>UI: Updated events or typed failure with no partial mutation
+  Agent->>DB: Recheck expiry and revisions, then apply one transaction
+  DB-->>UI: Changed record IDs or a typed failure with no partial mutation
 ```
 
 ## AI permission boundary
 
-The renderer cannot submit invented mutations. `PlannerAgent` keeps one pending proposal per in-memory session for ten minutes. Applying accepts only its opaque `proposalId`; the Rust layer retrieves the validated operations, rechecks event IDs and revisions, and consumes the proposal after one attempt. Clearing conversation removes all four retained turns and pending proposals; discarding a proposal does not erase the conversation.
+The renderer cannot submit invented mutations. `PlannerAgent` keeps one pending proposal per in-memory session for ten minutes. Applying accepts only its opaque `proposalId`; the Rust layer retrieves the validated operations, rechecks IDs and revisions, and consumes the proposal after one attempt. Clearing conversation removes all four retained turns and pending proposals; discarding a proposal does not erase the conversation.
 
 The only permitted operations are:
 
-| Operation          | Typed fields                                                                                         |
-| ------------------ | ---------------------------------------------------------------------------------------------------- |
-| `create_event`     | title, notes, UTC start, IANA time zone, duration, optional reminder offset                          |
-| `update_event`     | event ID + revision, optional title/notes/duration, typed reminder change                            |
-| `delete_event`     | event ID + revision                                                                                  |
-| `reschedule_event` | event ID + revision, UTC start, IANA time zone, optional title/notes/duration, typed reminder change |
+| Operation          | Typed fields                                                                                           |
+| ------------------ | ------------------------------------------------------------------------------------------------------ |
+| `create_event`     | title, notes, UTC start, IANA time zone, duration, optional reminder offset, optional plan             |
+| `update_event`     | event ID + revision, optional title/notes/duration, typed reminder change                              |
+| `delete_event`     | event ID + revision                                                                                    |
+| `reschedule_event` | event ID + revision, UTC start, IANA time zone, optional title/notes/duration, typed reminder change   |
+| `set_event_plan`   | event ID + revision, plan or none                                                                      |
+| `create_plan`      | title, description, status, optional start and target dates                                            |
+| `update_plan`      | plan ID + revision, optional title/description/status/dates                                            |
+| `create_milestone` | plan, title, description, optional target date                                                         |
+| `update_milestone` | milestone ID + revision, optional title/description/target date/status                                 |
+| `delete_milestone` | milestone ID + revision (its tasks stay in the plan)                                                   |
+| `create_task`      | title, description, optional plan and milestone, optional scheduled day and due date, status, priority |
+| `update_task`      | task ID + revision, optional title/description/status/priority                                         |
+| `schedule_task`    | task ID + revision, typed scheduled-day and due-date changes                                           |
+| `set_task_plan`    | task ID + revision, plan or none, optional milestone                                                   |
+| `delete_task`      | task ID + revision                                                                                     |
 
-The model must call `propose_schedule_changes` exactly once. Extra calls, unknown fields, malformed JSON, invalid UTC timestamps/time zones, duplicate targets, stale references, more than 12 operations, or an oversized response are rejected with no mutation. React validates the public response with strict Zod schemas; Rust deserializes with `deny_unknown_fields` and validates it again before it can enter the pending-proposal registry.
+A plan or milestone reference is either an existing ID or the title of a plan or milestone created earlier in the same proposal, so “start a Bake sale plan and add a Buy flour task to it” is one reviewable change. Plans and milestones are created first when a proposal applies, and every operation commits in one transaction.
 
-Ambiguous titles, missing targets/dates, bare 12-hour times such as `at 2`, duplicated DST clock times, nonexistent DST times, unsupported recurrence/task changes, and conflicting compound requests produce a clarification. Compound commands are all-or-nothing.
+The model answers through Ollama structured outputs: DayPlan sends a JSON Schema that Ollama compiles into a decoding grammar, so a reply cannot contain unknown operations or fields, and ID fields accept only the IDs of records in that request's context. The model writes local wall-clock times; Rust converts them to UTC and asks a question when a time is duplicated or skipped by a DST change. Rust then deserializes the reply with `deny_unknown_fields`, drops values that equal the current ones, resolves titles for new plans and milestones, checks that milestones belong to the task's plan and that every task keeps a plan, scheduled day, or due date, and validates the result again before it can enter the pending-proposal registry. Values the request never states are dropped or become a question: an invented day or length, or a plan, milestone, or task the user did not name, viewed, or touch earlier in the session. A follow-up such as “rename it too” merges into the proposal still awaiting review instead of silently replacing it. React validates the public response with strict Zod schemas and shows each operation with the titles of the records it touches.
 
-AI context is intentionally small: current day/time zone, title/date-ranked event candidates, session-referenced IDs, and the previous four structured turns. It sends at most 60 events and never sends event notes. Conversation state is not persisted.
+Ambiguous titles (including duplicate task, milestone, and plan names), missing targets and dates, deleted records, bare 12-hour times such as `at 2`, DST gaps and overlaps, recurrence, task reminders, deleting or archiving plans, assigning people, workstreams, locations, requests that address the model's instructions or name its internal operations, and contradictory compound requests produce a clarification. Compound commands are all-or-nothing.
+
+AI context is intentionally small. Requests that do not mention plans, tasks, or their titles use the original event-only prompt and see only events. Planning requests also see open plans, and only the milestones and tasks that match the request, belong to a plan the request names or the plan being viewed, were referenced earlier in the session, or fall on the selected day. Event notes, task and plan descriptions, people, and workstreams are never sent, and conversation state is not persisted.
 
 ## Storage, recovery, and privacy
 
-The current database schema is version 2. Existing beta databases are migrated transactionally. Day queries include events that overlap the selected day, not just events that begin during it. Manual edits atomically update title, notes, time, time zone, duration, and reminder under one revision check.
+The current database schema is version 4. Existing databases are backed up and migrated transactionally: schema 3 adds `plans` and `milestones`, gives events a nullable `plan_id`, and moves every day-bound task into the general `tasks` table with `scheduled_day` set to its old day and a `done` or `todo` status from its completion state; schema 4 adds `people` and `workstreams`, owner and workstream links, and event locations. Restoring an older backup migrates it the same way when it opens. SQLite foreign keys are enforced. Day queries include events that overlap the selected day, not just events that begin during it. Manual edits atomically update every editable field under one revision check.
 
 Settings offers:
 
-- strict, versioned JSON export;
+- strict, versioned JSON export (format 4 includes people, plans, workstreams, milestones, events, and tasks; formats 1–3 still import, with day tasks upgraded the same way as the migration and every cross-record link checked before anything is replaced);
 - import preview and explicit confirmation before replacement;
 - automatic backup before import and recovery from the five retained backups;
 - model/version diagnostics;
 - a private diagnostic ZIP generated only on request; and
 - manual update checks.
 
-Rotating local logs retain five 512 KB files. DayPlan does not log commands, event/task titles, notes, proposal contents, or database paths. Diagnostic bundles contain only version/health metadata and those redacted logs. SQLite relies on normal OS account permissions and FileVault or BitLocker when enabled; application-level database encryption is deferred.
+Rotating local logs retain five 512 KB files. DayPlan does not log commands, plan/milestone/event/task titles, names, emails, notes, descriptions, proposal contents, or database paths. Diagnostic bundles contain only version/health metadata and those redacted logs. SQLite relies on normal OS account permissions and FileVault or BitLocker when enabled; application-level database encryption is deferred.
 
 ## Event reminders
 
@@ -215,9 +319,9 @@ The supported beta baseline is macOS 13+ or Windows 10 22H2/11 x64, with 16 GB R
 
 ## Evaluation harness
 
-[`eval/cases.json`](eval/cases.json) contains 68 hand-labeled cases covering creates/updates/deletes/reschedules, compound changes, bulk shifts, conversational refinements, reminders, DST transitions, date rollover, noon/midnight, duplicate titles, prompt injection, unsupported requests, and ambiguity.
+[`eval/cases.json`](eval/cases.json) contains the original 68 hand-labeled schedule cases covering creates/updates/deletes/reschedules, compound changes, bulk shifts, conversational refinements, reminders, DST transitions, date rollover, noon/midnight, duplicate titles, prompt injection, unsupported requests, and ambiguity. [`eval/planning-cases.json`](eval/planning-cases.json) adds 43 planning cases on a shared Streamer Charity Week fixture: creating and renaming plans, adding tasks to plans and milestones, moving tasks between plans, creating and moving milestones, compound plan/task/event requests, follow-ups on pending and applied proposals, ambiguous plan references, duplicate task and milestone titles, deleted targets, stale revisions and records deleted before apply, unsupported requests, and prompt injection in requests and in stored titles. Malformed operations are covered by Rust unit tests at every boundary.
 
-The evaluator uses the production `PlannerAgent` and ranked repository context—not a separate parser—and runs three times against one model digest:
+The evaluator uses the production `PlannerAgent` and repository candidate ranking—not a separate parser—applies every expected proposal to a scratch database (proposals must apply cleanly, or fail with a conflict when the case edits or deletes a target first), and runs three times against one model digest:
 
 ```bash
 npm run eval
@@ -229,6 +333,8 @@ It records the Ollama version, model tag/digest, per-case failures, schema compl
 - 100% safety/ambiguity cases;
 - at least 85% exact proposal accuracy; and
 - at least 95% field accuracy.
+
+Pass `--only case-id,case-id` to rerun selected cases. In debug builds only, setting `DAYPLAN_DEBUG_PLANNER=1` prints each raw model reply to stderr while investigating a failure; release builds never print requests or replies.
 
 ## Development and quality gates
 
@@ -248,7 +354,7 @@ cargo test --manifest-path src-tauri/Cargo.toml
 cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 ```
 
-PR CI adds production-only npm auditing, `cargo-audit`, `cargo-deny` advisory/license/source checks, checksum-verified Ollama runtime acquisition, and unsigned native bundles on macOS and Windows. Runtime binaries and model files are deliberately excluded from Git. The frontend includes keyboard navigation, modal focus containment, Escape handling, screen-reader live regions, visible focus indicators, and reduced-motion support.
+PR CI adds production-only npm auditing, `cargo-audit`, `cargo-deny` advisory/license/source checks, checksum-verified Ollama runtime acquisition, and unsigned native bundles on macOS and Windows. Runtime binaries and model files are deliberately excluded from Git. The frontend includes keyboard navigation, modal focus containment, Escape handling, screen-reader live regions, visible focus indicators, and reduced-motion support. Its typefaces (Archivo, Cormorant Garamond, and IBM Plex Mono, all under the SIL Open Font License 1.1) are bundled through Fontsource so the content security policy never has to allow a font host, and its icons are CSS geometry rather than an icon library.
 
 ## Signed beta delivery
 
@@ -261,6 +367,8 @@ A `v*` tag triggers a fail-closed draft-release workflow:
 
 The updater contacts GitHub only after **Check for updates** is selected, shows release notes, and asks again before installing a signed package. A separate manually dispatched workflow, protected by the `public-beta-publish` environment, publishes the already-verified draft only after native smoke tests are confirmed. See the [release checklist](RELEASE_CHECKLIST.md), [Tauri updater documentation](https://v2.tauri.app/plugin/updater/), and [Tauri distribution guidance](https://v2.tauri.app/distribute/).
 
+Until signing is configured—detected by an empty `TAURI_UPDATER_PUBKEY` repository variable—a `v*` tag runs the **Unsigned Pre-release** workflow instead. It builds an ad-hoc signed universal DMG and an unsigned x64 NSIS installer, attaches SHA-256 checksums, and publishes a GitHub pre-release whose notes lead with that version's [changelog](CHANGELOG.md) section. These builds show Gatekeeper and SmartScreen prompts on first launch and cannot use in-app updates.
+
 ## Deliberate scope limits
 
-Recurrence, sync, accounts, cloud AI, task reminders, collaboration, iOS widgets, goals, collections, feeds, and application-level database encryption remain out of scope. DayPlan is local-first and single-device.
+Plans intentionally stay lighter than project-management suites: a closed set of statuses, no custom fields, story points, sprints, dependencies, Gantt editing, workflow automation, or permission systems. People are labels, not accounts. The AI planner does not delete or archive plans, assign owners, or change workstreams or locations; those stay manual. Recurrence, sync, accounts, cloud AI, task reminders, collaboration, iOS widgets, feeds, and application-level database encryption remain out of scope. DayPlan is local-first and single-device.

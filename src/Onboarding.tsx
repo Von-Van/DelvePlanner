@@ -4,16 +4,8 @@ import {
   isPermissionGranted,
   requestPermission,
 } from "@tauri-apps/plugin-notification";
-import {
-  ArrowRight,
-  Bell,
-  Bot,
-  Check,
-  Database,
-  Download,
-  ShieldCheck,
-} from "lucide-react";
 import { api, OllamaStatus } from "./api";
+import { Glyph, Mark } from "./Geometry";
 
 export function Onboarding({
   status,
@@ -90,25 +82,28 @@ export function Onboarding({
   }
   const panels = [
     <div className="onboarding-panel" key="storage">
-      <span className="onboarding-icon">
-        <Database size={26} />
+      <span className="onboarding-index" aria-hidden="true">
+        01
       </span>
       <p>STEP 1 OF 3</p>
       <h2>Your day stays on this device.</h2>
       <div className="onboarding-copy">
-        <ShieldCheck size={18} />
+        <Mark size={6} />
         <span>
           Events and tasks live in a local SQLite database. There are no
           accounts, sync servers, or cloud AI fallbacks.
         </span>
       </div>
-      <button className="onboarding-next" onClick={() => setStep(1)}>
-        Continue <ArrowRight size={16} />
+      <button
+        className="primary-button onboarding-next"
+        onClick={() => setStep(1)}
+      >
+        Continue <Glyph>→</Glyph>
       </button>
     </div>,
     <div className="onboarding-panel" key="model">
-      <span className="onboarding-icon">
-        <Bot size={26} />
+      <span className="onboarding-index" aria-hidden="true">
+        02
       </span>
       <p>STEP 2 OF 3</p>
       <h2>Your private AI runs inside DayPlan.</h2>
@@ -128,7 +123,6 @@ export function Onboarding({
       <div className="onboarding-links">
         {!ready && (
           <button disabled={downloading} onClick={() => void downloadModel()}>
-            <Download size={15} />{" "}
             {downloading ? "Downloading…" : "Download model"}
           </button>
         )}
@@ -142,18 +136,21 @@ export function Onboarding({
         </button>
         <button onClick={() => void onRefresh()}>Check again</button>
       </div>
-      <button className="onboarding-next" onClick={() => setStep(2)}>
-        {ready ? "Model ready" : "Set up later"} <ArrowRight size={16} />
+      <button
+        className="primary-button onboarding-next"
+        onClick={() => setStep(2)}
+      >
+        {ready ? "Model ready" : "Set up later"} <Glyph>→</Glyph>
       </button>
     </div>,
     <div className="onboarding-panel" key="notifications">
-      <span className="onboarding-icon">
-        <Bell size={26} />
+      <span className="onboarding-index" aria-hidden="true">
+        03
       </span>
       <p>STEP 3 OF 3</p>
       <h2>Reminders are optional.</h2>
       <div className="onboarding-copy">
-        <Bell size={18} />
+        <Mark size={6} />
         <span>
           DayPlan asks for OS permission only when you enable a reminder. The
           app must remain running in the tray to deliver one.
@@ -161,7 +158,8 @@ export function Onboarding({
       </div>
       {permission === "granted" ? (
         <div className="permission-ready">
-          <Check size={16} /> Notifications allowed
+          <Mark size={7} color="var(--success-dot)" filled /> Notifications
+          allowed
         </div>
       ) : (
         <button
@@ -171,8 +169,8 @@ export function Onboarding({
           Allow notifications
         </button>
       )}
-      <button className="onboarding-next" onClick={finish}>
-        Open DayPlan <ArrowRight size={16} />
+      <button className="primary-button onboarding-next" onClick={finish}>
+        Open DayPlan <Glyph>→</Glyph>
       </button>
     </div>,
   ];
@@ -187,7 +185,10 @@ export function Onboarding({
         className="onboarding-card"
       >
         <div className="onboarding-brand">
-          <span>D</span> DayPlan
+          <span className="brand-mark" aria-hidden="true">
+            <i />
+          </span>
+          DAYPLAN
         </div>
         {panels[step]}
         <div className="onboarding-dots" aria-label={`Step ${step + 1} of 3`}>

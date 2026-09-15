@@ -2,18 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check, Update } from "@tauri-apps/plugin-updater";
-import {
-  Bell,
-  Bot,
-  Database,
-  Download,
-  FileArchive,
-  RefreshCw,
-  ShieldCheck,
-  Upload,
-  X,
-} from "lucide-react";
 import { api, DatabaseStatus, ImportSelection, OllamaStatus } from "./api";
+import { Glyph } from "./Geometry";
 
 type Props = {
   status: OllamaStatus | null;
@@ -97,7 +87,7 @@ export function SettingsModal({
     if (
       !selection ||
       !window.confirm(
-        `Replace local data with ${selection.preview.eventCount} events and ${selection.preview.taskCount} tasks? A backup is created first.`,
+        `Replace local data with ${selection.preview.planCount} plans, ${selection.preview.workstreamCount} workstreams, ${selection.preview.milestoneCount} milestones, ${selection.preview.eventCount} events, ${selection.preview.taskCount} tasks, and ${selection.preview.personCount} people? A backup is created first.`,
       )
     )
       return;
@@ -176,13 +166,13 @@ export function SettingsModal({
             <h2 id="settings-title">Settings & recovery</h2>
           </div>
           <button onClick={onClose} aria-label="Close settings">
-            <X size={19} />
+            <Glyph>✕</Glyph>
           </button>
         </header>
 
         <div className="settings-grid">
           <SettingsBlock
-            icon={<Bot size={18} />}
+            index="01"
             title="Local model"
             subtitle={status?.detail ?? "Checking Ollama…"}
           >
@@ -194,7 +184,7 @@ export function SettingsModal({
             </p>
             <div className="settings-actions">
               <button onClick={() => void onRefreshStatus()}>
-                <RefreshCw size={14} /> Refresh diagnostics
+                Refresh diagnostics
               </button>
               {!status?.modelInstalled && (
                 <button
@@ -220,12 +210,12 @@ export function SettingsModal({
                     });
                   }}
                 >
-                  <Download size={14} /> Download model
+                  Download model
                 </button>
               )}
               {status?.phase === "downloading" && (
                 <button onClick={() => void api.cancelModelDownload()}>
-                  <X size={14} /> Cancel download
+                  Cancel download
                 </button>
               )}
               <button
@@ -237,7 +227,7 @@ export function SettingsModal({
                   })
                 }
               >
-                <RefreshCw size={14} /> Restart runtime
+                Restart runtime
               </button>
               {status?.modelInstalled && (
                 <button
@@ -256,7 +246,7 @@ export function SettingsModal({
                     });
                   }}
                 >
-                  <X size={14} /> Remove model
+                  Remove model
                 </button>
               )}
             </div>
@@ -272,7 +262,7 @@ export function SettingsModal({
           </SettingsBlock>
 
           <SettingsBlock
-            icon={<Bell size={18} />}
+            index="02"
             title="Event reminders"
             subtitle="One optional reminder per timed event."
           >
@@ -284,7 +274,7 @@ export function SettingsModal({
           </SettingsBlock>
 
           <SettingsBlock
-            icon={<Database size={18} />}
+            index="03"
             title="Data & recovery"
             subtitle={
               database?.ready
@@ -302,16 +292,20 @@ export function SettingsModal({
                   })
                 }
               >
-                <Download size={14} /> Export JSON
+                Export JSON
               </button>
               <button onClick={() => void chooseImport()}>
-                <Upload size={14} /> Preview import
+                Preview import
               </button>
             </div>
             {selection && (
               <div className="import-preview" role="status">
                 <strong>Ready to replace local data</strong>
                 <span>
+                  {selection.preview.planCount} plans ·{" "}
+                  {selection.preview.workstreamCount} workstreams ·{" "}
+                  {selection.preview.milestoneCount} milestones ·{" "}
+                  {selection.preview.personCount} people ·{" "}
                   {selection.preview.eventCount} events ·{" "}
                   {selection.preview.taskCount} tasks
                 </span>
@@ -353,7 +347,7 @@ export function SettingsModal({
           </SettingsBlock>
 
           <SettingsBlock
-            icon={<FileArchive size={18} />}
+            index="04"
             title="Private diagnostics"
             subtitle="Export only when you choose to share troubleshooting data."
           >
@@ -372,13 +366,13 @@ export function SettingsModal({
                   })
                 }
               >
-                <FileArchive size={14} /> Export diagnostics
+                Export diagnostics
               </button>
             </div>
           </SettingsBlock>
 
           <SettingsBlock
-            icon={<ShieldCheck size={18} />}
+            index="05"
             title={`DayPlan ${version}`}
             subtitle={updateState}
           >
@@ -393,7 +387,7 @@ export function SettingsModal({
                 onClick={() => void checkForUpdates()}
                 disabled={busy === "update"}
               >
-                <RefreshCw size={14} /> Check for updates
+                Check for updates
               </button>
               {update && (
                 <button
@@ -415,12 +409,13 @@ export function SettingsModal({
 }
 
 function SettingsBlock({
-  icon,
+  index,
   title,
   subtitle,
   children,
 }: {
-  icon: React.ReactNode;
+  /** A two-digit mono index stands in for an icon. */
+  index: string;
   title: string;
   subtitle: string;
   children: React.ReactNode;
@@ -428,7 +423,9 @@ function SettingsBlock({
   return (
     <section className="settings-block">
       <div className="settings-block-heading">
-        <span>{icon}</span>
+        <span className="settings-index" aria-hidden="true">
+          {index}
+        </span>
         <div>
           <h3>{title}</h3>
           <p>{subtitle}</p>

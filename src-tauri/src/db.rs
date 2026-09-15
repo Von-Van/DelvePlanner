@@ -1,28 +1,49 @@
+mod planning;
+mod proposals;
+mod team;
+
 use crate::error::{AppError, AppResult};
 use crate::model::{
-    BackupInfo, CreateEventInput, CreateTaskInput, DailyTask, ExportBundle, ImportPreview,
-    LocalDateTimeInput, LocalDateTimeResolution, LocalTimeOption, ModelResponse, MutationOperation,
-    ReminderChange, ReminderStatus, RescheduleEventInput, ScheduleEvent, UpdateEventInput,
-    UpdateTaskInput, MAX_NOTES_LENGTH, MAX_OPERATIONS, MAX_REMINDER_MINUTES, MAX_TITLE_LENGTH,
+    Agenda, BackupInfo, CreateEventInput, ExportBundle, ImportPreview, LegacyExportBundle,
+    LocalDateTimeInput, LocalDateTimeResolution, LocalTimeOption, PlanColor, ReminderChange,
+    ReminderStatus, RescheduleEventInput, ScheduleEvent, Task, TaskPriority, TaskStatus,
+    UpdateEventInput, MAX_LOCATION_LENGTH, MAX_NOTES_LENGTH, MAX_REMINDER_MINUTES,
+    MAX_TITLE_LENGTH,
 };
 use chrono::{
     DateTime, Duration as ChronoDuration, LocalResult, NaiveDate, NaiveDateTime, NaiveTime, Offset,
     TimeZone, Utc,
 };
 use chrono_tz::Tz;
+use planning::{
+    ensure_plan_exists, milestone_plan_mismatch, validate_milestone_shape, validate_plan_shape,
+    validate_task_shape, TaskShape,
+};
 use rusqlite::{
     params, types::Type, Connection, OptionalExtension, Row, Transaction, TransactionBehavior,
 };
-use std::cmp::Reverse;
-use std::collections::HashSet;
+use serde::Deserialize;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use team::{
+    validate_links, validate_person_shape, validate_workstream_shape, workstream_plan_mismatch,
+};
 use uuid::Uuid;
 
-pub const CURRENT_SCHEMA_VERSION: u32 = 2;
-pub const EXPORT_FORMAT_VERSION: u32 = 2;
+pub(crate) use proposals::{fold, planning_tokens, title_matches};
+pub use proposals::{validate_model_response, CandidateRequest};
+
+pub const CURRENT_SCHEMA_VERSION: u32 = 4;
+pub const EXPORT_FORMAT_VERSION: u32 = 4;
 const BACKUP_RETENTION: usize = 5;
 const REMINDER_DELIVERY_GRACE_MINUTES: i64 = 15;
+const MAX_IMPORT_RECORDS: usize = 100_000;
+const MAX_AGENDA_DAYS: u32 = 14;
+const EVENT_SELECT: &str = "SELECT id, title, notes, start_at_utc, time_zone, duration_minutes,
+        reminder_minutes_before, reminder_status, plan_id, location, workstream_id, owner_id,
+        revision, created_at, updated_at
+     FROM schedule_events";
 
 #[derive(Debug, Clone)]
 pub struct DueReminder {
@@ -87,6 +108,10 @@ impl PlannerDatabase {
         Ok(ExportBundle {
             format_version: EXPORT_FORMAT_VERSION,
             exported_at: now(),
+            people: self.all_people()?,
+            plans: self.all_plans()?,
+            workstreams: self.all_workstreams()?,
+            milestones: self.all_milestones()?,
             events: self.all_events()?,
             tasks: self.all_tasks()?,
         })
@@ -94,11 +119,16 @@ impl PlannerDatabase {
 
     pub fn preview_import(bundle: &ExportBundle) -> AppResult<ImportPreview> {
         validate_export_bundle(bundle)?;
-        let mut days = bundle
-            .tasks
-            .iter()
-            .map(|task| task.day.clone())
-            .collect::<Vec<_>>();
+        let mut days = Vec::new();
+        for plan in &bundle.plans {
+            days.extend(plan.start_date.iter().chain(&plan.target_date).cloned());
+        }
+        for milestone in &bundle.milestones {
+            days.extend(milestone.target_date.iter().cloned());
+        }
+        for task in &bundle.tasks {
+            days.extend(task.scheduled_day.iter().chain(&task.due_date).cloned());
+        }
         for event in &bundle.events {
             let parsed = DateTime::parse_from_rfc3339(&event.start_at_utc).map_err(|_| {
                 AppError::Validation("An imported event has an invalid start time.".into())
@@ -107,6 +137,10 @@ impl PlannerDatabase {
         }
         days.sort();
         Ok(ImportPreview {
+            person_count: bundle.people.len(),
+            plan_count: bundle.plans.len(),
+            workstream_count: bundle.workstreams.len(),
+            milestone_count: bundle.milestones.len(),
             event_count: bundle.events.len(),
             task_count: bundle.tasks.len(),
             earliest_day: days.first().cloned(),
@@ -120,8 +154,92 @@ impl PlannerDatabase {
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        transaction.execute("DELETE FROM daily_tasks", [])?;
-        transaction.execute("DELETE FROM schedule_events", [])?;
+        for table in [
+            "tasks",
+            "milestones",
+            "schedule_events",
+            "workstreams",
+            "plans",
+            "people",
+        ] {
+            transaction.execute(&format!("DELETE FROM {table}"), [])?;
+        }
+        for person in &bundle.people {
+            transaction.execute(
+                "INSERT INTO people
+                 (id, display_name, role, email, notes, revision, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    person.id,
+                    person.display_name.trim(),
+                    person.role.trim(),
+                    person.email.as_deref().map(str::trim),
+                    person.notes.trim(),
+                    person.revision,
+                    person.created_at,
+                    person.updated_at
+                ],
+            )?;
+        }
+        for plan in &bundle.plans {
+            transaction.execute(
+                "INSERT INTO plans
+                 (id, title, description, status, start_date, target_date, color, archived,
+                  revision, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                params![
+                    plan.id,
+                    plan.title.trim(),
+                    plan.description.trim(),
+                    plan.status.as_str(),
+                    plan.start_date,
+                    plan.target_date,
+                    plan.color.map(PlanColor::as_str),
+                    plan.archived as i64,
+                    plan.revision,
+                    plan.created_at,
+                    plan.updated_at
+                ],
+            )?;
+        }
+        for workstream in &bundle.workstreams {
+            transaction.execute(
+                "INSERT INTO workstreams
+                 (id, plan_id, name, description, sort_order, revision, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    workstream.id,
+                    workstream.plan_id,
+                    workstream.name.trim(),
+                    workstream.description.trim(),
+                    workstream.sort_order,
+                    workstream.revision,
+                    workstream.created_at,
+                    workstream.updated_at
+                ],
+            )?;
+        }
+        for milestone in &bundle.milestones {
+            transaction.execute(
+                "INSERT INTO milestones
+                 (id, plan_id, title, description, target_date, status, workstream_id, sort_order,
+                  revision, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                params![
+                    milestone.id,
+                    milestone.plan_id,
+                    milestone.title.trim(),
+                    milestone.description.trim(),
+                    milestone.target_date,
+                    milestone.status.as_str(),
+                    milestone.workstream_id,
+                    milestone.sort_order,
+                    milestone.revision,
+                    milestone.created_at,
+                    milestone.updated_at
+                ],
+            )?;
+        }
         for event in &bundle.events {
             let reminder_status = if event.reminder_minutes_before.is_some() {
                 ReminderStatus::Pending
@@ -131,9 +249,9 @@ impl PlannerDatabase {
             transaction.execute(
                 "INSERT INTO schedule_events
                  (id, title, notes, start_at_utc, time_zone, duration_minutes,
-                  reminder_minutes_before, reminder_status, notification_id,
-                  revision, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                  reminder_minutes_before, reminder_status, notification_id, plan_id, location,
+                  workstream_id, owner_id, revision, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
                 params![
                     event.id,
                     event.title.trim(),
@@ -146,6 +264,10 @@ impl PlannerDatabase {
                     event
                         .reminder_minutes_before
                         .map(|_| Uuid::new_v4().to_string()),
+                    event.plan_id,
+                    event.location.trim(),
+                    event.workstream_id,
+                    event.owner_id,
                     event.revision,
                     event.created_at,
                     event.updated_at
@@ -154,9 +276,29 @@ impl PlannerDatabase {
         }
         for task in &bundle.tasks {
             transaction.execute(
-                "INSERT INTO daily_tasks (id, title, day, completed, completed_at, sort_order, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                params![task.id, task.title.trim(), task.day, task.completed as i64, task.completed_at, task.sort_order, task.created_at, task.updated_at],
+                "INSERT INTO tasks
+                 (id, title, description, plan_id, milestone_id, workstream_id, owner_id,
+                  due_date, scheduled_day, status, priority, completed_at, sort_order, revision,
+                  created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+                params![
+                    task.id,
+                    task.title.trim(),
+                    task.description.trim(),
+                    task.plan_id,
+                    task.milestone_id,
+                    task.workstream_id,
+                    task.owner_id,
+                    task.due_date,
+                    task.scheduled_day,
+                    task.status.as_str(),
+                    task.priority.as_str(),
+                    task.completed_at,
+                    task.sort_order,
+                    task.revision,
+                    task.created_at,
+                    task.updated_at
+                ],
             )?;
         }
         transaction.commit()?;
@@ -195,25 +337,15 @@ impl PlannerDatabase {
     }
 
     fn all_events(&self) -> AppResult<Vec<ScheduleEvent>> {
-        let mut statement = self.connection.prepare(
-            "SELECT id, title, notes, start_at_utc, time_zone, duration_minutes,
-                    reminder_minutes_before, reminder_status, revision, created_at, updated_at
-             FROM schedule_events ORDER BY start_at_utc ASC, created_at ASC",
-        )?;
+        let mut statement = self.connection.prepare(&format!(
+            "{EVENT_SELECT} ORDER BY start_at_utc ASC, created_at ASC"
+        ))?;
         let rows = statement.query_map([], event_from_row)?;
         collect(rows)
     }
 
-    fn all_tasks(&self) -> AppResult<Vec<DailyTask>> {
-        let mut statement = self.connection.prepare(
-            "SELECT id, title, day, completed, completed_at, sort_order, created_at, updated_at
-             FROM daily_tasks ORDER BY day ASC, sort_order ASC, created_at ASC",
-        )?;
-        let rows = statement.query_map([], task_from_row)?;
-        collect(rows)
-    }
-
     fn create_latest_schema(connection: &Connection) -> AppResult<()> {
+        create_planning_tables(connection)?;
         connection.execute_batch(
             "CREATE TABLE IF NOT EXISTS schedule_events (
                  id TEXT PRIMARY KEY NOT NULL,
@@ -226,22 +358,15 @@ impl PlannerDatabase {
                  reminder_status TEXT NOT NULL DEFAULT 'none',
                  notification_id TEXT UNIQUE,
                  reminder_last_error TEXT,
+                 plan_id TEXT REFERENCES plans(id) ON DELETE SET NULL,
+                 location TEXT NOT NULL DEFAULT '',
+                 workstream_id TEXT REFERENCES workstreams(id) ON DELETE SET NULL,
+                 owner_id TEXT REFERENCES people(id) ON DELETE SET NULL,
                  revision INTEGER NOT NULL DEFAULT 1,
                  created_at TEXT NOT NULL,
                  updated_at TEXT NOT NULL
              );
-             CREATE INDEX IF NOT EXISTS schedule_events_start_idx ON schedule_events(start_at_utc);
-             CREATE TABLE IF NOT EXISTS daily_tasks (
-                 id TEXT PRIMARY KEY NOT NULL,
-                 title TEXT NOT NULL,
-                 day TEXT NOT NULL,
-                 completed INTEGER NOT NULL DEFAULT 0,
-                 completed_at TEXT,
-                 sort_order INTEGER NOT NULL DEFAULT 0,
-                 created_at TEXT NOT NULL,
-                 updated_at TEXT NOT NULL
-             );
-             CREATE INDEX IF NOT EXISTS daily_tasks_day_idx ON daily_tasks(day, sort_order);",
+             CREATE INDEX IF NOT EXISTS schedule_events_start_idx ON schedule_events(start_at_utc);",
         )?;
         Ok(())
     }
@@ -263,8 +388,22 @@ impl PlannerDatabase {
         let duration_minutes = input.duration_minutes.unwrap_or(existing.duration_minutes);
         let reminder_minutes_before =
             apply_reminder_change(&input.reminder_change, existing.reminder_minutes_before)?;
+        let location = input.location.unwrap_or(existing.location);
+        let plan_id = input.plan_change.apply(existing.plan_id);
+        let workstream_id = input.workstream_change.apply(existing.workstream_id);
+        let owner_id = input.owner_change.apply(existing.owner_id);
+        if let Some(plan_id) = &plan_id {
+            ensure_plan_exists(&self.connection, plan_id)?;
+        }
+        validate_links(
+            &self.connection,
+            plan_id.as_deref(),
+            workstream_id.as_deref(),
+            owner_id.as_deref(),
+        )?;
         validate_title(&title)?;
         validate_notes(&notes)?;
+        validate_location(&location)?;
         let (start_at_utc, time_zone) = validate_time(&start_at_utc, &time_zone)?;
         validate_duration(duration_minutes)?;
         if matches!(input.reminder_change, ReminderChange::Set { .. }) {
@@ -278,8 +417,9 @@ impl PlannerDatabase {
              SET title = ?1, notes = ?2, start_at_utc = ?3, time_zone = ?4,
                  duration_minutes = ?5, reminder_minutes_before = ?6,
                  reminder_status = ?7, notification_id = ?8, reminder_last_error = NULL,
-                 revision = revision + 1, updated_at = ?9
-             WHERE id = ?10 AND revision = ?11",
+                 plan_id = ?9, location = ?10, workstream_id = ?11, owner_id = ?12,
+                 revision = revision + 1, updated_at = ?13
+             WHERE id = ?14 AND revision = ?15",
             params![
                 title.trim(),
                 notes.trim(),
@@ -289,6 +429,10 @@ impl PlannerDatabase {
                 reminder_minutes_before,
                 reminder_status_string(&reminder_status),
                 notification_id,
+                plan_id,
+                location.trim(),
+                workstream_id,
+                owner_id,
                 now,
                 input.id,
                 input.revision
@@ -352,125 +496,43 @@ impl PlannerDatabase {
     }
 
     pub fn events_for_day(&self, day: &str, time_zone: &str) -> AppResult<Vec<ScheduleEvent>> {
-        let (start, end) = day_bounds(day, time_zone)?;
-        let mut statement = self.connection.prepare(
-            "SELECT id, title, notes, start_at_utc, time_zone, duration_minutes,
-                    reminder_minutes_before, reminder_status, revision, created_at, updated_at
-             FROM schedule_events
+        self.events_between(day, &next_day(day)?, time_zone)
+    }
+
+    /// Everything dated in `days` local days starting at `start_day`: overlapping events, tasks
+    /// scheduled or due in the window, and milestone checkpoints. Today uses one day; Week uses 7.
+    pub fn agenda(&self, start_day: &str, days: u32, time_zone: &str) -> AppResult<Agenda> {
+        if !(1..=MAX_AGENDA_DAYS).contains(&days) {
+            return Err(AppError::Validation(
+                "An agenda can cover between 1 and 14 days.".into(),
+            ));
+        }
+        let start = normalize_day(start_day)?;
+        let end = offset_day(&start, i64::from(days))?;
+        Ok(Agenda {
+            events: self.events_between(&start, &end, time_zone)?,
+            tasks: self.tasks_scheduled_between(&start, &end)?,
+            due_tasks: self.tasks_due_between(&start, &end)?,
+            milestones: self.milestones_between(&start, &end)?,
+        })
+    }
+
+    /// Events overlapping the local days `[start_day, end_day)` in `time_zone`.
+    fn events_between(
+        &self,
+        start_day: &str,
+        end_day: &str,
+        time_zone: &str,
+    ) -> AppResult<Vec<ScheduleEvent>> {
+        let (start, _) = day_bounds(start_day, time_zone)?;
+        let (end, _) = day_bounds(end_day, time_zone)?;
+        let mut statement = self.connection.prepare(&format!(
+            "{EVENT_SELECT}
              WHERE julianday(start_at_utc) < julianday(?2)
                AND julianday(start_at_utc, printf('+%d minutes', duration_minutes)) > julianday(?1)
-             ORDER BY start_at_utc ASC, created_at ASC",
-        )?;
+             ORDER BY start_at_utc ASC, created_at ASC"
+        ))?;
         let rows = statement.query_map(params![start, end], event_from_row)?;
-        collect(rows)
-    }
-
-    pub fn candidate_events(
-        &self,
-        command: &str,
-        selected_day: &str,
-        viewer_time_zone: &str,
-        referenced_ids: &[String],
-        limit: usize,
-    ) -> AppResult<Vec<ScheduleEvent>> {
-        let events = self.all_events()?;
-        let zone = parse_time_zone(viewer_time_zone)?;
-        let selected = parse_day(selected_day)?;
-        let selected_noon = zone
-            .from_local_datetime(
-                &selected.and_hms_opt(12, 0, 0).ok_or_else(|| {
-                    AppError::Validation("The selected day is out of range.".into())
-                })?,
-            )
-            .earliest()
-            .ok_or_else(|| {
-                AppError::Validation("The selected day is invalid in this time zone.".into())
-            })?
-            .with_timezone(&Utc);
-        let tokens = search_tokens(command);
-        let referenced: HashSet<&str> = referenced_ids.iter().map(String::as_str).collect();
-        let mut scored = events
-            .into_iter()
-            .map(|event| {
-                let start = DateTime::parse_from_rfc3339(&event.start_at_utc)
-                    .map(|value| value.with_timezone(&Utc))
-                    .unwrap_or(selected_noon);
-                let distance_hours = (start - selected_noon).num_hours().unsigned_abs() as usize;
-                let title = event.title.to_ascii_lowercase();
-                let token_matches = tokens
-                    .iter()
-                    .filter(|token| title.contains(token.as_str()))
-                    .count();
-                let score = if referenced.contains(event.id.as_str()) {
-                    100_000
-                } else {
-                    0
-                } + token_matches * 10_000
-                    + 5_000usize.saturating_sub(distance_hours.min(5_000));
-                (score, distance_hours, event)
-            })
-            .collect::<Vec<_>>();
-        scored.sort_by_key(|(score, distance, _)| (Reverse(*score), *distance));
-        Ok(scored
-            .into_iter()
-            .take(limit.min(60))
-            .map(|(_, _, mut event)| {
-                event.notes.clear();
-                event
-            })
-            .collect())
-    }
-
-    pub fn create_task(&mut self, input: CreateTaskInput) -> AppResult<DailyTask> {
-        validate_title(&input.title)?;
-        validate_day(&input.day)?;
-        let id = Uuid::new_v4().to_string();
-        let timestamp = now();
-        let next_order: i64 = self.connection.query_row(
-            "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM daily_tasks WHERE day = ?1",
-            params![input.day],
-            |row| row.get(0),
-        )?;
-        self.connection.execute(
-            "INSERT INTO daily_tasks (id, title, day, completed, completed_at, sort_order, created_at, updated_at)
-             VALUES (?1, ?2, ?3, 0, NULL, ?4, ?5, ?5)",
-            params![id, input.title.trim(), input.day, next_order, timestamp],
-        )?;
-        self.task_by_id(&id)?.ok_or(AppError::NotFound)
-    }
-
-    pub fn update_task(&mut self, input: UpdateTaskInput) -> AppResult<DailyTask> {
-        let existing = self.task_by_id(&input.id)?.ok_or(AppError::NotFound)?;
-        let title = input.title.unwrap_or(existing.title);
-        validate_title(&title)?;
-        let completed = input.completed.unwrap_or(existing.completed);
-        let completed_at = if completed { Some(now()) } else { None };
-        self.connection.execute(
-            "UPDATE daily_tasks SET title = ?1, completed = ?2, completed_at = ?3, updated_at = ?4 WHERE id = ?5",
-            params![title.trim(), completed as i64, completed_at, now(), input.id],
-        )?;
-        self.task_by_id(&input.id)?.ok_or(AppError::NotFound)
-    }
-
-    pub fn delete_task(&mut self, id: &str) -> AppResult<()> {
-        if self
-            .connection
-            .execute("DELETE FROM daily_tasks WHERE id = ?1", params![id])?
-            == 1
-        {
-            Ok(())
-        } else {
-            Err(AppError::NotFound)
-        }
-    }
-
-    pub fn tasks_for_day(&self, day: &str) -> AppResult<Vec<DailyTask>> {
-        validate_day(day)?;
-        let mut statement = self.connection.prepare(
-            "SELECT id, title, day, completed, completed_at, sort_order, created_at, updated_at
-             FROM daily_tasks WHERE day = ?1 ORDER BY completed ASC, sort_order ASC, created_at ASC",
-        )?;
-        let rows = statement.query_map(params![day], task_from_row)?;
         collect(rows)
     }
 
@@ -578,222 +640,38 @@ impl PlannerDatabase {
         Ok(())
     }
 
-    pub fn apply_proposal(&mut self, proposal: &ModelResponse) -> AppResult<Vec<ScheduleEvent>> {
-        let ModelResponse::Proposal { operations, .. } = proposal else {
-            return Err(AppError::Validation(
-                "Clarifications cannot be applied as schedule changes.".into(),
-            ));
-        };
-        validate_operations(operations)?;
-        let transaction = self
-            .connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let mut affected_ids = Vec::new();
-        for operation in operations {
-            match operation {
-                MutationOperation::CreateEvent {
-                    title,
-                    notes,
-                    start_at_utc,
-                    time_zone,
-                    duration_minutes,
-                    reminder_minutes_before,
-                } => {
-                    let event = insert_event(
-                        &transaction,
-                        PreparedEvent::from_parts(
-                            title,
-                            notes,
-                            start_at_utc,
-                            time_zone,
-                            *duration_minutes,
-                            *reminder_minutes_before,
-                        )?,
-                    )?;
-                    affected_ids.push(event.id);
-                }
-                MutationOperation::UpdateEvent {
-                    event_id,
-                    expected_revision,
-                    title,
-                    notes,
-                    duration_minutes,
-                    reminder_change,
-                } => {
-                    let current = event_by_id(&transaction, event_id)?.ok_or(AppError::NotFound)?;
-                    if current.revision != *expected_revision {
-                        return Err(AppError::Conflict);
-                    }
-                    let next_title = title.as_deref().unwrap_or(&current.title);
-                    let next_notes = notes.as_deref().unwrap_or(&current.notes);
-                    let next_duration = duration_minutes.unwrap_or(current.duration_minutes);
-                    let next_reminder =
-                        apply_reminder_change(reminder_change, current.reminder_minutes_before)?;
-                    validate_title(next_title)?;
-                    validate_notes(next_notes)?;
-                    validate_duration(next_duration)?;
-                    if matches!(reminder_change, ReminderChange::Set { .. }) {
-                        validate_reminder_delivery_time(&current.start_at_utc, next_reminder)?;
-                    }
-                    let (reminder_status, notification_id) =
-                        reminder_outbox_values(&current.start_at_utc, next_reminder)?;
-                    let count = transaction.execute(
-                        "UPDATE schedule_events
-                         SET title=?1, notes=?2, duration_minutes=?3,
-                             reminder_minutes_before=?4, reminder_status=?5,
-                             notification_id=?6, reminder_last_error=NULL,
-                             revision=revision+1, updated_at=?7
-                         WHERE id=?8 AND revision=?9",
-                        params![
-                            next_title.trim(),
-                            next_notes.trim(),
-                            next_duration,
-                            next_reminder,
-                            reminder_status_string(&reminder_status),
-                            notification_id,
-                            now(),
-                            event_id,
-                            expected_revision
-                        ],
-                    )?;
-                    if count != 1 {
-                        return Err(AppError::Conflict);
-                    }
-                    affected_ids.push(event_id.clone());
-                }
-                MutationOperation::DeleteEvent {
-                    event_id,
-                    expected_revision,
-                } => {
-                    let count = transaction.execute(
-                        "DELETE FROM schedule_events WHERE id=?1 AND revision=?2",
-                        params![event_id, expected_revision],
-                    )?;
-                    if count != 1 {
-                        return Err(AppError::Conflict);
-                    }
-                }
-                MutationOperation::RescheduleEvent {
-                    event_id,
-                    expected_revision,
-                    title,
-                    notes,
-                    start_at_utc,
-                    time_zone,
-                    duration_minutes,
-                    reminder_change,
-                } => {
-                    let current = event_by_id(&transaction, event_id)?.ok_or(AppError::NotFound)?;
-                    if current.revision != *expected_revision {
-                        return Err(AppError::Conflict);
-                    }
-                    let (start, zone) = validate_time(start_at_utc, time_zone)?;
-                    let next_title = title.as_deref().unwrap_or(&current.title);
-                    let next_notes = notes.as_deref().unwrap_or(&current.notes);
-                    validate_title(next_title)?;
-                    validate_notes(next_notes)?;
-                    let next_duration = duration_minutes.unwrap_or(current.duration_minutes);
-                    validate_duration(next_duration)?;
-                    let next_reminder =
-                        apply_reminder_change(reminder_change, current.reminder_minutes_before)?;
-                    if matches!(reminder_change, ReminderChange::Set { .. }) {
-                        validate_reminder_delivery_time(&start, next_reminder)?;
-                    }
-                    let (reminder_status, notification_id) =
-                        reminder_outbox_values(&start, next_reminder)?;
-                    let count = transaction.execute(
-                        "UPDATE schedule_events
-                         SET title=?1, notes=?2, start_at_utc=?3, time_zone=?4,
-                             duration_minutes=?5, reminder_minutes_before=?6,
-                             reminder_status=?7, notification_id=?8, reminder_last_error=NULL,
-                             revision=revision+1, updated_at=?9
-                         WHERE id=?10 AND revision=?11",
-                        params![
-                            next_title.trim(),
-                            next_notes.trim(),
-                            start,
-                            zone,
-                            next_duration,
-                            next_reminder,
-                            reminder_status_string(&reminder_status),
-                            notification_id,
-                            now(),
-                            event_id,
-                            expected_revision
-                        ],
-                    )?;
-                    if count != 1 {
-                        return Err(AppError::Conflict);
-                    }
-                    affected_ids.push(event_id.clone());
-                }
-            }
-        }
-        transaction.commit()?;
-        affected_ids
-            .iter()
-            .map(|id| self.event_by_id(id)?.ok_or(AppError::NotFound))
-            .collect()
-    }
-
     fn event_by_id(&self, id: &str) -> AppResult<Option<ScheduleEvent>> {
         event_by_id(&self.connection, id)
     }
-
-    fn task_by_id(&self, id: &str) -> AppResult<Option<DailyTask>> {
-        self.connection
-            .query_row(
-                "SELECT id, title, day, completed, completed_at, sort_order, created_at, updated_at FROM daily_tasks WHERE id = ?1",
-                params![id],
-                task_from_row,
-            )
-            .optional()
-            .map_err(AppError::from)
-    }
 }
 
+/// A new event whose fields have passed validation that needs no database access.
 struct PreparedEvent {
-    title: String,
-    notes: String,
-    start_at_utc: String,
-    time_zone: String,
-    duration_minutes: i64,
-    reminder_minutes_before: Option<i64>,
+    input: CreateEventInput,
 }
 
 impl PreparedEvent {
-    fn from_input(input: CreateEventInput) -> AppResult<Self> {
-        Self::from_parts(
-            &input.title,
-            &input.notes,
-            &input.start_at_utc,
-            &input.time_zone,
-            input.duration_minutes,
-            input.reminder_minutes_before,
-        )
-    }
-
-    fn from_parts(
-        title: &str,
-        notes: &str,
-        start_at_utc: &str,
-        time_zone: &str,
-        duration_minutes: i64,
-        reminder_minutes_before: Option<i64>,
-    ) -> AppResult<Self> {
-        validate_title(title)?;
-        validate_notes(notes)?;
-        let (start_at_utc, time_zone) = validate_time(start_at_utc, time_zone)?;
-        validate_duration(duration_minutes)?;
-        validate_reminder(reminder_minutes_before)?;
-        Ok(Self {
-            title: title.trim().to_string(),
-            notes: notes.trim().to_string(),
-            start_at_utc,
-            time_zone,
-            duration_minutes,
-            reminder_minutes_before,
-        })
+    fn from_input(mut input: CreateEventInput) -> AppResult<Self> {
+        validate_title(&input.title)?;
+        validate_notes(&input.notes)?;
+        validate_location(&input.location)?;
+        (input.start_at_utc, input.time_zone) =
+            validate_time(&input.start_at_utc, &input.time_zone)?;
+        validate_duration(input.duration_minutes)?;
+        validate_reminder(input.reminder_minutes_before)?;
+        for id in [&input.plan_id, &input.workstream_id, &input.owner_id]
+            .into_iter()
+            .flatten()
+        {
+            validate_id(id)?;
+        }
+        if input.workstream_id.is_some() && input.plan_id.is_none() {
+            return Err(workstream_plan_mismatch());
+        }
+        input.title = input.title.trim().to_string();
+        input.notes = input.notes.trim().to_string();
+        input.location = input.location.trim().to_string();
+        Ok(Self { input })
     }
 }
 
@@ -815,19 +693,29 @@ impl SqlConnection for Transaction<'_> {
 
 fn insert_event<C: SqlConnection>(
     connection: &C,
-    input: PreparedEvent,
+    prepared: PreparedEvent,
 ) -> AppResult<ScheduleEvent> {
+    let input = prepared.input;
     let id = Uuid::new_v4().to_string();
     let timestamp = now();
     validate_reminder_delivery_time(&input.start_at_utc, input.reminder_minutes_before)?;
+    if let Some(plan_id) = &input.plan_id {
+        ensure_plan_exists(connection, plan_id)?;
+    }
+    validate_links(
+        connection,
+        input.plan_id.as_deref(),
+        input.workstream_id.as_deref(),
+        input.owner_id.as_deref(),
+    )?;
     let (reminder_status, notification_id) =
         reminder_outbox_values(&input.start_at_utc, input.reminder_minutes_before)?;
     connection.connection().execute(
         "INSERT INTO schedule_events
          (id, title, notes, start_at_utc, time_zone, duration_minutes,
-          reminder_minutes_before, reminder_status, notification_id,
-          revision, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 1, ?10, ?10)",
+          reminder_minutes_before, reminder_status, notification_id, plan_id, location,
+          workstream_id, owner_id, revision, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 1, ?14, ?14)",
         params![
             id,
             input.title,
@@ -838,6 +726,10 @@ fn insert_event<C: SqlConnection>(
             input.reminder_minutes_before,
             reminder_status_string(&reminder_status),
             notification_id,
+            input.plan_id,
+            input.location,
+            input.workstream_id,
+            input.owner_id,
             timestamp
         ],
     )?;
@@ -848,9 +740,7 @@ fn event_by_id<C: SqlConnection>(connection: &C, id: &str) -> AppResult<Option<S
     connection
         .connection()
         .query_row(
-            "SELECT id, title, notes, start_at_utc, time_zone, duration_minutes,
-                    reminder_minutes_before, reminder_status, revision, created_at, updated_at
-             FROM schedule_events WHERE id = ?1",
+            &format!("{EVENT_SELECT} WHERE id = ?1"),
             params![id],
             event_from_row,
         )
@@ -868,9 +758,13 @@ fn event_from_row(row: &Row<'_>) -> rusqlite::Result<ScheduleEvent> {
         duration_minutes: row.get(5)?,
         reminder_minutes_before: row.get(6)?,
         reminder_status: reminder_status_from_row(row.get::<_, String>(7)?)?,
-        revision: row.get(8)?,
-        created_at: row.get(9)?,
-        updated_at: row.get(10)?,
+        plan_id: row.get(8)?,
+        location: row.get(9)?,
+        workstream_id: row.get(10)?,
+        owner_id: row.get(11)?,
+        revision: row.get(12)?,
+        created_at: row.get(13)?,
+        updated_at: row.get(14)?,
     })
 }
 
@@ -904,19 +798,6 @@ fn reminder_status_string(status: &ReminderStatus) -> &'static str {
     }
 }
 
-fn task_from_row(row: &Row<'_>) -> rusqlite::Result<DailyTask> {
-    Ok(DailyTask {
-        id: row.get(0)?,
-        title: row.get(1)?,
-        day: row.get(2)?,
-        completed: row.get::<_, i64>(3)? != 0,
-        completed_at: row.get(4)?,
-        sort_order: row.get(5)?,
-        created_at: row.get(6)?,
-        updated_at: row.get(7)?,
-    })
-}
-
 fn collect<T>(
     rows: rusqlite::MappedRows<'_, impl FnMut(&Row<'_>) -> rusqlite::Result<T>>,
 ) -> AppResult<Vec<T>> {
@@ -947,126 +828,11 @@ fn day_bounds(day: &str, time_zone: &str) -> AppResult<(String, String)> {
     ))
 }
 
-fn validate_operations(operations: &[MutationOperation]) -> AppResult<()> {
-    if operations.is_empty() || operations.len() > MAX_OPERATIONS {
-        return Err(AppError::Validation(
-            "A schedule proposal must contain between 1 and 12 operations.".into(),
-        ));
-    }
-    for operation in operations {
-        match operation {
-            MutationOperation::CreateEvent {
-                title,
-                notes,
-                start_at_utc,
-                time_zone,
-                duration_minutes,
-                reminder_minutes_before,
-            } => {
-                PreparedEvent::from_parts(
-                    title,
-                    notes,
-                    start_at_utc,
-                    time_zone,
-                    *duration_minutes,
-                    *reminder_minutes_before,
-                )?;
-            }
-            MutationOperation::UpdateEvent {
-                event_id,
-                expected_revision,
-                title,
-                notes,
-                duration_minutes,
-                reminder_change,
-            } => {
-                validate_id(event_id)?;
-                validate_revision(*expected_revision)?;
-                if let Some(title) = title {
-                    validate_title(title)?;
-                }
-                if let Some(notes) = notes {
-                    validate_notes(notes)?;
-                }
-                if let Some(duration) = duration_minutes {
-                    validate_duration(*duration)?;
-                }
-                validate_reminder_change(reminder_change)?;
-                if title.is_none()
-                    && notes.is_none()
-                    && duration_minutes.is_none()
-                    && reminder_change == &ReminderChange::Unchanged
-                {
-                    return Err(AppError::Validation(
-                        "An event update must change at least one permitted field.".into(),
-                    ));
-                }
-            }
-            MutationOperation::DeleteEvent {
-                event_id,
-                expected_revision,
-            } => {
-                validate_id(event_id)?;
-                validate_revision(*expected_revision)?;
-            }
-            MutationOperation::RescheduleEvent {
-                event_id,
-                expected_revision,
-                title,
-                notes,
-                start_at_utc,
-                time_zone,
-                duration_minutes,
-                reminder_change,
-            } => {
-                validate_id(event_id)?;
-                validate_revision(*expected_revision)?;
-                if let Some(title) = title {
-                    validate_title(title)?;
-                }
-                if let Some(notes) = notes {
-                    validate_notes(notes)?;
-                }
-                validate_time(start_at_utc, time_zone)?;
-                if let Some(duration) = duration_minutes {
-                    validate_duration(*duration)?;
-                }
-                validate_reminder_change(reminder_change)?;
-            }
-        }
-    }
-    Ok(())
-}
-
-pub fn validate_model_response(response: &ModelResponse) -> AppResult<()> {
-    match response {
-        ModelResponse::Proposal {
-            summary,
-            operations,
-        } => {
-            if summary.trim().is_empty() || summary.chars().count() > 280 {
-                return Err(AppError::Validation(
-                    "A proposal needs a short summary.".into(),
-                ));
-            }
-            validate_operations(operations)
-        }
-        ModelResponse::Clarification { question }
-            if question.trim().is_empty() || question.chars().count() > 280 =>
-        {
-            Err(AppError::Validation(
-                "A clarification needs one short question.".into(),
-            ))
-        }
-        ModelResponse::Clarification { .. } => Ok(()),
-    }
-}
-
 pub fn validate_title(value: &str) -> AppResult<()> {
     let length = value.trim().chars().count();
     if !(1..=MAX_TITLE_LENGTH).contains(&length) {
         return Err(AppError::Validation(
-            "Event and task titles must be 1–140 characters.".into(),
+            "Titles must be 1–140 characters.".into(),
         ));
     }
     Ok(())
@@ -1156,7 +922,7 @@ fn reminder_outbox_values(
 fn validate_id(id: &str) -> AppResult<()> {
     Uuid::parse_str(id)
         .map(|_| ())
-        .map_err(|_| AppError::Validation("An operation used an invalid event identifier.".into()))
+        .map_err(|_| AppError::Validation("A record used an invalid identifier.".into()))
 }
 
 fn validate_revision(value: i64) -> AppResult<()> {
@@ -1164,18 +930,39 @@ fn validate_revision(value: i64) -> AppResult<()> {
         Ok(())
     } else {
         Err(AppError::Validation(
-            "An operation used an invalid event revision.".into(),
+            "A record used an invalid revision.".into(),
         ))
     }
-}
-
-fn validate_day(day: &str) -> AppResult<()> {
-    parse_day(day).map(|_| ())
 }
 
 fn parse_day(day: &str) -> AppResult<NaiveDate> {
     NaiveDate::parse_from_str(day, "%Y-%m-%d")
         .map_err(|_| AppError::Validation("Dates must use YYYY-MM-DD.".into()))
+}
+
+/// Parses a local calendar day and returns it zero-padded so SQL equality comparisons hold.
+fn normalize_day(day: &str) -> AppResult<String> {
+    parse_day(day).map(|date| date.format("%Y-%m-%d").to_string())
+}
+
+fn offset_day(day: &str, days: i64) -> AppResult<String> {
+    parse_day(day)?
+        .checked_add_signed(ChronoDuration::days(days))
+        .map(|date| date.format("%Y-%m-%d").to_string())
+        .ok_or_else(|| AppError::Validation("That date is out of range.".into()))
+}
+
+fn next_day(day: &str) -> AppResult<String> {
+    offset_day(day, 1)
+}
+
+fn validate_location(value: &str) -> AppResult<()> {
+    if value.trim().chars().count() > MAX_LOCATION_LENGTH {
+        return Err(AppError::Validation(
+            "Locations must be 140 characters or fewer.".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn parse_time_zone(time_zone: &str) -> AppResult<Tz> {
@@ -1220,6 +1007,8 @@ fn migrate(connection: &Connection, from_version: u32) -> AppResult<()> {
             PlannerDatabase::create_latest_schema(connection)?;
         }
         ensure_reminder_columns(connection)?;
+        ensure_planning_schema(connection)?;
+        ensure_team_schema(connection)?;
         connection.pragma_update(None, "user_version", CURRENT_SCHEMA_VERSION)?;
         Ok::<(), AppError>(())
     })();
@@ -1267,6 +1056,158 @@ fn ensure_reminder_columns(connection: &Connection) -> AppResult<()> {
         [],
     )?;
     Ok(())
+}
+
+/// Creates the planning tables. Every statement is idempotent so migrations can repeat it.
+fn create_planning_tables(connection: &Connection) -> AppResult<()> {
+    connection.execute_batch(
+        "CREATE TABLE IF NOT EXISTS plans (
+             id TEXT PRIMARY KEY NOT NULL,
+             title TEXT NOT NULL,
+             description TEXT NOT NULL DEFAULT '',
+             status TEXT NOT NULL DEFAULT 'planning',
+             start_date TEXT,
+             target_date TEXT,
+             color TEXT,
+             archived INTEGER NOT NULL DEFAULT 0 CHECK(archived IN (0, 1)),
+             revision INTEGER NOT NULL DEFAULT 1,
+             created_at TEXT NOT NULL,
+             updated_at TEXT NOT NULL
+         );
+         CREATE TABLE IF NOT EXISTS milestones (
+             id TEXT PRIMARY KEY NOT NULL,
+             plan_id TEXT NOT NULL REFERENCES plans(id) ON DELETE CASCADE,
+             title TEXT NOT NULL,
+             description TEXT NOT NULL DEFAULT '',
+             target_date TEXT,
+             status TEXT NOT NULL DEFAULT 'pending',
+             sort_order INTEGER NOT NULL DEFAULT 0,
+             revision INTEGER NOT NULL DEFAULT 1,
+             created_at TEXT NOT NULL,
+             updated_at TEXT NOT NULL
+         );
+         CREATE INDEX IF NOT EXISTS milestones_plan_idx ON milestones(plan_id, target_date);
+         CREATE TABLE IF NOT EXISTS tasks (
+             id TEXT PRIMARY KEY NOT NULL,
+             title TEXT NOT NULL,
+             description TEXT NOT NULL DEFAULT '',
+             plan_id TEXT REFERENCES plans(id) ON DELETE SET NULL,
+             milestone_id TEXT REFERENCES milestones(id) ON DELETE SET NULL,
+             due_date TEXT,
+             scheduled_day TEXT,
+             status TEXT NOT NULL DEFAULT 'todo',
+             priority TEXT NOT NULL DEFAULT 'normal',
+             completed_at TEXT,
+             sort_order INTEGER NOT NULL DEFAULT 0,
+             revision INTEGER NOT NULL DEFAULT 1,
+             created_at TEXT NOT NULL,
+             updated_at TEXT NOT NULL,
+             CHECK(milestone_id IS NULL OR plan_id IS NOT NULL),
+             CHECK((status = 'done') = (completed_at IS NOT NULL))
+         );
+         CREATE INDEX IF NOT EXISTS tasks_scheduled_day_idx ON tasks(scheduled_day, sort_order);
+         CREATE INDEX IF NOT EXISTS tasks_due_date_idx ON tasks(due_date);
+         CREATE INDEX IF NOT EXISTS tasks_plan_idx ON tasks(plan_id);
+         CREATE INDEX IF NOT EXISTS tasks_milestone_idx ON tasks(milestone_id);",
+    )?;
+    Ok(())
+}
+
+/// Schema 3: adds plans and milestones, gives events an optional plan, and moves day-bound
+/// `daily_tasks` rows into `tasks` with `scheduled_day` = the old day and a done/todo status.
+fn ensure_planning_schema(connection: &Connection) -> AppResult<()> {
+    create_planning_tables(connection)?;
+    if !column_exists(connection, "schedule_events", "plan_id")? {
+        connection.execute(
+            "ALTER TABLE schedule_events
+             ADD COLUMN plan_id TEXT REFERENCES plans(id) ON DELETE SET NULL",
+            [],
+        )?;
+    }
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS schedule_events_plan_idx ON schedule_events(plan_id)",
+        [],
+    )?;
+    if table_exists(connection, "daily_tasks")? {
+        connection.execute(
+            "INSERT INTO tasks
+             (id, title, description, plan_id, milestone_id, due_date, scheduled_day, status,
+              priority, completed_at, sort_order, revision, created_at, updated_at)
+             SELECT id, title, '', NULL, NULL, NULL, day,
+                    CASE WHEN completed != 0 THEN 'done' ELSE 'todo' END,
+                    'normal',
+                    CASE WHEN completed != 0 THEN COALESCE(completed_at, updated_at) END,
+                    sort_order, 1, created_at, updated_at
+             FROM daily_tasks",
+            [],
+        )?;
+        connection.execute("DROP TABLE daily_tasks", [])?;
+    }
+    Ok(())
+}
+
+/// Schema 4: adds people and plan workstreams, lets tasks and events have an owner and a
+/// workstream, lets milestones have a workstream, and gives events a free-text location.
+fn ensure_team_schema(connection: &Connection) -> AppResult<()> {
+    connection.execute_batch(
+        "CREATE TABLE IF NOT EXISTS people (
+             id TEXT PRIMARY KEY NOT NULL,
+             display_name TEXT NOT NULL,
+             role TEXT NOT NULL DEFAULT '',
+             email TEXT,
+             notes TEXT NOT NULL DEFAULT '',
+             revision INTEGER NOT NULL DEFAULT 1,
+             created_at TEXT NOT NULL,
+             updated_at TEXT NOT NULL
+         );
+         CREATE TABLE IF NOT EXISTS workstreams (
+             id TEXT PRIMARY KEY NOT NULL,
+             plan_id TEXT NOT NULL REFERENCES plans(id) ON DELETE CASCADE,
+             name TEXT NOT NULL,
+             description TEXT NOT NULL DEFAULT '',
+             sort_order INTEGER NOT NULL DEFAULT 0,
+             revision INTEGER NOT NULL DEFAULT 1,
+             created_at TEXT NOT NULL,
+             updated_at TEXT NOT NULL
+         );
+         CREATE UNIQUE INDEX IF NOT EXISTS workstreams_plan_name_idx
+             ON workstreams(plan_id, name COLLATE NOCASE);",
+    )?;
+    const WORKSTREAM_LINK: &str = "TEXT REFERENCES workstreams(id) ON DELETE SET NULL";
+    const OWNER_LINK: &str = "TEXT REFERENCES people(id) ON DELETE SET NULL";
+    for (table, column, definition) in [
+        ("tasks", "workstream_id", WORKSTREAM_LINK),
+        ("tasks", "owner_id", OWNER_LINK),
+        ("milestones", "workstream_id", WORKSTREAM_LINK),
+        ("schedule_events", "location", "TEXT NOT NULL DEFAULT ''"),
+        ("schedule_events", "workstream_id", WORKSTREAM_LINK),
+        ("schedule_events", "owner_id", OWNER_LINK),
+    ] {
+        if !column_exists(connection, table, column)? {
+            connection.execute(
+                &format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"),
+                [],
+            )?;
+        }
+    }
+    connection.execute_batch(
+        "CREATE INDEX IF NOT EXISTS tasks_workstream_idx ON tasks(workstream_id);
+         CREATE INDEX IF NOT EXISTS tasks_owner_idx ON tasks(owner_id);
+         CREATE INDEX IF NOT EXISTS milestones_workstream_idx ON milestones(workstream_id);
+         CREATE INDEX IF NOT EXISTS schedule_events_workstream_idx ON schedule_events(workstream_id);
+         CREATE INDEX IF NOT EXISTS schedule_events_owner_idx ON schedule_events(owner_id);",
+    )?;
+    Ok(())
+}
+
+fn table_exists(connection: &Connection, table: &str) -> AppResult<bool> {
+    connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
+            params![table],
+            |row| row.get(0),
+        )
+        .map_err(AppError::from)
 }
 
 fn column_exists(connection: &Connection, table: &str, column: &str) -> AppResult<bool> {
@@ -1389,29 +1330,214 @@ pub fn restore_backup(path: &Path, backup_name: &str) -> AppResult<()> {
     Ok(())
 }
 
+/// Reads any supported export format. Formats 1–2 are upgraded to the current bundle shape;
+/// format 3 predates people and workstreams, whose fields default to empty.
+pub fn parse_export_bundle(contents: &str) -> AppResult<ExportBundle> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct FormatHeader {
+        format_version: u32,
+    }
+    match serde_json::from_str::<FormatHeader>(contents)?.format_version {
+        1 | 2 => Ok(upgrade_legacy_bundle(serde_json::from_str(contents)?)),
+        3 | EXPORT_FORMAT_VERSION => {
+            let bundle: ExportBundle = serde_json::from_str(contents)?;
+            Ok(ExportBundle {
+                format_version: EXPORT_FORMAT_VERSION,
+                ..bundle
+            })
+        }
+        other => Err(AppError::Validation(format!(
+            "Unsupported DayPlan export format {other}."
+        ))),
+    }
+}
+
+/// Mirrors the schema 3 migration: each legacy task keeps its day as `scheduled_day`.
+/// Completion timestamps are carried over unchanged so validation still rejects mismatches.
+fn upgrade_legacy_bundle(legacy: LegacyExportBundle) -> ExportBundle {
+    ExportBundle {
+        format_version: EXPORT_FORMAT_VERSION,
+        exported_at: legacy.exported_at,
+        people: Vec::new(),
+        plans: Vec::new(),
+        workstreams: Vec::new(),
+        milestones: Vec::new(),
+        events: legacy
+            .events
+            .into_iter()
+            .map(|event| ScheduleEvent {
+                plan_id: None,
+                location: String::new(),
+                workstream_id: None,
+                owner_id: None,
+                ..event
+            })
+            .collect(),
+        tasks: legacy
+            .tasks
+            .into_iter()
+            .map(|task| Task {
+                id: task.id,
+                title: task.title,
+                description: String::new(),
+                plan_id: None,
+                milestone_id: None,
+                workstream_id: None,
+                owner_id: None,
+                due_date: None,
+                scheduled_day: Some(normalize_day(&task.day).unwrap_or(task.day)),
+                status: if task.completed {
+                    TaskStatus::Done
+                } else {
+                    TaskStatus::Todo
+                },
+                priority: TaskPriority::Normal,
+                completed_at: task.completed_at,
+                sort_order: task.sort_order,
+                revision: 1,
+                created_at: task.created_at,
+                updated_at: task.updated_at,
+            })
+            .collect(),
+    }
+}
+
+/// Validates every record and every cross-record reference before an import may replace data.
 fn validate_export_bundle(bundle: &ExportBundle) -> AppResult<()> {
-    if !matches!(bundle.format_version, 1 | EXPORT_FORMAT_VERSION) {
+    if bundle.format_version != EXPORT_FORMAT_VERSION {
         return Err(AppError::Validation(format!(
             "Unsupported DayPlan export format {}.",
             bundle.format_version
         )));
     }
-    if bundle.events.len() > 100_000 || bundle.tasks.len() > 100_000 {
+    if [
+        bundle.people.len(),
+        bundle.plans.len(),
+        bundle.workstreams.len(),
+        bundle.milestones.len(),
+        bundle.events.len(),
+        bundle.tasks.len(),
+    ]
+    .into_iter()
+    .any(|count| count > MAX_IMPORT_RECORDS)
+    {
         return Err(AppError::Validation(
             "That export contains too many records.".into(),
         ));
     }
     validate_timestamp(&bundle.exported_at)?;
+    let mut person_ids = HashSet::new();
+    for person in &bundle.people {
+        validate_id(&person.id)?;
+        if !person_ids.insert(person.id.as_str()) {
+            return Err(duplicate_identifiers("person"));
+        }
+        let email = validate_person_shape(
+            &person.display_name,
+            &person.role,
+            person.email.as_deref(),
+            &person.notes,
+        )?;
+        if email != person.email {
+            return Err(AppError::Validation(
+                "An imported email address must be trimmed or omitted.".into(),
+            ));
+        }
+        validate_record_metadata(person.revision, &person.created_at, &person.updated_at)?;
+    }
+    let mut plan_ids = HashSet::new();
+    for plan in &bundle.plans {
+        validate_id(&plan.id)?;
+        if !plan_ids.insert(plan.id.as_str()) {
+            return Err(duplicate_identifiers("plan"));
+        }
+        let dates = validate_plan_shape(
+            &plan.title,
+            &plan.description,
+            plan.start_date.as_deref(),
+            plan.target_date.as_deref(),
+        )?;
+        if dates != (plan.start_date.clone(), plan.target_date.clone()) {
+            return Err(non_canonical_dates());
+        }
+        validate_record_metadata(plan.revision, &plan.created_at, &plan.updated_at)?;
+    }
+    let mut workstream_plans = HashMap::new();
+    let mut workstream_names = HashSet::new();
+    for workstream in &bundle.workstreams {
+        validate_id(&workstream.id)?;
+        if workstream_plans
+            .insert(workstream.id.as_str(), workstream.plan_id.as_str())
+            .is_some()
+        {
+            return Err(duplicate_identifiers("workstream"));
+        }
+        if !plan_ids.contains(workstream.plan_id.as_str()) {
+            return Err(missing_reference("A workstream"));
+        }
+        validate_workstream_shape(&workstream.name, &workstream.description)?;
+        if !workstream_names.insert((
+            workstream.plan_id.as_str(),
+            workstream.name.trim().to_ascii_lowercase(),
+        )) {
+            return Err(AppError::Validation(
+                "The export repeats a workstream name within one plan.".into(),
+            ));
+        }
+        validate_sort_order(workstream.sort_order)?;
+        validate_record_metadata(
+            workstream.revision,
+            &workstream.created_at,
+            &workstream.updated_at,
+        )?;
+    }
+    let links = ExportLinks {
+        people: &person_ids,
+        workstream_plans: &workstream_plans,
+    };
+    let mut milestone_plans = HashMap::new();
+    for milestone in &bundle.milestones {
+        validate_id(&milestone.id)?;
+        if milestone_plans
+            .insert(milestone.id.as_str(), milestone.plan_id.as_str())
+            .is_some()
+        {
+            return Err(duplicate_identifiers("milestone"));
+        }
+        if !plan_ids.contains(milestone.plan_id.as_str()) {
+            return Err(missing_reference("A milestone"));
+        }
+        let target_date = validate_milestone_shape(
+            &milestone.title,
+            &milestone.description,
+            milestone.target_date.as_deref(),
+        )?;
+        if target_date != milestone.target_date {
+            return Err(non_canonical_dates());
+        }
+        links.validate(
+            "A milestone",
+            Some(&milestone.plan_id),
+            milestone.workstream_id.as_deref(),
+            None,
+        )?;
+        validate_sort_order(milestone.sort_order)?;
+        validate_record_metadata(
+            milestone.revision,
+            &milestone.created_at,
+            &milestone.updated_at,
+        )?;
+    }
     let mut event_ids = HashSet::new();
     for event in &bundle.events {
         validate_id(&event.id)?;
         if !event_ids.insert(&event.id) {
-            return Err(AppError::Validation(
-                "The export contains duplicate event identifiers.".into(),
-            ));
+            return Err(duplicate_identifiers("event"));
         }
         validate_title(&event.title)?;
         validate_notes(&event.notes)?;
+        validate_location(&event.location)?;
         validate_time(&event.start_at_utc, &event.time_zone)?;
         validate_duration(event.duration_minutes)?;
         validate_reminder(event.reminder_minutes_before)?;
@@ -1421,35 +1547,131 @@ fn validate_export_bundle(bundle: &ExportBundle) -> AppResult<()> {
                 "An imported reminder status does not match its event.".into(),
             ));
         }
-        validate_revision(event.revision)?;
-        validate_timestamp(&event.created_at)?;
-        validate_timestamp(&event.updated_at)?;
+        if event
+            .plan_id
+            .as_deref()
+            .is_some_and(|plan_id| !plan_ids.contains(plan_id))
+        {
+            return Err(missing_reference("An event"));
+        }
+        links.validate(
+            "An event",
+            event.plan_id.as_deref(),
+            event.workstream_id.as_deref(),
+            event.owner_id.as_deref(),
+        )?;
+        validate_record_metadata(event.revision, &event.created_at, &event.updated_at)?;
     }
     let mut task_ids = HashSet::new();
     for task in &bundle.tasks {
         validate_id(&task.id)?;
         if !task_ids.insert(&task.id) {
-            return Err(AppError::Validation(
-                "The export contains duplicate task identifiers.".into(),
-            ));
+            return Err(duplicate_identifiers("task"));
         }
-        validate_title(&task.title)?;
-        validate_day(&task.day)?;
-        if task.sort_order < 0 {
-            return Err(AppError::Validation(
-                "Task ordering values cannot be negative.".into(),
-            ));
+        let days = validate_task_shape(&TaskShape {
+            title: &task.title,
+            description: &task.description,
+            plan_id: task.plan_id.as_deref(),
+            milestone_id: task.milestone_id.as_deref(),
+            workstream_id: task.workstream_id.as_deref(),
+            owner_id: task.owner_id.as_deref(),
+            due_date: task.due_date.as_deref(),
+            scheduled_day: task.scheduled_day.as_deref(),
+        })?;
+        if days.due_date != task.due_date || days.scheduled_day != task.scheduled_day {
+            return Err(non_canonical_dates());
         }
-        if task.completed != task.completed_at.is_some() {
+        if task
+            .plan_id
+            .as_deref()
+            .is_some_and(|plan_id| !plan_ids.contains(plan_id))
+        {
+            return Err(missing_reference("A task"));
+        }
+        if let Some(milestone_id) = task.milestone_id.as_deref() {
+            match milestone_plans.get(milestone_id) {
+                None => return Err(missing_reference("A task")),
+                Some(plan_id) if Some(*plan_id) != task.plan_id.as_deref() => {
+                    return Err(milestone_plan_mismatch())
+                }
+                Some(_) => {}
+            }
+        }
+        links.validate(
+            "A task",
+            task.plan_id.as_deref(),
+            task.workstream_id.as_deref(),
+            task.owner_id.as_deref(),
+        )?;
+        validate_sort_order(task.sort_order)?;
+        if (task.status == TaskStatus::Done) != task.completed_at.is_some() {
             return Err(AppError::Validation(
-                "A task completion timestamp does not match its completion state.".into(),
+                "A task completion timestamp does not match its status.".into(),
             ));
         }
         if let Some(completed_at) = &task.completed_at {
             validate_timestamp(completed_at)?;
         }
-        validate_timestamp(&task.created_at)?;
-        validate_timestamp(&task.updated_at)?;
+        validate_record_metadata(task.revision, &task.created_at, &task.updated_at)?;
+    }
+    Ok(())
+}
+
+/// The people and workstreams present in an export, for checking owner and workstream links.
+struct ExportLinks<'a> {
+    people: &'a HashSet<&'a str>,
+    workstream_plans: &'a HashMap<&'a str, &'a str>,
+}
+
+impl ExportLinks<'_> {
+    fn validate(
+        &self,
+        subject: &str,
+        plan_id: Option<&str>,
+        workstream_id: Option<&str>,
+        owner_id: Option<&str>,
+    ) -> AppResult<()> {
+        if let Some(workstream_id) = workstream_id {
+            match self.workstream_plans.get(workstream_id) {
+                None => return Err(missing_reference(subject)),
+                Some(workstream_plan) if Some(*workstream_plan) != plan_id => {
+                    return Err(workstream_plan_mismatch())
+                }
+                Some(_) => {}
+            }
+        }
+        if owner_id.is_some_and(|owner_id| !self.people.contains(owner_id)) {
+            return Err(missing_reference(subject));
+        }
+        Ok(())
+    }
+}
+
+fn validate_record_metadata(revision: i64, created_at: &str, updated_at: &str) -> AppResult<()> {
+    validate_revision(revision)?;
+    validate_timestamp(created_at)?;
+    validate_timestamp(updated_at)
+}
+
+fn duplicate_identifiers(kind: &str) -> AppError {
+    AppError::Validation(format!("The export contains duplicate {kind} identifiers."))
+}
+
+fn missing_reference(subject: &str) -> AppError {
+    AppError::Validation(format!(
+        "{subject} in the export references a record that is not included."
+    ))
+}
+
+fn non_canonical_dates() -> AppError {
+    AppError::Validation("Imported dates must use zero-padded YYYY-MM-DD.".into())
+}
+
+fn validate_sort_order(value: i64) -> AppResult<()> {
+    if value < 0 {
+        return Err(AppError::Validation(
+            "Ordering values cannot be negative.".into(),
+        ));
     }
     Ok(())
 }
@@ -1465,42 +1687,10 @@ fn validate_timestamp(value: &str) -> AppResult<()> {
     Ok(())
 }
 
-fn search_tokens(command: &str) -> Vec<String> {
-    const IGNORED: &[&str] = &[
-        "add",
-        "after",
-        "at",
-        "back",
-        "cancel",
-        "change",
-        "delete",
-        "event",
-        "for",
-        "later",
-        "make",
-        "move",
-        "next",
-        "on",
-        "reschedule",
-        "shift",
-        "the",
-        "to",
-        "today",
-        "tomorrow",
-        "update",
-    ];
-    command
-        .to_ascii_lowercase()
-        .split(|character: char| !character.is_ascii_alphanumeric())
-        .filter(|token| token.len() >= 2 && !IGNORED.contains(token))
-        .map(str::to_string)
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::MutationOperation;
+    use crate::model::{LinkChange, ModelResponse, MutationOperation};
     use tempfile::tempdir;
 
     fn database() -> PlannerDatabase {
@@ -1517,6 +1707,36 @@ mod tests {
             time_zone: "America/New_York".into(),
             duration_minutes: 60,
             reminder_minutes_before: None,
+            plan_id: None,
+            location: String::new(),
+            workstream_id: None,
+            owner_id: None,
+        }
+    }
+
+    fn plan_input(title: &str) -> crate::model::CreatePlanInput {
+        crate::model::CreatePlanInput {
+            title: title.into(),
+            description: String::new(),
+            status: crate::model::PlanStatus::Active,
+            start_date: None,
+            target_date: Some("2026-10-16".into()),
+            color: Some(PlanColor::Clay),
+        }
+    }
+
+    fn task_input(title: &str) -> crate::model::CreateTaskInput {
+        crate::model::CreateTaskInput {
+            title: title.into(),
+            description: String::new(),
+            plan_id: None,
+            milestone_id: None,
+            workstream_id: None,
+            owner_id: None,
+            due_date: None,
+            scheduled_day: None,
+            status: TaskStatus::Todo,
+            priority: TaskPriority::Normal,
         }
     }
 
@@ -1556,6 +1776,7 @@ mod tests {
                     time_zone: "America/New_York".into(),
                     duration_minutes: 60,
                     reminder_minutes_before: None,
+                    plan: None,
                 },
                 MutationOperation::RescheduleEvent {
                     event_id: existing.id,
@@ -1629,7 +1850,7 @@ mod tests {
         drop(connection);
 
         let migrated = PlannerDatabase::open(&path).unwrap();
-        assert_eq!(migrated.schema_version().unwrap(), 2);
+        assert_eq!(migrated.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
         let event = migrated.all_events().unwrap().remove(0);
         assert_eq!(event.reminder_minutes_before, None);
         assert_eq!(event.reminder_status, ReminderStatus::None);
@@ -1674,6 +1895,10 @@ mod tests {
                 time_zone: Some("America/Chicago".into()),
                 duration_minutes: Some(75),
                 reminder_change: ReminderChange::Unchanged,
+                location: None,
+                plan_change: LinkChange::Unchanged,
+                workstream_change: LinkChange::Unchanged,
+                owner_change: LinkChange::Unchanged,
             })
             .unwrap();
         assert_eq!(updated.revision, 2);
@@ -1700,6 +1925,10 @@ mod tests {
                 time_zone: None,
                 duration_minutes: None,
                 reminder_change: ReminderChange::Set { minutes_before: 30 },
+                location: None,
+                plan_change: LinkChange::Unchanged,
+                workstream_change: LinkChange::Unchanged,
+                owner_change: LinkChange::Unchanged,
             })
             .unwrap();
         assert_eq!(updated.revision, 2);
@@ -1715,6 +1944,10 @@ mod tests {
             time_zone: None,
             duration_minutes: None,
             reminder_change: ReminderChange::Clear,
+            location: None,
+            plan_change: LinkChange::Unchanged,
+            workstream_change: LinkChange::Unchanged,
+            owner_change: LinkChange::Unchanged,
         });
         assert!(matches!(stale, Err(AppError::Conflict)));
         assert_eq!(
@@ -1804,6 +2037,10 @@ mod tests {
                 time_zone: "America/New_York".into(),
                 duration_minutes: 180,
                 reminder_minutes_before: None,
+                plan_id: None,
+                location: String::new(),
+                workstream_id: None,
+                owner_id: None,
             })
             .unwrap();
         assert_eq!(
@@ -1840,6 +2077,636 @@ mod tests {
         assert!(matches!(
             result,
             LocalDateTimeResolution::Nonexistent { .. }
+        ));
+    }
+
+    #[test]
+    fn migrates_schema_two_daily_tasks_into_general_tasks() {
+        let directory = tempdir().unwrap().keep();
+        let path = directory.join("dayplan.sqlite3");
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE schedule_events (
+                    id TEXT PRIMARY KEY NOT NULL, title TEXT NOT NULL,
+                    notes TEXT NOT NULL DEFAULT '', start_at_utc TEXT NOT NULL,
+                    time_zone TEXT NOT NULL, duration_minutes INTEGER NOT NULL,
+                    reminder_minutes_before INTEGER, reminder_status TEXT NOT NULL DEFAULT 'none',
+                    notification_id TEXT UNIQUE, reminder_last_error TEXT,
+                    revision INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                 );
+                 CREATE TABLE daily_tasks (
+                    id TEXT PRIMARY KEY NOT NULL, title TEXT NOT NULL, day TEXT NOT NULL,
+                    completed INTEGER NOT NULL DEFAULT 0, completed_at TEXT,
+                    sort_order INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                 );
+                 PRAGMA user_version = 2;",
+            )
+            .unwrap();
+        let open_id = Uuid::new_v4().to_string();
+        let done_id = Uuid::new_v4().to_string();
+        connection
+            .execute(
+                "INSERT INTO daily_tasks
+                 (id, title, day, completed, completed_at, sort_order, created_at, updated_at)
+                 VALUES (?1, 'Buy milk', '2026-08-12', 0, NULL, 0, ?3, ?3),
+                        (?2, 'Pay rent', '2026-08-12', 1, ?4, 1, ?3, ?4)",
+                params![
+                    open_id,
+                    done_id,
+                    "2026-08-11T12:00:00.000Z",
+                    "2026-08-12T09:00:00.000Z"
+                ],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO schedule_events
+                 (id, title, notes, start_at_utc, time_zone, duration_minutes, revision, created_at, updated_at)
+                 VALUES (?1, 'Gym', '', '2026-08-12T22:00:00.000Z', 'America/New_York', 60, 3, ?2, ?2)",
+                params![Uuid::new_v4().to_string(), "2026-08-11T12:00:00.000Z"],
+            )
+            .unwrap();
+        drop(connection);
+
+        let migrated = PlannerDatabase::open(&path).unwrap();
+        assert_eq!(migrated.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+        assert_eq!(migrated.list_backups().unwrap().len(), 1);
+        assert!(!table_exists(&migrated.connection, "daily_tasks").unwrap());
+        let tasks = migrated.tasks_for_day("2026-08-12").unwrap();
+        let open = tasks.iter().find(|task| task.id == open_id).unwrap();
+        assert_eq!(open.status, TaskStatus::Todo);
+        assert_eq!(open.completed_at, None);
+        assert_eq!(open.scheduled_day.as_deref(), Some("2026-08-12"));
+        assert_eq!(
+            (open.plan_id.as_deref(), open.due_date.as_deref()),
+            (None, None)
+        );
+        let done = tasks.iter().find(|task| task.id == done_id).unwrap();
+        assert_eq!(done.status, TaskStatus::Done);
+        assert_eq!(
+            done.completed_at.as_deref(),
+            Some("2026-08-12T09:00:00.000Z")
+        );
+        assert_eq!((done.sort_order, done.revision), (1, 1));
+        let event = migrated.all_events().unwrap().remove(0);
+        assert_eq!((event.plan_id, event.revision), (None, 3));
+    }
+
+    #[test]
+    fn events_join_and_leave_plans_and_ai_edits_keep_membership() {
+        let mut database = database();
+        let plan = database
+            .create_plan(plan_input("Creator Showcase"))
+            .unwrap();
+        let mut input = event_input("Technical rehearsal", "2026-10-14T18:00:00Z");
+        input.plan_id = Some(Uuid::new_v4().to_string());
+        assert!(matches!(
+            database.create_event(input.clone()),
+            Err(AppError::Validation(_))
+        ));
+        input.plan_id = Some(plan.id.clone());
+        let event = database.create_event(input).unwrap();
+        assert_eq!(event.plan_id.as_deref(), Some(plan.id.as_str()));
+
+        let proposal = ModelResponse::proposal(
+            "Move the rehearsal",
+            vec![MutationOperation::RescheduleEvent {
+                event_id: event.id.clone(),
+                expected_revision: event.revision,
+                title: Some("Tech rehearsal".into()),
+                notes: None,
+                start_at_utc: "2026-10-14T19:00:00Z".into(),
+                time_zone: "America/New_York".into(),
+                duration_minutes: None,
+                reminder_change: ReminderChange::Unchanged,
+            }],
+        );
+        let applied_id = database
+            .apply_proposal(&proposal)
+            .unwrap()
+            .event_ids
+            .remove(0);
+        let applied = database.event_by_id(&applied_id).unwrap().unwrap();
+        assert_eq!(applied.plan_id.as_deref(), Some(plan.id.as_str()));
+        assert_eq!(database.plan_workspace(&plan.id).unwrap().events.len(), 1);
+
+        let cleared = database
+            .update_event(UpdateEventInput {
+                id: applied.id,
+                revision: applied.revision,
+                title: None,
+                notes: None,
+                start_at_utc: None,
+                time_zone: None,
+                duration_minutes: None,
+                reminder_change: ReminderChange::Unchanged,
+                location: None,
+                plan_change: LinkChange::Clear,
+                workstream_change: LinkChange::Unchanged,
+                owner_change: LinkChange::Unchanged,
+            })
+            .unwrap();
+        assert_eq!((cleared.plan_id, cleared.revision), (None, 3));
+        assert!(database.plan_workspace(&plan.id).unwrap().events.is_empty());
+    }
+
+    #[test]
+    fn export_round_trips_the_planning_hierarchy() {
+        let mut database = database();
+        let plan = database.create_plan(plan_input("Launch")).unwrap();
+        let milestone = database
+            .create_milestone(crate::model::CreateMilestoneInput {
+                plan_id: plan.id.clone(),
+                title: "Beta".into(),
+                description: "Invite testers".into(),
+                target_date: Some("2026-10-01".into()),
+                status: crate::model::MilestoneStatus::Pending,
+                workstream_id: None,
+            })
+            .unwrap();
+        database
+            .create_task(crate::model::CreateTaskInput {
+                plan_id: Some(plan.id.clone()),
+                milestone_id: Some(milestone.id.clone()),
+                status: TaskStatus::Done,
+                ..task_input("Write release notes")
+            })
+            .unwrap();
+        database
+            .create_task(crate::model::CreateTaskInput {
+                scheduled_day: Some("2026-09-15".into()),
+                ..task_input("Laundry")
+            })
+            .unwrap();
+        let mut event = event_input("Launch review", "2026-09-30T15:00:00Z");
+        event.plan_id = Some(plan.id.clone());
+        database.create_event(event).unwrap();
+
+        let bundle = database.export_bundle().unwrap();
+        let parsed = parse_export_bundle(&serde_json::to_string(&bundle).unwrap()).unwrap();
+        assert_eq!(parsed, bundle);
+        let preview = database.import_bundle(&parsed).unwrap();
+        assert_eq!(
+            (
+                preview.plan_count,
+                preview.milestone_count,
+                preview.event_count,
+                preview.task_count
+            ),
+            (1, 1, 1, 2)
+        );
+        let restored = database.export_bundle().unwrap();
+        assert_eq!(
+            (restored.plans, restored.milestones, restored.tasks),
+            (bundle.plans, bundle.milestones, bundle.tasks)
+        );
+        assert_eq!(
+            restored.events[0].plan_id.as_deref(),
+            Some(plan.id.as_str())
+        );
+    }
+
+    #[test]
+    fn legacy_exports_upgrade_day_tasks_before_validation() {
+        let legacy = serde_json::json!({
+            "formatVersion": 2,
+            "exportedAt": "2026-08-12T12:00:00.000Z",
+            "events": [{
+                "id": Uuid::new_v4(), "title": "Gym", "notes": "",
+                "startAtUtc": "2026-08-12T22:00:00.000Z", "timeZone": "America/New_York",
+                "durationMinutes": 60, "reminderMinutesBefore": null, "reminderStatus": "none",
+                "revision": 2, "createdAt": "2026-08-11T12:00:00.000Z",
+                "updatedAt": "2026-08-11T12:00:00.000Z"
+            }],
+            "tasks": [
+                {
+                    "id": Uuid::new_v4(), "title": "Buy milk", "day": "2026-08-12",
+                    "completed": false, "completedAt": null, "sortOrder": 0,
+                    "createdAt": "2026-08-11T12:00:00.000Z", "updatedAt": "2026-08-11T12:00:00.000Z"
+                },
+                {
+                    "id": Uuid::new_v4(), "title": "Pay rent", "day": "2026-08-13",
+                    "completed": true, "completedAt": "2026-08-12T09:00:00.000Z", "sortOrder": 1,
+                    "createdAt": "2026-08-11T12:00:00.000Z", "updatedAt": "2026-08-12T09:00:00.000Z"
+                }
+            ]
+        });
+        let bundle = parse_export_bundle(&legacy.to_string()).unwrap();
+        assert_eq!(bundle.format_version, EXPORT_FORMAT_VERSION);
+        assert_eq!(bundle.tasks[0].status, TaskStatus::Todo);
+        assert_eq!(bundle.tasks[1].status, TaskStatus::Done);
+        assert_eq!(bundle.tasks[1].scheduled_day.as_deref(), Some("2026-08-13"));
+        let preview = PlannerDatabase::preview_import(&bundle).unwrap();
+        assert_eq!((preview.event_count, preview.task_count), (1, 2));
+        assert_eq!(preview.latest_day.as_deref(), Some("2026-08-13"));
+
+        let mut mismatched = legacy.clone();
+        mismatched["tasks"][0]["completedAt"] = serde_json::json!("2026-08-12T09:00:00.000Z");
+        let bundle = parse_export_bundle(&mismatched.to_string()).unwrap();
+        assert!(matches!(
+            PlannerDatabase::preview_import(&bundle),
+            Err(AppError::Validation(_))
+        ));
+        let mut hybrid = legacy;
+        hybrid["plans"] = serde_json::json!([]);
+        assert!(parse_export_bundle(&hybrid.to_string()).is_err());
+        assert!(matches!(
+            parse_export_bundle(r#"{"formatVersion": 9}"#),
+            Err(AppError::Validation(_))
+        ));
+    }
+
+    #[test]
+    fn import_rejects_dangling_plan_references_without_replacing_data() {
+        let mut database = database();
+        let plan = database.create_plan(plan_input("Trip")).unwrap();
+        let mut event = event_input("Flight", "2026-10-02T12:00:00Z");
+        event.plan_id = Some(plan.id.clone());
+        database.create_event(event).unwrap();
+        let mut bundle = database.export_bundle().unwrap();
+        bundle.plans.clear();
+        assert!(matches!(
+            database.import_bundle(&bundle),
+            Err(AppError::Validation(_))
+        ));
+        assert_eq!(database.list_plans("2026-09-14").unwrap().len(), 1);
+        assert!(database.list_backups().unwrap().is_empty());
+    }
+
+    const SCHEMA_TWO_TABLES: &str = "CREATE TABLE schedule_events (
+            id TEXT PRIMARY KEY NOT NULL, title TEXT NOT NULL,
+            notes TEXT NOT NULL DEFAULT '', start_at_utc TEXT NOT NULL,
+            time_zone TEXT NOT NULL, duration_minutes INTEGER NOT NULL,
+            reminder_minutes_before INTEGER, reminder_status TEXT NOT NULL DEFAULT 'none',
+            notification_id TEXT UNIQUE, reminder_last_error TEXT,
+            revision INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+         );
+         CREATE TABLE daily_tasks (
+            id TEXT PRIMARY KEY NOT NULL, title TEXT NOT NULL, day TEXT NOT NULL,
+            completed INTEGER NOT NULL DEFAULT 0, completed_at TEXT,
+            sort_order INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+         );
+         PRAGMA user_version = 2;";
+
+    #[test]
+    fn migrates_schema_three_plans_to_the_team_schema() {
+        let directory = tempdir().unwrap().keep();
+        let path = directory.join("dayplan.sqlite3");
+        let connection = Connection::open(&path).unwrap();
+        connection.execute_batch(SCHEMA_TWO_TABLES).unwrap();
+        ensure_reminder_columns(&connection).unwrap();
+        ensure_planning_schema(&connection).unwrap();
+        connection.pragma_update(None, "user_version", 3).unwrap();
+        let stamp = "2026-09-14T12:00:00.000Z";
+        let plan_id = Uuid::new_v4().to_string();
+        connection
+            .execute(
+                "INSERT INTO plans (id, title, status, created_at, updated_at)
+                 VALUES (?1, 'Creator Showcase', 'active', ?2, ?2)",
+                params![plan_id, stamp],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO tasks (id, title, plan_id, status, created_at, updated_at)
+                 VALUES (?1, 'Collect bios', ?2, 'todo', ?3, ?3)",
+                params![Uuid::new_v4().to_string(), plan_id, stamp],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO schedule_events
+                 (id, title, start_at_utc, time_zone, duration_minutes, plan_id, revision,
+                  created_at, updated_at)
+                 VALUES (?1, 'Production review', '2030-10-02T15:00:00.000Z',
+                         'America/New_York', 60, ?2, 4, ?3, ?3)",
+                params![Uuid::new_v4().to_string(), plan_id, stamp],
+            )
+            .unwrap();
+        drop(connection);
+
+        let migrated = PlannerDatabase::open(&path).unwrap();
+        assert_eq!(migrated.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+        assert!(migrated.list_backups().unwrap()[0]
+            .name
+            .starts_with("dayplan-v3-"));
+        for (table, column) in [
+            ("people", "display_name"),
+            ("workstreams", "plan_id"),
+            ("tasks", "owner_id"),
+            ("milestones", "workstream_id"),
+            ("schedule_events", "location"),
+        ] {
+            assert!(column_exists(&migrated.connection, table, column).unwrap());
+        }
+        let workspace = migrated.plan_workspace(&plan_id).unwrap();
+        assert_eq!(workspace.tasks[0].title, "Collect bios");
+        assert_eq!(workspace.tasks[0].owner_id, None);
+        let event = &workspace.events[0];
+        assert_eq!(
+            (
+                event.location.as_str(),
+                event.revision,
+                event.workstream_id.as_deref()
+            ),
+            ("", 4, None)
+        );
+    }
+
+    #[test]
+    fn restoring_an_older_backup_migrates_it_on_open() {
+        let directory = tempdir().unwrap().keep();
+        let path = directory.join("dayplan.sqlite3");
+        let mut current = PlannerDatabase::open(&path).unwrap();
+        current.create_plan(plan_input("Discarded plan")).unwrap();
+        drop(current);
+
+        let backups = directory.join("backups");
+        fs::create_dir_all(&backups).unwrap();
+        let backup_path = backups.join("dayplan-v2-20260801T120000Z-manual.sqlite3");
+        let legacy = Connection::open(&backup_path).unwrap();
+        legacy.execute_batch(SCHEMA_TWO_TABLES).unwrap();
+        legacy
+            .execute(
+                "INSERT INTO daily_tasks
+                 (id, title, day, completed, sort_order, created_at, updated_at)
+                 VALUES (?1, 'Call parents', '2026-08-01', 0, 0, ?2, ?2)",
+                params![Uuid::new_v4().to_string(), "2026-07-31T12:00:00.000Z"],
+            )
+            .unwrap();
+        drop(legacy);
+
+        restore_backup(&path, "dayplan-v2-20260801T120000Z-manual.sqlite3").unwrap();
+        let restored = PlannerDatabase::open(&path).unwrap();
+        assert_eq!(restored.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+        assert!(restored.list_plans("2026-09-14").unwrap().is_empty());
+        assert_eq!(
+            restored.tasks_for_day("2026-08-01").unwrap()[0].title,
+            "Call parents"
+        );
+    }
+
+    #[test]
+    fn foreign_keys_cascade_plan_structure_and_null_optional_links() {
+        let mut database = database();
+        let plan = database.create_plan(plan_input("Wedding")).unwrap();
+        let person = database
+            .create_person(crate::model::CreatePersonInput {
+                display_name: "Venue contact".into(),
+                role: String::new(),
+                email: None,
+                notes: String::new(),
+            })
+            .unwrap();
+        let workstream = database
+            .create_workstream(crate::model::CreateWorkstreamInput {
+                plan_id: plan.id.clone(),
+                name: "Venue".into(),
+                description: String::new(),
+            })
+            .unwrap();
+        database
+            .create_milestone(crate::model::CreateMilestoneInput {
+                plan_id: plan.id.clone(),
+                title: "Venue confirmed".into(),
+                description: String::new(),
+                target_date: None,
+                status: crate::model::MilestoneStatus::Pending,
+                workstream_id: Some(workstream.id.clone()),
+            })
+            .unwrap();
+        let task = database
+            .create_task(crate::model::CreateTaskInput {
+                scheduled_day: Some("2027-05-01".into()),
+                owner_id: Some(person.id.clone()),
+                ..task_input("Sign contract")
+            })
+            .unwrap();
+        let orphan = database.connection.execute(
+            "INSERT INTO milestones (id, plan_id, title, created_at, updated_at)
+             VALUES (?1, ?2, 'Orphan', ?3, ?3)",
+            params![
+                Uuid::new_v4().to_string(),
+                Uuid::new_v4().to_string(),
+                now()
+            ],
+        );
+        assert!(
+            orphan.is_err(),
+            "a milestone cannot reference a missing plan"
+        );
+
+        database
+            .connection
+            .execute("DELETE FROM people WHERE id = ?1", params![person.id])
+            .unwrap();
+        assert_eq!(
+            database.tasks_for_day("2027-05-01").unwrap()[0].owner_id,
+            None,
+            "deleting a person row nulls task owners (row id {})",
+            task.id
+        );
+        database
+            .connection
+            .execute("DELETE FROM plans WHERE id = ?1", params![plan.id])
+            .unwrap();
+        for table in ["milestones", "workstreams"] {
+            let remaining: i64 = database
+                .connection
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            assert_eq!(remaining, 0, "{table} cascade with their plan");
+        }
+    }
+
+    #[test]
+    fn week_agenda_collects_everything_dated_in_the_window() {
+        let mut database = database();
+        let plan = database
+            .create_plan(plan_input("Streamer Charity Week"))
+            .unwrap();
+        database
+            .create_milestone(crate::model::CreateMilestoneInput {
+                plan_id: plan.id.clone(),
+                title: "Event start".into(),
+                description: String::new(),
+                target_date: Some("2030-11-09".into()),
+                status: crate::model::MilestoneStatus::Pending,
+                workstream_id: None,
+            })
+            .unwrap();
+        database
+            .create_milestone(crate::model::CreateMilestoneInput {
+                plan_id: plan.id.clone(),
+                title: "Post-event report".into(),
+                description: String::new(),
+                target_date: Some("2030-11-16".into()),
+                status: crate::model::MilestoneStatus::Pending,
+                workstream_id: None,
+            })
+            .unwrap();
+        for (title, scheduled, due) in [
+            ("Finish overlays", Some("2030-11-10"), None),
+            ("Approve sponsor graphics", None, Some("2030-11-15")),
+            (
+                "Prepare social posts",
+                Some("2030-11-11"),
+                Some("2030-11-11"),
+            ),
+            ("Outside the week", Some("2030-11-16"), None),
+        ] {
+            database
+                .create_task(crate::model::CreateTaskInput {
+                    plan_id: Some(plan.id.clone()),
+                    scheduled_day: scheduled.map(Into::into),
+                    due_date: due.map(Into::into),
+                    ..task_input(title)
+                })
+                .unwrap();
+        }
+        database
+            .create_event(event_input("Opening broadcast", "2030-11-09T23:00:00Z"))
+            .unwrap();
+        database
+            .create_event(event_input(
+                "Late closing broadcast",
+                "2030-11-16T04:30:00Z",
+            ))
+            .unwrap();
+        database
+            .create_event(event_input("Next week", "2030-11-16T18:00:00Z"))
+            .unwrap();
+
+        let week = database
+            .agenda("2030-11-09", 7, "America/New_York")
+            .unwrap();
+        let titles = |items: &[Task]| {
+            items
+                .iter()
+                .map(|task| task.title.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            titles(&week.tasks),
+            ["Finish overlays", "Prepare social posts"]
+        );
+        assert_eq!(titles(&week.due_tasks), ["Approve sponsor graphics"]);
+        assert_eq!(
+            week.milestones
+                .iter()
+                .map(|item| item.title.as_str())
+                .collect::<Vec<_>>(),
+            ["Event start"]
+        );
+        assert_eq!(
+            week.events
+                .iter()
+                .map(|item| item.title.as_str())
+                .collect::<Vec<_>>(),
+            ["Opening broadcast", "Late closing broadcast"]
+        );
+        let today = database
+            .agenda("2030-11-11", 1, "America/New_York")
+            .unwrap();
+        assert_eq!(titles(&today.tasks), ["Prepare social posts"]);
+        assert!(today.due_tasks.is_empty());
+        assert!(matches!(
+            database.agenda("2030-11-09", 15, "America/New_York"),
+            Err(AppError::Validation(_))
+        ));
+    }
+
+    #[test]
+    fn export_round_trips_people_and_workstreams_and_reads_format_three() {
+        let mut database = database();
+        let plan = database
+            .create_plan(plan_input("Streamer Charity Week"))
+            .unwrap();
+        let maya = database
+            .create_person(crate::model::CreatePersonInput {
+                display_name: "Maya".into(),
+                role: "Creator Relations".into(),
+                email: Some("maya@example.com".into()),
+                notes: String::new(),
+            })
+            .unwrap();
+        let relations = database
+            .create_workstream(crate::model::CreateWorkstreamInput {
+                plan_id: plan.id.clone(),
+                name: "Creator Relations".into(),
+                description: String::new(),
+            })
+            .unwrap();
+        database
+            .create_task(crate::model::CreateTaskInput {
+                plan_id: Some(plan.id.clone()),
+                workstream_id: Some(relations.id.clone()),
+                owner_id: Some(maya.id.clone()),
+                ..task_input("Confirm creators")
+            })
+            .unwrap();
+        let mut briefing = event_input("Creator briefing", "2030-11-09T15:00:00Z");
+        briefing.plan_id = Some(plan.id.clone());
+        briefing.owner_id = Some(maya.id.clone());
+        briefing.location = "Stage A".into();
+        database.create_event(briefing).unwrap();
+
+        let bundle = database.export_bundle().unwrap();
+        let json = serde_json::to_value(&bundle).unwrap();
+        let parsed = parse_export_bundle(&json.to_string()).unwrap();
+        assert_eq!(parsed, bundle);
+        let preview = database.import_bundle(&parsed).unwrap();
+        assert_eq!((preview.person_count, preview.workstream_count), (1, 1));
+        let restored = database.export_bundle().unwrap();
+        assert_eq!(restored.people, bundle.people);
+        assert_eq!(restored.workstreams, bundle.workstreams);
+        assert_eq!(restored.events[0].location, "Stage A");
+
+        let mut format_three = json.clone();
+        format_three["formatVersion"] = serde_json::json!(3);
+        let object = format_three.as_object_mut().unwrap();
+        object.remove("people");
+        object.remove("workstreams");
+        for task in format_three["tasks"].as_array_mut().unwrap() {
+            let task = task.as_object_mut().unwrap();
+            task.remove("workstreamId");
+            task.remove("ownerId");
+        }
+        for event in format_three["events"].as_array_mut().unwrap() {
+            let event = event.as_object_mut().unwrap();
+            event.remove("location");
+            event.remove("workstreamId");
+            event.remove("ownerId");
+        }
+        let upgraded = parse_export_bundle(&format_three.to_string()).unwrap();
+        assert_eq!(upgraded.format_version, EXPORT_FORMAT_VERSION);
+        let preview = PlannerDatabase::preview_import(&upgraded).unwrap();
+        assert_eq!((preview.person_count, preview.task_count), (0, 1));
+
+        let mut dangling = bundle.clone();
+        dangling.people.clear();
+        assert!(matches!(
+            PlannerDatabase::preview_import(&dangling),
+            Err(AppError::Validation(_))
+        ));
+        let mut cross_plan = bundle;
+        let other = crate::model::Plan {
+            id: Uuid::new_v4().to_string(),
+            title: "Other".into(),
+            ..cross_plan.plans[0].clone()
+        };
+        cross_plan.tasks[0].plan_id = Some(other.id.clone());
+        cross_plan.plans.push(other);
+        assert!(matches!(
+            PlannerDatabase::preview_import(&cross_plan),
+            Err(AppError::Validation(_))
         ));
     }
 }

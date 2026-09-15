@@ -1,0 +1,153 @@
+name: Unsigned Pre-release
+
+# Publishes installers for a `v*` tag while release signing is not configured. Once the
+# `TAURI_UPDATER_PUBKEY` repository variable is set, Signed Desktop Release owns tags instead.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  validate-tag:
+    if: vars.TAURI_UPDATER_PUBKEY == ''
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run version:check
+      - run: npm run ollama:verify
+      - id: version
+        shell: bash
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          test "v$VERSION" = "$GITHUB_REF_NAME"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+  build-macos:
+    needs: validate-tag
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.97.1
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - run: npm ci
+      - name: Fetch and verify Ollama runtime
+        run: scripts/fetch-ollama-runtime.sh
+      - name: Build ad-hoc signed universal app
+        run: npm run tauri build -- --target universal-apple-darwin --bundles app --config src-tauri/tauri.unsigned.conf.json
+      - name: Package DMG
+        env:
+          VERSION: ${{ needs.validate-tag.outputs.version }}
+        shell: bash
+        run: |
+          app=src-tauri/target/universal-apple-darwin/release/bundle/macos/DayPlan.app
+          codesign --verify --deep --strict --verbose=2 "$app"
+          signature=$(codesign --display --verbose=2 "$app" 2>&1)
+          grep -q "Signature=adhoc" <<< "$signature"
+          architectures=$(lipo -archs "$app/Contents/MacOS/dayplan-desktop")
+          grep -q arm64 <<< "$architectures"
+          grep -q x86_64 <<< "$architectures"
+          root=$(mktemp -d)
+          ditto "$app" "$root/DayPlan.app"
+          ln -s /Applications "$root/Applications"
+          mkdir -p release-assets
+          dmg="release-assets/DayPlan_${VERSION}_universal.dmg"
+          for attempt in 1 2 3; do
+            hdiutil create -volname DayPlan -srcfolder "$root" -ov -format UDZO "$dmg" && break
+            test "$attempt" -lt 3
+            sleep 10
+          done
+          hdiutil verify "$dmg"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-macos
+          path: release-assets/*
+
+  build-windows:
+    needs: validate-tag
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.97.1
+      - run: npm ci
+      - name: Fetch and verify Ollama runtime
+        shell: pwsh
+        run: scripts/fetch-ollama-runtime.ps1
+      - run: npm run tauri build -- --bundles nsis --config src-tauri/tauri.unsigned.conf.json
+      - name: Stage installer
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem src-tauri/target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
+          if (-not $installer) { throw "The NSIS installer was not produced" }
+          New-Item -ItemType Directory -Force release-assets | Out-Null
+          Copy-Item $installer.FullName release-assets/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-windows
+          path: release-assets/*
+
+  publish:
+    needs: [validate-tag, build-macos, build-windows]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: unsigned-*
+          path: release-assets
+          merge-multiple: true
+      - name: Check assets and generate checksums
+        shell: bash
+        run: |
+          ls release-assets/*_universal.dmg release-assets/*-setup.exe
+          (cd release-assets && sha256sum -- * > SHA256SUMS.txt)
+      - name: Write release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.validate-tag.outputs.version }}
+        shell: bash
+        run: |
+          notes="$RUNNER_TEMP/release-notes.md"
+          : > "$notes"
+          # The CHANGELOG section for this tag, if there is one, leads the notes.
+          if test -f CHANGELOG.md; then
+            awk -v heading="## $GITHUB_REF_NAME" '$0 == heading { found = 1; next } /^## / { found = 0 } found' CHANGELOG.md > "$notes"
+          fi
+          cat >> "$notes" <<EOF
+
+          ## Install
+
+          These installers are not code-signed or notarized yet, so your operating system asks for confirmation the first time DayPlan opens.
+
+          - **macOS 13 or later (Apple silicon and Intel):** open \`DayPlan_${VERSION}_universal.dmg\` and drag DayPlan to Applications. If macOS says it can't verify DayPlan, open **System Settings → Privacy & Security** and choose **Open Anyway**.
+          - **Windows 10 22H2 or Windows 11 (x64):** run \`DayPlan_${VERSION}_x64-setup.exe\`. If SmartScreen appears, choose **More info → Run anyway**.
+
+          Compare downloads with \`SHA256SUMS.txt\`. The local model (qwen3:8b, about 5.2 GB) downloads only after you approve it during onboarding. **Check for updates** doesn't work in unsigned builds, so install newer versions from the Releases page.
+
+          EOF
+          gh api --method POST "repos/$GITHUB_REPOSITORY/releases/generate-notes" -f tag_name="$GITHUB_REF_NAME" -f target_commitish="$GITHUB_SHA" --jq .body >> "$notes"
+      - name: Publish pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: gh release create "$GITHUB_REF_NAME" release-assets/* --prerelease --verify-tag --title "$GITHUB_REF_NAME" --notes-file "$RUNNER_TEMP/release-notes.md"
