@@ -601,6 +601,7 @@ const statusSchema = z
   .object({
     phase: z.enum([
       "unavailable",
+      "stopped",
       "starting",
       "ready_without_model",
       "downloading",
@@ -799,6 +800,24 @@ export type PersonInput = Pick<
 >;
 export type WorkstreamInput = Pick<Workstream, "name" | "description">;
 export type OllamaStatus = z.infer<typeof statusSchema>;
+
+export const modelSources = ["dayplan", "system"] as const;
+export type ModelSource = (typeof modelSources)[number];
+
+const installedModelSchema = z
+  .object({
+    name: z.string(),
+    sizeBytes: z.number().nonnegative(),
+    source: z.enum(modelSources),
+    /** Whether DayPlan's own evaluations run against this model. */
+    tested: z.boolean(),
+    /** Whether it has answered DayPlan's reply-format check on this machine. */
+    checked: z.boolean(),
+    selected: z.boolean(),
+  })
+  .strict();
+
+export type InstalledModel = z.infer<typeof installedModelSchema>;
 export type CommandErrorPayload = z.infer<typeof commandErrorSchema>;
 export type LocalDateTimeResolution = z.infer<
   typeof localDateTimeResolutionSchema
@@ -1149,6 +1168,25 @@ export const api = {
   },
   async status() {
     return statusSchema.parse(await invokeCommand("current_ollama_status"));
+  },
+  /** Starts the local runtime because the user asked for something that needs it. */
+  async startModelRuntime() {
+    return statusSchema.parse(await invokeCommand("start_ollama_runtime"));
+  },
+  /** Lets the model out of memory without stopping the runtime. */
+  async releaseModel() {
+    await invokeCommand("release_ollama_model");
+  },
+  async installedModels() {
+    return z
+      .array(installedModelSchema)
+      .parse(await invokeCommand("list_installed_models"));
+  },
+  async chooseModel(model: string) {
+    await invokeCommand("choose_planner_model", { model });
+  },
+  async checkModel(model: string) {
+    await invokeCommand("check_planner_model", { model });
   },
   async downloadModel() {
     await invokeCommand("download_ollama_model");

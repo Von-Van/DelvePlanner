@@ -39,6 +39,9 @@ This checklist gates publishing an existing draft GitHub Release. Record the tes
 - [ ] Disconnecting an account removes its calendars and events, deletes its Keychain item, and the grant is gone from the provider's account settings.
 - [ ] After updating from the previous build, saved calendar links and account tokens refresh without a Keychain prompt.
 - [ ] Blocking time for a task, releasing a finished task's future blocks, and planned-versus-available capacity work, including after changing working hours.
+- [ ] Opening DayPlan starts no `ollama` process; asking the planner something starts one, and quitting DayPlan leaves no `ollama` or model-runner process behind (`pgrep -fl ollama`).
+- [ ] After a force quit, the next launch ends the model server the previous one left running.
+- [ ] A model installed outside DayPlan appears in the picker, plans after its format check, and survives **Remove model**.
 - [ ] Manual update from the previous beta shows notes, asks for confirmation, installs, and relaunches.
 
 ## Windows 10 22H2 / Windows 11 x64
@@ -50,6 +53,7 @@ This checklist gates publishing an existing draft GitHub Release. Record the tes
 - [ ] Events/tasks persist across restart; tray behavior is correct.
 - [ ] Migration, recovery, JSON round-trip, stale-proposal rejection, and permission denial match macOS.
 - [ ] Calendar links and account refresh tokens are saved in Credential Manager, calendars refresh while DayPlan runs in the tray, and account connection, the picker, disconnect, time blocks, and capacity match macOS.
+- [ ] Quitting DayPlan ends `ollama.exe` and its model runner (Task Manager shows neither), and the model picker lists models installed outside DayPlan.
 - [ ] Installed-build notification fires while the window is closed and never includes notes.
 - [ ] Manual update from the previous beta verifies and installs the signed NSIS updater.
 

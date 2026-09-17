@@ -8,20 +8,20 @@ The important engineering idea is the permission boundary, not the chat box: the
 
 ## What the app includes
 
-| Area            | What it does                                                                                  | Where it runs                              |
-| --------------- | --------------------------------------------------------------------------------------------- | ------------------------------------------ |
-| Today and Week  | Timed events, overlapping events, scheduled and due tasks, milestones, plan filter            | React renderer + Rust repository           |
-| Capture         | An Inbox for unorganized thoughts, converted into tasks, plans, or events later               | React renderer + Rust repository           |
-| Planning        | Weekly and daily planning sessions, estimates, and carry-forward of unfinished work           | React renderer + Rust repository           |
-| Calendars       | Read-only Google, Outlook, iCalendar link, and `.ics` calendars, refreshed while DayPlan runs | Rust `CalendarService` + separate cache    |
-| Time & capacity | Time blocks for tasks, working hours, and planned work against available time                 | React renderer + Rust repository           |
-| Plans           | Overview with attention signals, timeline, filtered tasks, schedule, run of show              | React renderer + Rust repository           |
-| Teams           | Workstreams inside a plan and people who own tasks and events                                 | React renderer + Rust repository           |
-| Manual planning | Creates, edits, and deletes plans, milestones, tasks, and events with revision checks         | Typed Tauri commands + Rust transactions   |
-| AI planner      | Converts natural language into a preview of permitted event, plan, and task changes           | Managed local Ollama + Rust `PlannerAgent` |
-| Reminders       | Stores one optional reminder per event and retries interrupted delivery                       | SQLite outbox + native notification plugin |
-| Data safety     | Migrates, checks, backs up, exports, imports, and restores local data                         | Rust + SQLite                              |
-| Distribution    | Produces macOS and Windows installers; signed builds add user-approved updates                | GitHub Actions + Tauri updater             |
+| Area            | What it does                                                                                  | Where it runs                                           |
+| --------------- | --------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| Today and Week  | Timed events, overlapping events, scheduled and due tasks, milestones, plan filter            | React renderer + Rust repository                        |
+| Capture         | An Inbox for unorganized thoughts, converted into tasks, plans, or events later               | React renderer + Rust repository                        |
+| Planning        | Weekly and daily planning sessions, estimates, and carry-forward of unfinished work           | React renderer + Rust repository                        |
+| Calendars       | Read-only Google, Outlook, iCalendar link, and `.ics` calendars, refreshed while DayPlan runs | Rust `CalendarService` + separate cache                 |
+| Time & capacity | Time blocks for tasks, working hours, and planned work against available time                 | React renderer + Rust repository                        |
+| Plans           | Overview with attention signals, timeline, filtered tasks, schedule, run of show              | React renderer + Rust repository                        |
+| Teams           | Workstreams inside a plan and people who own tasks and events                                 | React renderer + Rust repository                        |
+| Manual planning | Creates, edits, and deletes plans, milestones, tasks, and events with revision checks         | Typed Tauri commands + Rust transactions                |
+| AI planner      | Converts natural language into a preview of permitted event, plan, and task changes           | Local Ollama, any installed model + Rust `PlannerAgent` |
+| Reminders       | Stores one optional reminder per event and retries interrupted delivery                       | SQLite outbox + native notification plugin              |
+| Data safety     | Migrates, checks, backs up, exports, imports, and restores local data                         | Rust + SQLite                                           |
+| Distribution    | Produces macOS and Windows installers; signed builds add user-approved updates                | GitHub Actions + Tauri updater                          |
 
 The desktop edition is single-device and requires no account, API key, hosted backend, or cloud AI. The earlier SwiftUI / SwiftData / WidgetKit app remains available on the [`ios-swiftui`](https://github.com/Von-Van/DayPlan/tree/ios-swiftui) branch; its data is intentionally separate.
 
@@ -58,7 +58,7 @@ flowchart TB
   subgraph persistence["4. Persistence layer"]
     Repo["PlannerDatabase repository"]
     SQLite["Versioned local SQLite database"]
-    ModelStore["Isolated qwen3:8b model files"]
+    ModelStore["DayPlan's model files, plus the machine's own, read-only"]
     CalendarCache["Calendar cache (separate SQLite, never exported)"]
   end
 
@@ -102,7 +102,7 @@ flowchart TB
 | Tauri IPC      | A narrow command surface, argument serialization, typed error responses                                                       | Business decisions or direct database queries                        |
 | Rust services  | Validation, time-zone handling, AI context, proposal/session state, calendar fetching and parsing, capacity, native workflows | Presentation state                                                   |
 | Repository     | Transactions, revisions, migrations, integrity checks, backups, reminder outbox                                               | Natural-language interpretation                                      |
-| Ollama runtime | Local inference for one pinned model                                                                                          | Database access, cloud fallback, application updates                 |
+| Ollama runtime | Local inference for the chosen installed model                                                                                | Database access, cloud fallback, application updates                 |
 
 ### Repository map
 
@@ -127,7 +127,7 @@ flowchart TB
 | [`src-tauri/src/capacity.rs`](src-tauri/src/capacity.rs)               | Working time, busy time, free time, and planned work for a window of days                                                            |
 | [`src-tauri/src/agent.rs`](src-tauri/src/agent.rs)                     | Planner session, pending proposals, and the local model request                                                                      |
 | [`src-tauri/src/agent/`](src-tauri/src/agent/)                         | Prompts and output grammar, deterministic pre-checks, and reply resolution                                                           |
-| [`src-tauri/src/runtime.rs`](src-tauri/src/runtime.rs)                 | Bundled Ollama process, private endpoint, model download, diagnostics, and lifecycle                                                 |
+| [`src-tauri/src/runtime.rs`](src-tauri/src/runtime.rs)                 | Bundled Ollama process, private endpoint, installed-model discovery, downloads, diagnostics, and start/stop lifecycle                |
 | [`eval/`](eval/)                                                       | Hand-labeled commands and machine-readable evaluation results                                                                        |
 
 ## Core data schema
@@ -369,14 +369,17 @@ Desktop caveat: the official Tauri notification plugin sends the OS notification
 
 The signed macOS and Windows installers include the Ollama server runtime; users do not install or manage Ollama separately. DayPlan pins Ollama 0.32.0, verifies its official release checksum before packaging, includes the MIT license, and updates the runtime only through signed DayPlan releases. The renderer cannot access Ollama directly.
 
+**Any local model.** DayPlan lists the models it downloaded itself alongside the ones already on the machine, read from the folder Ollama uses (`OLLAMA_MODELS`, or `~/.ollama/models`). It reads that folder and never writes to it: its own downloads stay in DayPlan's application data, so removing all AI model data can't touch a model the user installed. Only one folder is served at a time, so the runtime follows whichever holds the chosen model. `qwen3:8b` is the model the evaluation gates run against and is labelled as tested; any other model is asked one schema-constrained question it can't get wrong before it is used, and is labelled as unmeasured.
+
 On first run:
 
-- DayPlan starts its isolated runtime lazily and verifies its version;
-- the user explicitly approves the approximately 5.2 GB `qwen3:8b` download;
+- DayPlan offers the models already installed, or the approximately 5.2 GB `qwen3:8b` download, which the user explicitly approves;
 - onboarding shows progress and offers cancellation/retry; and
 - DayPlan verifies the installed model tag and digest before enabling AI.
 
-Downloaded layers and models live under DayPlan application data and survive normal app upgrades or uninstall/reinstall. Settings can restart the runtime, redownload the model, show storage/version/digest diagnostics, or explicitly remove all AI model data without touching schedule data.
+**The runtime runs only while it's working.** Asking for status never starts it. It starts for a planner request, a download, or a model check; the model is released when the window is hidden and unloaded shortly after each reply; and the server stops after five minutes with nothing to do. Quitting DayPlan ends the server and the model runner it spawned together — Ollama runs the model in a separate process, so ending only the server would leave gigabytes resident. A DayPlan that was force-quit or crashed records its server's process ID, and the next launch ends it before starting another.
+
+Downloaded layers and models live under DayPlan application data and survive normal app upgrades or uninstall/reinstall. Settings can choose the model, restart the runtime, download `qwen3:8b`, show storage/version/digest diagnostics, or explicitly remove all AI model data DayPlan downloaded without touching schedule data or the machine's own models.
 
 The supported beta baseline is macOS 13+ or Windows 10 22H2/11 x64, with 16 GB RAM recommended and roughly 10 GB free for the model and transient download data. Inference latency depends on local hardware, but calendar data stays on the machine. [Ollama license](https://github.com/ollama/ollama/blob/main/LICENSE) · [Qwen3 model](https://ollama.com/library/qwen3%3A8b)
 

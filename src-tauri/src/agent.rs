@@ -32,6 +32,9 @@ const CONTEXT_TOKENS: u32 = 8_192;
 const MAX_REPLY_TOKENS: u32 = 1_200;
 /// Long enough for a cold model load plus a full twelve-operation reply on a laptop.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(180);
+/// How long the model stays loaded after a reply. Ollama's own default is five minutes, which
+/// leaves gigabytes resident long after the user has moved on.
+const KEEP_ALIVE: &str = "90s";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -97,7 +100,9 @@ struct AgentState {
 pub struct PlannerAgent {
     client: Client,
     base_url: String,
-    model_name: String,
+    /// Which model answers. The user chooses it from what's installed, so it changes while the app
+    /// runs rather than being fixed at build time.
+    model_name: Mutex<String>,
     state: Arc<Mutex<AgentState>>,
     active_cancel: Arc<Mutex<Option<(u64, CancellationToken)>>>,
 }
@@ -127,10 +132,93 @@ impl PlannerAgent {
                 .build()
                 .expect("HTTP client configuration is valid"),
             base_url: base_url.into(),
-            model_name: model_name.into(),
+            model_name: Mutex::new(model_name.into()),
             state: Arc::new(Mutex::new(AgentState::default())),
             active_cancel: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// The model the planner is set to use.
+    pub fn model_name(&self) -> String {
+        self.model_name
+            .lock()
+            .map(|name| name.clone())
+            .unwrap_or_else(|_| MODEL_NAME.into())
+    }
+
+    /// Asks a model one question DayPlan already knows the answer to, in the shape the planner
+    /// needs it. A model that can't hold the format here won't produce a usable proposal, and the
+    /// user finds that out now rather than in the middle of planning a week.
+    pub async fn check_model(&self, model: &str) -> AppResult<()> {
+        let body = ChatRequest {
+            model,
+            stream: false,
+            think: false,
+            keep_alive: KEEP_ALIVE,
+            messages: [
+                ChatMessage {
+                    role: "system",
+                    content: "Answer only with JSON matching the schema. Do not explain.",
+                },
+                ChatMessage {
+                    role: "user",
+                    content: "How many days are in one week?",
+                },
+            ],
+            format: check_format(),
+            options: ChatOptions {
+                temperature: 0.0,
+                num_ctx: 2_048,
+                num_predict: 64,
+            },
+        };
+        let response = self
+            .client
+            .post(format!("{}/api/chat", self.base_url))
+            .json(&body)
+            .send()
+            .await
+            .map_err(|_| AppError::OllamaUnavailable)?;
+        if !response.status().is_success() {
+            // A model that rejects a JSON-schema request can't be used for planning at all.
+            return Err(AppError::Validation(format!(
+                "{model} couldn't answer in DayPlan's reply format."
+            )));
+        }
+        let bytes = response
+            .bytes()
+            .await
+            .map_err(|_| AppError::OllamaUnavailable)?;
+        let reply: OllamaChatResponse = serde_json::from_slice(&bytes)
+            .map_err(|error| AppError::InvalidModelResponse(error.to_string()))?;
+        let answer: CheckReply =
+            serde_json::from_str(reply.message.content.trim()).map_err(|_| {
+                AppError::Validation(format!(
+                    "{model} didn't reply in DayPlan's format, so the planner can't use it."
+                ))
+            })?;
+        if answer.days != 7 {
+            return Err(AppError::Validation(format!(
+                "{model} answered the format check wrongly, so its plans can't be trusted."
+            )));
+        }
+        Ok(())
+    }
+
+    /// Switches models. The session so far is dropped: a new model has none of its context, and a
+    /// half-finished conversation would be answered by something that never saw the start of it.
+    pub fn use_model(&self, model_name: &str) -> AppResult<()> {
+        self.cancel_current();
+        let mut name = self
+            .model_name
+            .lock()
+            .map_err(|_| AppError::Internal("The planner model choice is unavailable.".into()))?;
+        if *name == model_name {
+            return Ok(());
+        }
+        *name = model_name.to_string();
+        drop(name);
+        self.clear_context()
     }
 
     pub fn clear_context(&self) -> AppResult<()> {
@@ -187,7 +275,7 @@ impl PlannerAgent {
     }
 
     pub async fn status(&self) -> OllamaStatus {
-        ollama_status_at(&self.client, &self.base_url, &self.model_name).await
+        ollama_status_at(&self.client, &self.base_url, &self.model_name()).await
     }
 
     /// The deterministic question, if any, this request gets before the model is consulted.
@@ -274,10 +362,12 @@ impl PlannerAgent {
             session: &session,
             pending_proposal_id: pending_proposal_id.as_deref(),
         });
+        let model_name = self.model_name();
         let body = ChatRequest {
-            model: &self.model_name,
+            model: &model_name,
             stream: false,
             think: false,
+            keep_alive: KEEP_ALIVE,
             messages: [
                 ChatMessage {
                     role: "system",
@@ -723,6 +813,9 @@ struct ChatRequest<'a> {
     model: &'a str,
     stream: bool,
     think: bool,
+    /// How long Ollama keeps the model in memory after answering. Long enough that a follow-up in
+    /// the same sitting is fast, short enough that a planner nobody is using costs nothing.
+    keep_alive: &'static str,
     messages: [ChatMessage<'a>; 2],
     format: Schema,
     options: ChatOptions,
@@ -739,6 +832,28 @@ struct ChatOptions {
     temperature: f32,
     num_ctx: u32,
     num_predict: u32,
+}
+
+/// The shape the format check asks for: one integer, nothing else.
+fn check_format() -> Schema {
+    Schema::Object(vec![
+        ("type", Schema::Str("object".into())),
+        (
+            "properties",
+            Schema::Object(vec![(
+                "days",
+                Schema::Object(vec![("type", Schema::Str("integer".into()))]),
+            )]),
+        ),
+        ("required", Schema::List(vec![Schema::Str("days".into())])),
+        ("additionalProperties", Schema::Bool(false)),
+    ])
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CheckReply {
+    days: i64,
 }
 
 #[derive(Deserialize)]

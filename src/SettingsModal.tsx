@@ -4,6 +4,7 @@ import { relaunch } from "@tauri-apps/plugin-process";
 import { check, Update } from "@tauri-apps/plugin-updater";
 import { api, DatabaseStatus, ImportSelection, OllamaStatus } from "./api";
 import { Glyph } from "./Geometry";
+import { ModelPicker, TESTED_MODEL } from "./ModelPicker";
 
 type Props = {
   status: OllamaStatus | null;
@@ -174,10 +175,19 @@ export function SettingsModal({
           <SettingsBlock
             index="01"
             title="Local model"
-            subtitle={status?.detail ?? "Checking Ollama…"}
+            subtitle={
+              status?.phase === "stopped"
+                ? "Idle. DayPlan starts the model only while it answers you."
+                : (status?.detail ?? "Checking the local runtime…")
+            }
           >
+            <ModelPicker
+              status={status}
+              onRefreshStatus={onRefreshStatus}
+              onMessage={onMessage}
+            />
             <p>
-              Model: <strong>{status?.modelName ?? "qwen3:8b"}</strong>
+              In use: <strong>{status?.modelName ?? TESTED_MODEL}</strong>
               {status?.modelDigest
                 ? ` · ${status.modelDigest.slice(0, 16)}…`
                 : ""}
@@ -186,33 +196,6 @@ export function SettingsModal({
               <button onClick={() => void onRefreshStatus()}>
                 Refresh diagnostics
               </button>
-              {!status?.modelInstalled && (
-                <button
-                  disabled={busy === "model"}
-                  onClick={() => {
-                    if (
-                      !window.confirm(
-                        "Download qwen3:8b? It is about 5.2 GB and DayPlan recommends roughly 10 GB of free space.",
-                      )
-                    )
-                      return;
-                    void run("model", async () => {
-                      const poll = window.setInterval(
-                        () => void onRefreshStatus(),
-                        750,
-                      );
-                      try {
-                        await api.downloadModel();
-                        await onRefreshStatus();
-                      } finally {
-                        window.clearInterval(poll);
-                      }
-                    });
-                  }}
-                >
-                  Download model
-                </button>
-              )}
               {status?.phase === "downloading" && (
                 <button onClick={() => void api.cancelModelDownload()}>
                   Cancel download
@@ -235,7 +218,7 @@ export function SettingsModal({
                   onClick={() => {
                     if (
                       !window.confirm(
-                        "Remove qwen3:8b and all DayPlan AI model data? Your schedule is not affected.",
+                        `Remove ${TESTED_MODEL} and all model data DayPlan downloaded? Models in your own Ollama folder and your schedule are not affected.`,
                       )
                     )
                       return;

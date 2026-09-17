@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.3.1
+
+DayPlan now plans with whichever local model you already have, and its AI runtime only runs while it's actually working.
+
+### Use the model you already have
+
+- Settings and onboarding list every local model DayPlan can find: the ones it downloaded and the ones already installed with Ollama. Choosing one takes effect immediately.
+- DayPlan reads your Ollama model folder and never writes to it. Its own downloads stay with DayPlan, so removing DayPlan's AI model data can't delete a model you installed.
+- `qwen3:8b` is the model DayPlan is tested against and is marked as such. Any other model is asked one small question in DayPlan's reply format before it's used; if it can't answer in that format, DayPlan says so at the picker instead of failing halfway through planning a week.
+
+### Nothing running in the background
+
+- **Quitting DayPlan now stops the model.** Ollama runs a model in a second process, and DayPlan used to end only the server, leaving several gigabytes resident. It now ends both together.
+- If DayPlan is force-quit or crashes, the next launch ends the model server the old one left behind, so they stop piling up.
+- Opening DayPlan no longer starts the AI runtime. It starts when you ask the planner something, download a model, or check one, and stops again after five minutes with nothing to do.
+- The model is released from memory when you close the window, and shortly after each reply rather than five minutes later.
+
 ## v0.3.0
 
 Google Calendar and Outlook connect directly now. Sign in once in your browser, choose which calendars DayPlan should show, and they stay up to date beside your plans. Everything stays read-only: DayPlan asks only for permission to read, so it can't change, create, or delete anything in your calendars.

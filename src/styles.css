@@ -4225,3 +4225,99 @@ select:focus-visible,
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Which local model plans: DayPlan's own download beside anything already installed. */
+.model-picker {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 10px;
+}
+.model-list {
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+  list-style: none;
+}
+.model-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 9px;
+  border: 1px solid transparent;
+  color: var(--strong);
+  font: 400 13px var(--font-ui);
+}
+.model-row:hover {
+  background: var(--ground-soft);
+}
+.model-row.chosen {
+  border-color: var(--blue-frame);
+  background: linear-gradient(160deg, var(--blue-wash), #fff 60%);
+}
+/* Beats the wider full-width input rules, which would leave no room for the name. */
+.model-row input[type="radio"] {
+  flex: 0 0 14px;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--blue);
+}
+.model-main {
+  min-width: 0;
+  flex: 1;
+  display: grid;
+  gap: 2px;
+}
+.model-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 600 13px var(--font-ui);
+}
+.model-meta,
+.model-note,
+.model-empty {
+  color: var(--muted);
+  font: 400 11px var(--font-ui);
+  letter-spacing: 0.02em;
+}
+.model-note,
+.model-empty {
+  margin: 0;
+  line-height: 1.5;
+}
+.model-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 7px;
+  border: 1px solid var(--frame);
+  color: var(--muted);
+  font: 500 10px var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.model-badge.tested {
+  border-color: var(--blue-frame);
+  color: var(--blue);
+}
+.model-badge.warn {
+  border-color: var(--warning-dot);
+  color: var(--warning-text);
+}
+.model-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin: 2px 0 6px 23px;
+  color: var(--danger);
+  font: 400 11px var(--font-ui);
+  line-height: 1.5;
+}
+.model-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}

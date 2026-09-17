@@ -31,7 +31,13 @@ export function PlannerCard({
   /** When set, the planner works inside this plan: new work belongs to it by default. */
   planTitle?: string;
 }) {
-  const ready = status?.running && status.modelInstalled;
+  // Readiness is having a model, not having a server running: the runtime starts when a request
+  // is sent and stops again once nobody is asking anything.
+  const ready = status?.modelInstalled ?? false;
+  const stateDetail =
+    status?.phase === "stopped" && ready
+      ? `${status.modelName} · starts when you ask something`
+      : (status?.detail ?? "Checking your local model…");
   const previews =
     response?.kind === "proposal" ? describeProposal(response) : [];
   return (
@@ -57,9 +63,9 @@ export function PlannerCard({
         <span />
         <div>
           <strong>
-            {ready ? "Local model ready" : "Local model setup needed"}
+            {ready ? "Local model ready" : "Choose a local model"}
           </strong>
-          <p>{status?.detail ?? "Checking your local model…"}</p>
+          <p>{stateDetail}</p>
         </div>
         <button
           onClick={onRefreshStatus}

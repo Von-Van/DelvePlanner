@@ -13,6 +13,7 @@ Every version answers to one test: can someone with several things going on open
 | v0.2.5  | 1        | Core planning workflow         | Inbox, estimates, weekly and daily planning, carry-forward, promotion     |
 | v0.2.9  | 2        | Calendars without accounts     | Calendar links and files, time blocks, capacity                           |
 | v0.3.0  | 2        | Calendar integration           | Google and Outlook accounts, read-only                                    |
+| v0.3.1  | 2        | Local model flexibility        | Any installed model, and a runtime that runs only while it works          |
 | v0.3.2  | 3        | AI planning                    | Plan creation and breakdown, inbox, week, day, and replanning proposals   |
 | v0.3.5  | 4        | Personal planning intelligence | Planning profile, local observations, What DayPlan Knows                  |
 | v0.4.0  | 5        | Quality of life                | Templates, recurring tasks, checklists, duplication, dependencies, polish |
@@ -105,6 +106,18 @@ Priority 2. DayPlan learns when you're actually busy. External calendars stay re
 - Google app verification before a broad release. Calendar scopes are sensitive: unverified apps show a warning and have a lifetime cap of 100 new users, and a client left in Testing status hands out refresh tokens that expire after seven days.
 - Microsoft publisher verification, if Outlook should stop being labelled unverified. It needs a partner account for a legal entity, so a personal registration can't have it.
 - Release signing. macOS ties keychain access to the app's code signature, and an ad-hoc signature changes with every build, so unsigned updates ask for keychain access again after each install — once per calendar link and once per account token.
+
+## v0.3.1 — Local model flexibility
+
+Priority 2. DayPlan uses the local AI the machine already has, and stops costing anything when nobody is asking it for anything.
+
+- **Any installed model.** The model picker lists what DayPlan downloaded alongside what's already installed, read from the folder Ollama uses (`OLLAMA_MODELS`, else `~/.ollama/models`). Ollama serves one folder at a time, so the runtime follows the chosen model's folder. DayPlan only reads the machine's folder: its own downloads stay in its application data, so removing DayPlan's model data can never delete a model the user installed.
+- **Tested versus merely working.** `qwen3:8b` stays the model the eval gates run against and is labelled tested. Any other choice is asked one schema-constrained question it can't get wrong; a model that can't hold the reply format says so at the picker rather than halfway through planning a week. The result is remembered per model.
+- **Quitting means quitting.** Ollama runs a model in a separate runner process, so DayPlan starts the server in its own process group and ends the group on exit. The exit hook runs on Tauri's `Exit` event, because destructors don't run when the app exits. A force-quit or crash leaves a recorded process ID, and the next launch ends it before starting another.
+- **Idle costs nothing.** Reading status never starts the runtime; a planner request, a download, or a model check does. The model is released when the window is hidden and unloads shortly after each reply, and the server stops after five minutes with nothing to do.
+- **Docs.** The README's bundled-runtime section covers choosing a model and the lifecycle, and the release checklist verifies that quitting leaves nothing running.
+
+**Done when:** a machine with its own Ollama models can plan without downloading anything, and quitting DayPlan leaves no `ollama` process behind.
 
 ## v0.3.2 — AI planning
 

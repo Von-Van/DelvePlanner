@@ -4,8 +4,9 @@ import {
   isPermissionGranted,
   requestPermission,
 } from "@tauri-apps/plugin-notification";
-import { api, OllamaStatus } from "./api";
+import { OllamaStatus } from "./api";
 import { Glyph, Mark } from "./Geometry";
+import { ModelPicker, TESTED_MODEL } from "./ModelPicker";
 
 export function Onboarding({
   status,
@@ -22,7 +23,6 @@ export function Onboarding({
   const [permission, setPermission] = useState<
     "unknown" | "granted" | "denied"
   >("unknown");
-  const [downloading, setDownloading] = useState(false);
   const dialogRef = useRef<HTMLElement>(null);
   useEffect(() => {
     dialogRef.current?.focus();
@@ -48,7 +48,9 @@ export function Onboarding({
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, []);
-  const ready = status?.running && status.modelInstalled;
+  // A model DayPlan can use is what "ready" means now; the runtime itself only runs during a
+  // request, so an idle runtime is the healthy state rather than something to fix.
+  const ready = status?.modelInstalled ?? false;
   const finish = () => {
     localStorage.setItem("dayplan-onboarding", "complete");
     onComplete();
@@ -59,25 +61,6 @@ export function Onboarding({
       setPermission(next === "granted" ? "granted" : "denied");
     } catch (cause) {
       onMessage(cause instanceof Error ? cause.message : String(cause));
-    }
-  }
-  async function downloadModel() {
-    if (
-      !window.confirm(
-        "Download qwen3:8b now? It is about 5.2 GB and DayPlan recommends roughly 10 GB of free space. The model's license will be stored with the model metadata.",
-      )
-    )
-      return;
-    setDownloading(true);
-    const poll = window.setInterval(() => void onRefresh(), 750);
-    try {
-      await api.downloadModel();
-      await onRefresh();
-    } catch (cause) {
-      onMessage(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      window.clearInterval(poll);
-      setDownloading(false);
     }
   }
   const panels = [
@@ -109,32 +92,27 @@ export function Onboarding({
       <h2>Your private AI runs inside DayPlan.</h2>
       <div className={`setup-status ${ready ? "ready" : ""}`}>
         <span />
-        {status?.detail ?? "Checking Ollama and qwen3:8b…"}
+        {ready
+          ? "Ready. DayPlan starts the model only while it answers you."
+          : "Choose a local model, or download the one DayPlan is tested against."}
       </div>
       <p className="onboarding-model-note">
-        The Ollama runtime is included. The qwen3:8b model is a separate
-        one-time download of about 5.2 GB; allow roughly 10 GB of free space.
+        The Ollama runtime is included. DayPlan uses models you already have,
+        and reads your Ollama folder without changing anything in it.
       </p>
-      {status?.download?.percent !== null && status?.download && (
-        <progress max="100" value={status.download.percent ?? undefined}>
-          {status.download.percent ?? 0}%
-        </progress>
-      )}
+      <ModelPicker
+        status={status}
+        onRefreshStatus={onRefresh}
+        onMessage={onMessage}
+      />
       <div className="onboarding-links">
-        {!ready && (
-          <button disabled={downloading} onClick={() => void downloadModel()}>
-            {downloading ? "Downloading…" : "Download model"}
-          </button>
-        )}
-        {downloading && (
-          <button onClick={() => void api.cancelModelDownload()}>Cancel</button>
-        )}
         <button
-          onClick={() => void openUrl("https://ollama.com/library/qwen3:8b")}
+          onClick={() =>
+            void openUrl(`https://ollama.com/library/${TESTED_MODEL}`)
+          }
         >
           Model details &amp; license
         </button>
-        <button onClick={() => void onRefresh()}>Check again</button>
       </div>
       <button
         className="primary-button onboarding-next"

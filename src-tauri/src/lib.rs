@@ -27,7 +27,7 @@ use model::{
     UpdatePersonInput, UpdatePlanInput, UpdateTaskBlockInput, UpdateTaskInput,
     UpdateWorkingHoursInput, UpdateWorkstreamInput, WorkingHours, Workstream,
 };
-use runtime::OllamaRuntimeManager;
+use runtime::{InstalledModel, OllamaRuntimeManager};
 use serde::Serialize;
 use std::fs::{self, File};
 use std::io::{Read, Write};
@@ -866,6 +866,65 @@ fn cancel_ollama_model_download(state: State<'_, AppState>) {
     state.ollama.cancel_download();
 }
 
+/// Every model DayPlan could plan with: the one it downloaded and anything already installed on
+/// the machine. Reading them starts nothing.
+#[tauri::command]
+fn list_installed_models(state: State<'_, AppState>) -> Result<Vec<InstalledModel>, CommandError> {
+    Ok(state.ollama.installed_models())
+}
+
+/// Switches the planner to another installed model.
+#[tauri::command]
+async fn choose_planner_model(
+    state: State<'_, AppState>,
+    model: String,
+) -> Result<(), CommandError> {
+    state
+        .ollama
+        .choose_model(&model)
+        .map_err(CommandError::from)?;
+    state.agent.use_model(&model).map_err(CommandError::from)?;
+    tauri_plugin_log::log::info!("planner_model_chosen");
+    Ok(())
+}
+
+/// Asks a model DayPlan hasn't been evaluated against whether it can answer in the planner's
+/// reply format. Starting the runtime is part of the check, so this is a deliberate action.
+#[tauri::command]
+async fn check_planner_model(
+    state: State<'_, AppState>,
+    model: String,
+) -> Result<(), CommandError> {
+    state.ollama.note_used();
+    state
+        .ollama
+        .ensure_started(&state.agent)
+        .await
+        .map_err(CommandError::from)?;
+    state
+        .agent
+        .check_model(&model)
+        .await
+        .map_err(CommandError::from)?;
+    state.ollama.mark_checked(&model);
+    Ok(())
+}
+
+/// Starts the runtime because the user asked for something that needs it. Status alone never
+/// does: an open DayPlan that nobody is asking anything shouldn't be running a model server.
+#[tauri::command]
+async fn start_ollama_runtime(state: State<'_, AppState>) -> Result<OllamaStatus, CommandError> {
+    state.ollama.note_used();
+    Ok(state.ollama.started_status(&state.agent).await)
+}
+
+/// Lets the model go without stopping the server, for when the user leaves the planner.
+#[tauri::command]
+async fn release_ollama_model(state: State<'_, AppState>) -> Result<(), CommandError> {
+    state.ollama.unload_model(&state.agent.model_name()).await;
+    Ok(())
+}
+
 #[tauri::command]
 async fn restart_ollama_runtime(state: State<'_, AppState>) -> Result<(), CommandError> {
     state
@@ -1037,6 +1096,7 @@ async fn propose_schedule_changes(
         .ensure_started(&state.agent)
         .await
         .map_err(CommandError::from)?;
+    state.ollama.note_used();
     let referenced_ids = state.agent.referenced_ids();
     let candidates = with_database(&state, |database| {
         database.planner_candidates(&CandidateRequest {
@@ -1225,6 +1285,13 @@ pub fn run() {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
                 let _ = window.hide();
+                // Nothing can ask the planner anything with the window away, so the model needn't
+                // stay in memory. The runtime itself stops on its own idle timer.
+                if let Some(state) = window.try_state::<AppState>() {
+                    let ollama = state.ollama.clone();
+                    let model = state.agent.model_name();
+                    tauri::async_runtime::spawn(async move { ollama.unload_model(&model).await });
+                }
             }
         })
         .setup(|app| {
@@ -1239,7 +1306,11 @@ pub fn run() {
                 .map_err(|error| error.to_string())?;
             let ollama = OllamaRuntimeManager::new(resource_directory, directory.clone())
                 .map_err(|error| error.to_string())?;
-            let agent = PlannerAgent::new(ollama.endpoint(), agent::MODEL_NAME);
+            // Whichever model the user chose last, or the one DayPlan ships against.
+            let model = ollama
+                .chosen_model()
+                .unwrap_or_else(|| agent::MODEL_NAME.to_string());
+            let agent = PlannerAgent::new(ollama.endpoint(), model);
             let calendars = CalendarService::new(
                 directory.join("calendars.sqlite3"),
                 calendar::secrets::system_vault(&app.config().identifier),
@@ -1257,7 +1328,8 @@ pub fn run() {
             install_tray(app)?;
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(reminder_worker(handle.clone()));
-            tauri::async_runtime::spawn(calendar_worker(handle));
+            tauri::async_runtime::spawn(calendar_worker(handle.clone()));
+            tauri::async_runtime::spawn(runtime_idle_worker(handle));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1322,6 +1394,11 @@ pub fn run() {
             discard_selected_import,
             restore_database_backup,
             current_ollama_status,
+            list_installed_models,
+            choose_planner_model,
+            check_planner_model,
+            start_ollama_runtime,
+            release_ollama_model,
             download_ollama_model,
             cancel_ollama_model_download,
             restart_ollama_runtime,
@@ -1333,6 +1410,25 @@ pub fn run() {
             cancel_planner_request,
             clear_planner_context,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running DayPlan desktop");
+        .build(tauri::generate_context!())
+        .expect("error while running DayPlan desktop")
+        .run(|handle, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                if let Some(state) = handle.try_state::<AppState>() {
+                    state.ollama.shutdown();
+                }
+            }
+        });
+}
+
+/// Stops the local AI runtime once nobody has needed it for a while, so an app left open all day
+/// isn't also leaving a model server up all day.
+async fn runtime_idle_worker(app: tauri::AppHandle) {
+    loop {
+        tokio::time::sleep(runtime::IDLE_CHECK).await;
+        let Some(state) = app.try_state::<AppState>() else {
+            return;
+        };
+        state.ollama.stop_if_idle().await;
+    }
 }
