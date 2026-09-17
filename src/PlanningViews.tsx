@@ -2,6 +2,7 @@ import { ReactNode, useEffect, useRef, useState } from "react";
 import {
   Agenda,
   api,
+  Capacity,
   messageFor,
   Milestone,
   Person,
@@ -9,6 +10,7 @@ import {
   PlanningBoard,
   Task,
 } from "./api";
+import { capacityLine, capacityTotals, hoursLabel } from "./calendars";
 import {
   dayLabel,
   localTimeZone,
@@ -63,6 +65,7 @@ export function PlanWeekView({
   const [start, setStart] = useState(currentWeek);
   const [board, setBoard] = useState<PlanningBoard | null>(null);
   const [week, setWeek] = useState<Agenda | null>(null);
+  const [capacity, setCapacity] = useState<Capacity | null>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
   useHeadingFocus(headingRef, props.focusToken);
   const mover = useTaskMover({
@@ -73,11 +76,16 @@ export function PlanWeekView({
 
   useEffect(() => {
     let current = true;
-    Promise.all([api.planningBoard(start), api.listWeek(start, localTimeZone)])
-      .then(([nextBoard, nextWeek]) => {
+    Promise.all([
+      api.planningBoard(start),
+      api.listWeek(start, localTimeZone),
+      api.capacity(start, 7, localTimeZone).catch(() => null),
+    ])
+      .then(([nextBoard, nextWeek, nextCapacity]) => {
         if (!current) return;
         setBoard(nextBoard);
         setWeek(nextWeek);
+        setCapacity(nextCapacity);
       })
       .catch((cause) => onMessage(messageFor(cause)));
     return () => {
@@ -178,6 +186,9 @@ export function PlanWeekView({
               const events = week.events.filter(
                 (event) => eventDay(event) === day,
               );
+              const dayCapacity = capacity?.days.find(
+                (candidate) => candidate.day === day,
+              );
               return (
                 <li
                   key={day}
@@ -195,6 +206,18 @@ export function PlanWeekView({
                   </small>
                   {events.length > 0 && (
                     <small>{plural(events.length, "event")}</small>
+                  )}
+                  {dayCapacity && dayCapacity.workingMinutes > 0 && (
+                    <small
+                      className={
+                        dayCapacity.plannedMinutes >
+                        dayCapacity.availableMinutes
+                          ? "over"
+                          : "available"
+                      }
+                    >
+                      {hoursLabel(dayCapacity.availableMinutes)} available
+                    </small>
                   )}
                 </li>
               );
@@ -290,6 +313,7 @@ export function PlanWeekView({
                   {workloadLabel(workload(sections.chosen)) ?? "Nothing yet"}
                 </span>
               </div>
+              {capacity && <CapacityNote capacity={capacity} includePool />}
               {sections.chosen.length === 0 ? (
                 <p className="empty-tasks">
                   Nothing chosen yet. Add work from the left.
@@ -344,6 +368,7 @@ export function PlanTodayView({
   const weekStart = weekStartDay(today, weekStartsOn);
   const [board, setBoard] = useState<PlanningBoard | null>(null);
   const [agenda, setAgenda] = useState<Agenda | null>(null);
+  const [capacity, setCapacity] = useState<Capacity | null>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
   useHeadingFocus(headingRef, props.focusToken);
   const mover = useTaskMover({
@@ -357,11 +382,13 @@ export function PlanTodayView({
     Promise.all([
       api.planningBoard(weekStart),
       api.listAgenda(today, localTimeZone),
+      api.capacity(today, 1, localTimeZone).catch(() => null),
     ])
-      .then(([nextBoard, nextAgenda]) => {
+      .then(([nextBoard, nextAgenda, nextCapacity]) => {
         if (!current) return;
         setBoard(nextBoard);
         setAgenda(nextAgenda);
+        setCapacity(nextCapacity);
       })
       .catch((cause) => onMessage(messageFor(cause)));
     return () => {
@@ -495,12 +522,16 @@ export function PlanTodayView({
                 {workloadLabel(workload(sections.planned)) ?? "Nothing yet"}
               </span>
             </div>
-            {agenda.events.length > 0 && (
-              <p className="session-note">
-                <Mark shape="circle" size={6} />
-                {plural(agenda.events.length, "event")} ·{" "}
-                {estimateLabel(eventMinutes)} already on the calendar
-              </p>
+            {capacity ? (
+              <CapacityNote capacity={capacity} includePool={false} />
+            ) : (
+              agenda.events.length > 0 && (
+                <p className="session-note">
+                  <Mark shape="circle" size={6} />
+                  {plural(agenda.events.length, "event")} ·{" "}
+                  {estimateLabel(eventMinutes)} already on the calendar
+                </p>
+              )
             )}
             {sections.planned.length === 0 ? (
               <p className="empty-tasks">
@@ -516,6 +547,46 @@ export function PlanTodayView({
       )}
       {mover.dialog}
     </div>
+  );
+}
+
+/**
+ * Planned work against the time working hours leave after events and busy calendar time. It
+ * only informs; nothing is moved because of it.
+ */
+function CapacityNote({
+  capacity,
+  includePool,
+}: {
+  capacity: Capacity;
+  /** Whether week-pool work with no day counts, as it does for a whole week. */
+  includePool: boolean;
+}) {
+  const totals = capacityTotals(capacity, { includePool });
+  const line = capacityLine(totals);
+  if (totals.workingMinutes === 0)
+    return (
+      <p className="session-note">
+        <Mark shape="circle" size={6} />
+        No working hours {includePool ? "this week" : "today"}
+      </p>
+    );
+  return (
+    <p className={`session-note capacity-note ${line.over ? "over" : ""}`}>
+      <Mark
+        shape="circle"
+        size={6}
+        filled={line.over}
+        color={line.over ? "var(--warning-dot)" : undefined}
+      />
+      <span>
+        {line.label}
+        {totals.busyMinutes > 0 &&
+          ` · ${hoursLabel(totals.busyMinutes)} already busy`}
+        {line.over && ` · over by ${hoursLabel(line.overBy)}`}
+        {capacity.calendarsIncomplete && " · some calendar time may be missing"}
+      </span>
+    </p>
   );
 }
 
@@ -567,6 +638,7 @@ function SessionTaskRow({
         weekStart,
         move: (tasks, target) => void mover.move(tasks, target),
         pickDay: mover.pickDay,
+        blockTime: mover.blockTime,
       })}
       onToggle={() => void toggle()}
       onOpen={() => onOpenTask(task)}

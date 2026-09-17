@@ -393,6 +393,7 @@ export function PlanView({
                 weekStart,
                 move: (tasks, target) => void mover.move(tasks, target),
                 pickDay: mover.pickDay,
+                blockTime: mover.blockTime,
               })
             }
             onAdd={addTask}

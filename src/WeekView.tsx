@@ -1,12 +1,24 @@
-import { ReactNode, RefObject } from "react";
+import { CSSProperties, ReactNode, RefObject } from "react";
 import type {
   Agenda,
+  CalendarAgenda,
+  Capacity,
   Milestone,
   Person,
   Plan,
+  ScheduledBlock,
   ScheduleEvent,
   Task,
 } from "./api";
+import {
+  agendaItems,
+  allDayEventsOn,
+  calendarColor,
+  capacityLine,
+  capacityTotals,
+  hoursLabel,
+  itemsOnDay,
+} from "./calendars";
 import {
   dayLabel,
   offsetDay,
@@ -33,6 +45,8 @@ export function WeekView({
   today,
   agenda,
   plannedTasks,
+  calendar,
+  capacity,
   onPlanWeek,
   loading,
   planFilter,
@@ -45,6 +59,8 @@ export function WeekView({
   onThisWeek,
   onOpenDay,
   onOpenEvent,
+  onOpenBlock,
+  onOpenCalendars,
   onOpenTask,
   onToggleTask,
   onOpenMilestone,
@@ -54,6 +70,9 @@ export function WeekView({
   agenda: Agenda | null;
   /** Tasks chosen for this week that have no day yet. */
   plannedTasks: Task[];
+  /** Events from read-only calendars for the week, when they could be read. */
+  calendar: CalendarAgenda | null;
+  capacity: Capacity | null;
   onPlanWeek: () => void;
   loading: boolean;
   planFilter: PlanFilter;
@@ -66,6 +85,8 @@ export function WeekView({
   onThisWeek: () => void;
   onOpenDay: (day: string) => void;
   onOpenEvent: (event: ScheduleEvent) => void;
+  onOpenBlock: (scheduled: ScheduledBlock) => void;
+  onOpenCalendars: () => void;
   onOpenTask: (task: Task) => void;
   onToggleTask: (task: Task) => void;
   onOpenMilestone: (milestone: Milestone) => void;
@@ -79,12 +100,29 @@ export function WeekView({
     milestones: agenda.milestones.filter((item) =>
       matchesPlanFilter(item, planFilter),
     ),
+    blocks: agenda.blocks.filter((item) =>
+      matchesPlanFilter(item.task, planFilter),
+    ),
   };
+  // Other calendars' events belong to no plan, so a filter for one plan hides them.
+  const external =
+    planFilter === "all" || planFilter === "none"
+      ? (calendar?.events ?? [])
+      : [];
+  const calendars = calendar?.calendars ?? [];
+  const calendarById = new Map(calendars.map((item) => [item.id, item]));
   const days = filtered ? groupWeek(filtered, startDay) : [];
+  const items = filtered
+    ? agendaItems([], filtered.blocks, external, calendars)
+    : [];
   const pooled = plannedTasks.filter((task) =>
     matchesPlanFilter(task, planFilter),
   );
   const endDay = offsetDay(startDay, 6);
+  const timedExternal = external.filter((event) => !event.allDay).length;
+  const line = capacity
+    ? capacityLine(capacityTotals(capacity, { includePool: true }))
+    : null;
   return (
     <div className="week-page">
       <header className="topbar">
@@ -122,9 +160,12 @@ export function WeekView({
           <p className="week-summary" aria-live="polite">
             {[
               plural(filtered.events.length, "event"),
+              timedExternal > 0 && plural(timedExternal, "calendar event"),
               plural(filtered.tasks.length, "scheduled task"),
               pooled.length > 0 &&
                 `${plural(pooled.length, "task")} with no day`,
+              filtered.blocks.length > 0 &&
+                plural(filtered.blocks.length, "time block"),
               plural(filtered.dueTasks.length, "due task"),
               plural(filtered.milestones.length, "milestone"),
             ]
@@ -136,6 +177,28 @@ export function WeekView({
         )}
         {filterControl}
       </div>
+      {line && (
+        <button
+          className={`week-capacity ${line.over ? "over" : ""}`}
+          onClick={onOpenCalendars}
+          title="Working hours and calendars"
+        >
+          <Mark
+            size={7}
+            filled
+            color={line.over ? "var(--warning-dot)" : "var(--blue)"}
+          />
+          <strong>{line.label}</strong>
+          {line.over && (
+            <span>
+              Over by {hoursLabel(line.overBy)} · nothing moves on its own
+            </span>
+          )}
+          {capacity?.calendarsIncomplete && (
+            <span>Some calendar time may be missing</span>
+          )}
+        </button>
+      )}
       {loading && !filtered ? (
         <div className="loading-line">
           <Spinner size={10} />
@@ -187,8 +250,95 @@ export function WeekView({
           )}
           <ol className="week-days">
             {days.map((group) => {
+              const allDay = allDayEventsOn(external, group.day);
+              const extra = itemsOnDay(items, group.day, startDay);
+              const timed = [
+                ...group.events.map((event) => ({
+                  start: event.startAtUtc,
+                  node: (
+                    <li key={event.id} className="week-event">
+                      <button onClick={() => onOpenEvent(event)}>
+                        <time>{timeLabel(event.startAtUtc)}</time>
+                        <span className="week-title">{event.title}</span>
+                        {event.reminderMinutesBefore !== null && (
+                          <i
+                            className="week-reminder"
+                            role="img"
+                            aria-label="Has a reminder"
+                          />
+                        )}
+                        {event.ownerId && (
+                          <small>
+                            {personById.get(event.ownerId)?.displayName}
+                          </small>
+                        )}
+                        <PlanChip
+                          plan={
+                            event.planId
+                              ? planById.get(event.planId)
+                              : undefined
+                          }
+                        />
+                      </button>
+                    </li>
+                  ),
+                })),
+                ...extra.map((item) => ({
+                  start: item.start,
+                  node:
+                    item.kind === "block" ? (
+                      <li
+                        key={item.key}
+                        className={`week-event week-block ${item.scheduled.task.status === "done" ? "done" : ""}`}
+                        style={
+                          {
+                            "--plan-color": planColor(
+                              item.scheduled.task.planId
+                                ? planById.get(item.scheduled.task.planId)
+                                : undefined,
+                            ),
+                          } as CSSProperties
+                        }
+                      >
+                        <button onClick={() => onOpenBlock(item.scheduled)}>
+                          <time>{timeLabel(item.start)}</time>
+                          <span className="week-title">
+                            {item.scheduled.task.title}
+                          </span>
+                          <small>
+                            Block ·{" "}
+                            {hoursLabel(item.scheduled.block.durationMinutes)}
+                          </small>
+                        </button>
+                      </li>
+                    ) : item.kind === "external" ? (
+                      <li
+                        key={item.key}
+                        className={`week-event week-external ${item.event.busy ? "" : "free"}`}
+                        style={
+                          {
+                            "--calendar-color": calendarColor(item.calendar),
+                          } as CSSProperties
+                        }
+                      >
+                        <div className="week-external-line">
+                          <time>{timeLabel(item.start)}</time>
+                          <span className="week-title">{item.event.title}</span>
+                          <small>{item.calendar?.name ?? "Calendar"}</small>
+                        </div>
+                      </li>
+                    ) : null,
+                })),
+              ].sort(
+                (left, right) =>
+                  Date.parse(left.start) - Date.parse(right.start),
+              );
+              const dayCapacity = capacity?.days.find(
+                (candidate) => candidate.day === group.day,
+              );
               const empty =
-                group.events.length +
+                timed.length +
+                  allDay.length +
                   group.tasks.length +
                   group.dueTasks.length +
                   group.milestones.length ===
@@ -208,6 +358,18 @@ export function WeekView({
                       {shortDate(group.day)} ·{" "}
                       {relativeDayLabel(group.day, today)}
                     </span>
+                    {dayCapacity && dayCapacity.workingMinutes > 0 && (
+                      <small
+                        className={
+                          dayCapacity.plannedMinutes >
+                          dayCapacity.availableMinutes
+                            ? "over"
+                            : ""
+                        }
+                      >
+                        {hoursLabel(dayCapacity.availableMinutes)} available
+                      </small>
+                    )}
                   </button>
                   {empty ? (
                     <p className="week-empty">Nothing planned.</p>
@@ -229,33 +391,29 @@ export function WeekView({
                           </button>
                         </li>
                       ))}
-                      {group.events.map((event) => (
-                        <li key={event.id} className="week-event">
-                          <button onClick={() => onOpenEvent(event)}>
-                            <time>{timeLabel(event.startAtUtc)}</time>
+                      {allDay.map((event) => (
+                        <li
+                          key={`${event.calendarId}-${event.key}`}
+                          className="week-all-day"
+                          style={
+                            {
+                              "--calendar-color": calendarColor(
+                                calendarById.get(event.calendarId),
+                              ),
+                            } as CSSProperties
+                          }
+                        >
+                          <div className="week-external-line">
+                            <time>All day</time>
                             <span className="week-title">{event.title}</span>
-                            {event.reminderMinutesBefore !== null && (
-                              <i
-                                className="week-reminder"
-                                role="img"
-                                aria-label="Has a reminder"
-                              />
-                            )}
-                            {event.ownerId && (
-                              <small>
-                                {personById.get(event.ownerId)?.displayName}
-                              </small>
-                            )}
-                            <PlanChip
-                              plan={
-                                event.planId
-                                  ? planById.get(event.planId)
-                                  : undefined
-                              }
-                            />
-                          </button>
+                            <small>
+                              {calendarById.get(event.calendarId)?.name ??
+                                "Calendar"}
+                            </small>
+                          </div>
                         </li>
                       ))}
+                      {timed.map((entry) => entry.node)}
                       {[...group.tasks, ...group.dueTasks].map((task) => {
                         const done = task.status === "done";
                         const due = task.dueDate === group.day;

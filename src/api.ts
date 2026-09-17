@@ -160,6 +160,135 @@ export const inboxItemSchema = z
   })
   .strict();
 
+export const taskBlockSchema = z
+  .object({
+    id: z.string().uuid(),
+    taskId: z.string().uuid(),
+    startAtUtc: timestampSchema,
+    timeZone: z.string(),
+    durationMinutes: z.number().int().min(5).max(1440),
+    revision: revisionSchema,
+    createdAt: timestampSchema,
+    updatedAt: timestampSchema,
+  })
+  .strict();
+
+const scheduledBlockSchema = z
+  .object({ block: taskBlockSchema, task: taskSchema })
+  .strict();
+
+export const calendarKinds = ["ics_link", "ics_file"] as const;
+export const calendarProblems = [
+  "not_a_calendar",
+  "too_large",
+  "link_not_found",
+  "link_refused",
+  "unreachable",
+  "rate_limited",
+  "server_error",
+  "link_unavailable",
+] as const;
+
+export const calendarSchema = z
+  .object({
+    id: z.string().uuid(),
+    kind: z.enum(calendarKinds),
+    name: z.string(),
+    color: z.enum(planColors),
+    visible: z.boolean(),
+    sourceLabel: z.string(),
+    problem: z
+      .object({
+        code: z.enum(calendarProblems),
+        message: z.string(),
+        retryable: z.boolean(),
+      })
+      .strict()
+      .nullable(),
+    lastSyncedAt: timestampSchema.nullable(),
+    lastAttemptAt: timestampSchema.nullable(),
+    eventCount: z.number().int().nonnegative(),
+    revision: revisionSchema,
+    createdAt: timestampSchema,
+    updatedAt: timestampSchema,
+  })
+  .strict();
+
+/** One occurrence from a read-only calendar: UTC instants when timed, local dates when all-day. */
+export const externalEventSchema = z
+  .object({
+    calendarId: z.string().uuid(),
+    key: z.string().min(1),
+    title: z.string(),
+    location: z.string(),
+    allDay: z.boolean(),
+    startAtUtc: timestampSchema.nullable(),
+    endAtUtc: timestampSchema.nullable(),
+    startDate: daySchema.nullable(),
+    endDate: daySchema.nullable(),
+    busy: z.boolean(),
+    tentative: z.boolean(),
+    recurring: z.boolean(),
+  })
+  .strict()
+  .refine(
+    (event) =>
+      event.allDay
+        ? event.startDate !== null && event.endDate !== null
+        : event.startAtUtc !== null && event.endAtUtc !== null,
+    "An external event needs dates when all-day and times otherwise.",
+  );
+
+const calendarAgendaSchema = z
+  .object({
+    calendars: z.array(calendarSchema),
+    events: z.array(externalEventSchema),
+  })
+  .strict();
+
+export const workingHoursSchema = z
+  .object({
+    days: z.array(z.number().int().min(1).max(7)),
+    startMinute: z.number().int().min(0).max(1439),
+    endMinute: z.number().int().min(1).max(1440),
+    revision: revisionSchema,
+    updatedAt: timestampSchema,
+  })
+  .strict();
+
+const minutesSchema = z.number().int().nonnegative();
+const countSchema = z.number().int().nonnegative();
+
+export const capacitySchema = z
+  .object({
+    workingHours: workingHoursSchema,
+    days: z.array(
+      z
+        .object({
+          day: daySchema,
+          workingMinutes: minutesSchema,
+          busyMinutes: minutesSchema,
+          availableMinutes: minutesSchema,
+          plannedMinutes: minutesSchema,
+          unestimatedTasks: countSchema,
+          blockedMinutes: minutesSchema,
+          free: z.array(
+            z
+              .object({
+                startAtUtc: timestampSchema,
+                endAtUtc: timestampSchema,
+              })
+              .strict(),
+          ),
+        })
+        .strict(),
+    ),
+    pooledMinutes: minutesSchema,
+    pooledUnestimatedTasks: countSchema,
+    calendarsIncomplete: z.boolean(),
+  })
+  .strict();
+
 const inboxConversionSchema = z
   .object({
     kind: z.enum(["task", "plan", "event"]),
@@ -418,6 +547,7 @@ const agendaSchema = z
     tasks: z.array(taskSchema),
     dueTasks: z.array(taskSchema),
     milestones: z.array(milestoneSchema),
+    blocks: z.array(scheduledBlockSchema),
   })
   .strict();
 
@@ -511,6 +641,7 @@ const importPreviewSchema = z
     eventCount: z.number().int().nonnegative(),
     taskCount: z.number().int().nonnegative(),
     inboxItemCount: z.number().int().nonnegative(),
+    taskBlockCount: z.number().int().nonnegative(),
     earliestDay: z.string().nullable(),
     latestDay: z.string().nullable(),
   })
@@ -540,6 +671,15 @@ export type InboxConversion = z.infer<typeof inboxConversionSchema>;
 export type Milestone = z.infer<typeof milestoneSchema>;
 export type MilestoneStatus = Milestone["status"];
 export type Task = z.infer<typeof taskSchema>;
+export type TaskBlock = z.infer<typeof taskBlockSchema>;
+export type ScheduledBlock = z.infer<typeof scheduledBlockSchema>;
+export type Calendar = z.infer<typeof calendarSchema>;
+export type CalendarProblem = NonNullable<Calendar["problem"]>;
+export type ExternalEvent = z.infer<typeof externalEventSchema>;
+export type CalendarAgenda = z.infer<typeof calendarAgendaSchema>;
+export type WorkingHours = z.infer<typeof workingHoursSchema>;
+export type Capacity = z.infer<typeof capacitySchema>;
+export type DayCapacity = Capacity["days"][number];
 export type TaskStatus = Task["status"];
 export type TaskPriority = Task["priority"];
 export type PlannerResponse = z.infer<typeof plannerResponseSchema>;
@@ -592,6 +732,15 @@ export type InboxTarget =
   | { kind: "task"; task: TaskInput }
   | { kind: "plan"; plan: PlanInput }
   | { kind: "event"; event: EventInput };
+export type TaskBlockInput = {
+  startAtUtc: string;
+  timeZone: string;
+  durationMinutes: number;
+};
+export type WorkingHoursInput = Pick<
+  WorkingHours,
+  "days" | "startMinute" | "endMinute"
+>;
 /** Moves one task between Plan, Week, and Today; a batch applies in one transaction. */
 export type TaskMove = {
   id: string;
@@ -798,6 +947,132 @@ export const api = {
     return z
       .array(taskSchema)
       .parse(await invokeCommand("move_tasks", { moves }));
+  },
+  async createTaskBlock(taskId: string, input: TaskBlockInput) {
+    return scheduledBlockSchema.parse(
+      await invokeCommand("create_task_block", { input: { taskId, ...input } }),
+    );
+  },
+  async updateTaskBlock(block: TaskBlock, input: TaskBlockInput) {
+    return scheduledBlockSchema.parse(
+      await invokeCommand("update_task_block", {
+        input: { id: block.id, revision: block.revision, ...input },
+      }),
+    );
+  },
+  /** Deletes every listed block in one transaction, or none if any changed. */
+  async deleteTaskBlocks(blocks: Pick<TaskBlock, "id" | "revision">[]) {
+    await invokeCommand("delete_task_blocks", {
+      blocks: blocks.map(({ id, revision }) => ({ id, revision })),
+    });
+  },
+  async taskBlocks(taskId: string) {
+    return z
+      .array(taskBlockSchema)
+      .parse(await invokeCommand("list_task_blocks", { taskId }));
+  },
+  /** Future blocks of finished tasks, which DayPlan offers to release. */
+  async releasableBlocks() {
+    return z
+      .array(scheduledBlockSchema)
+      .parse(await invokeCommand("list_releasable_blocks"));
+  },
+  async workingHours() {
+    return workingHoursSchema.parse(await invokeCommand("get_working_hours"));
+  },
+  async updateWorkingHours(revision: number, input: WorkingHoursInput) {
+    return workingHoursSchema.parse(
+      await invokeCommand("update_working_hours", {
+        input: { revision, ...input },
+      }),
+    );
+  },
+  /** `excludedBlockId` leaves out a block being moved, so its current time counts as free. */
+  async capacity(
+    startDay: string,
+    days: number,
+    timeZone: string,
+    excludedBlockId: string | null = null,
+  ) {
+    return capacitySchema.parse(
+      await invokeCommand("get_capacity", {
+        startDay,
+        days,
+        timeZone,
+        excludedBlockId,
+      }),
+    );
+  },
+  async listCalendars() {
+    return z.array(calendarSchema).parse(await invokeCommand("list_calendars"));
+  },
+  async calendarEvents(startDay: string, days: number, timeZone: string) {
+    return calendarAgendaSchema.parse(
+      await invokeCommand("list_calendar_events", {
+        startDay,
+        days,
+        timeZone,
+      }),
+    );
+  },
+  /** Fetches the link once to check it, then keeps it in the system keychain. */
+  async subscribeCalendar(input: {
+    name: string;
+    link: string;
+    color: PlanColor;
+  }) {
+    return calendarSchema.parse(
+      await invokeCommand("subscribe_calendar", { input }),
+    );
+  },
+  async replaceCalendarLink(calendar: Calendar, link: string) {
+    return calendarSchema.parse(
+      await invokeCommand("replace_calendar_link", {
+        input: { id: calendar.id, revision: calendar.revision, link },
+      }),
+    );
+  },
+  /** Opens a file dialog; null when cancelled. */
+  async importCalendarFile(color: PlanColor) {
+    return calendarSchema
+      .nullable()
+      .parse(await invokeCommand("import_calendar_file", { color }));
+  },
+  /** Opens a file dialog; null when cancelled. */
+  async replaceCalendarFile(calendar: Calendar) {
+    return calendarSchema.nullable().parse(
+      await invokeCommand("replace_calendar_file", {
+        id: calendar.id,
+        revision: calendar.revision,
+      }),
+    );
+  },
+  async updateCalendar(
+    calendar: Calendar,
+    changes: Partial<Pick<Calendar, "name" | "color" | "visible">>,
+  ) {
+    return calendarSchema.parse(
+      await invokeCommand("update_calendar", {
+        input: {
+          id: calendar.id,
+          revision: calendar.revision,
+          name: changes.name ?? calendar.name,
+          color: changes.color ?? calendar.color,
+          visible: changes.visible ?? calendar.visible,
+        },
+      }),
+    );
+  },
+  async refreshCalendar(id: string) {
+    return calendarSchema.parse(
+      await invokeCommand("refresh_calendar", { id }),
+    );
+  },
+  async removeCalendar(calendar: Calendar) {
+    await invokeCommand("remove_calendar", {
+      id: calendar.id,
+      revision: calendar.revision,
+    });
   },
   async status() {
     return statusSchema.parse(await invokeCommand("current_ollama_status"));

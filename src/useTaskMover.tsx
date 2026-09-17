@@ -1,5 +1,6 @@
 import { FormEvent, useState } from "react";
-import { api, messageFor, Task } from "./api";
+import { api, messageFor, ScheduledBlock, Task } from "./api";
+import { BlockEditor } from "./BlockEditor";
 import { localeWeekStart, offsetDay, weekdayShort } from "./date";
 import type { MenuItem } from "./Menu";
 import { EditorShell } from "./PlanEditor";
@@ -9,7 +10,7 @@ export const weekStartsOn = localeWeekStart();
 
 /**
  * Moves tasks between Plan, Week, and Today through one revision-checked batch, and owns the
- * "Pick a day" dialog. Render `dialog` somewhere in the calling view.
+ * "Pick a day" and time block dialogs. Render `dialog` somewhere in the calling view.
  */
 export function useTaskMover({
   today,
@@ -21,6 +22,10 @@ export function useTaskMover({
   onError: (message: string) => void;
 }) {
   const [picking, setPicking] = useState<Task[] | null>(null);
+  const [blocking, setBlocking] = useState<{
+    task: Task;
+    scheduled?: ScheduledBlock;
+  } | null>(null);
   const [busyIds, setBusyIds] = useState<ReadonlySet<string>>(new Set());
 
   async function move(tasks: Task[], target: MoveTarget) {
@@ -38,21 +43,48 @@ export function useTaskMover({
     }
   }
 
-  const dialog = picking && (
-    <PickDayDialog
-      tasks={picking}
-      today={today}
-      onClose={() => setPicking(null)}
-      onPick={(day) => {
-        setPicking(null);
-        void move(picking, { kind: "day", day });
-      }}
-    />
+  const dialog = (
+    <>
+      {picking && (
+        <PickDayDialog
+          tasks={picking}
+          today={today}
+          onClose={() => setPicking(null)}
+          onPick={(day) => {
+            setPicking(null);
+            void move(picking, { kind: "day", day });
+          }}
+        />
+      )}
+      {blocking && (
+        <BlockEditor
+          task={blocking.task}
+          block={blocking.scheduled?.block}
+          today={today}
+          defaultDay={
+            blocking.task.scheduledDay && blocking.task.scheduledDay >= today
+              ? blocking.task.scheduledDay
+              : today
+          }
+          onClose={() => setBlocking(null)}
+          onSaved={async () => {
+            setBlocking(null);
+            await onChanged();
+          }}
+          onError={onError}
+        />
+      )}
+    </>
   );
 
   return {
     move,
     pickDay: (tasks: Task[]) => setPicking(tasks),
+    /** Opens the time block dialog for a new block on `task`. */
+    blockTime: (task: Task) => setBlocking({ task }),
+    /** Opens the time block dialog to move or remove an existing block. */
+    editBlock: (scheduled: ScheduledBlock) =>
+      setBlocking({ task: scheduled.task, scheduled }),
     busyIds,
     dialog,
   };
@@ -60,7 +92,8 @@ export function useTaskMover({
 
 /**
  * The move menu for one task: onto today, tomorrow, or a picked day; into this or next week's
- * pool; back out of every week and day when its plan or due date keeps it visible; or done.
+ * pool; back out of every week and day when its plan or due date keeps it visible; time reserved
+ * for it; or done.
  */
 export function taskMoveItems(
   task: Task,
@@ -69,11 +102,13 @@ export function taskMoveItems(
     weekStart,
     move,
     pickDay,
+    blockTime,
   }: {
     today: string;
     weekStart: string;
     move: (tasks: Task[], target: MoveTarget) => void;
     pickDay: (tasks: Task[]) => void;
+    blockTime?: (task: Task) => void;
   },
 ): MenuItem[] {
   const tomorrow = offsetDay(today, 1);
@@ -112,6 +147,8 @@ export function taskMoveItems(
     });
   if (task.status !== "done") {
     items.push({ kind: "separator" });
+    if (blockTime)
+      items.push({ label: "Block time…", onSelect: () => blockTime(task) });
     items.push({
       label: "Mark done",
       onSelect: () => move([task], { kind: "done" }),

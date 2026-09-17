@@ -747,7 +747,7 @@ pub(super) fn ensure_plan_exists<C: SqlConnection>(connection: &C, plan_id: &str
 }
 
 /// Distinguishes a revision conflict from a missing record after a guarded write changed nothing.
-fn stale_write_error<C: SqlConnection>(
+pub(super) fn stale_write_error<C: SqlConnection>(
     connection: &C,
     table: &'static str,
     id: &str,

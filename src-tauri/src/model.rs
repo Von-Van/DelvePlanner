@@ -11,6 +11,10 @@ pub const MAX_OPERATIONS: usize = 12;
 pub const MAX_REMINDER_MINUTES: i64 = 7 * 24 * 60;
 pub const MAX_ESTIMATE_MINUTES: i64 = 24 * 60;
 pub const MAX_TASK_MOVES: usize = 500;
+pub const MAX_BLOCK_CHANGES: usize = 200;
+pub const MAX_CALENDAR_NAME_LENGTH: usize = 80;
+pub const MAX_CALENDAR_LINK_LENGTH: usize = 1_200;
+pub const MAX_CALENDARS: usize = 20;
 
 /// Declares a closed enum whose serde name and SQLite text value come from one literal.
 macro_rules! stored_enum {
@@ -99,6 +103,65 @@ stored_enum! {
         Normal => "normal",
         High => "high",
         Critical => "critical",
+    }
+}
+
+stored_enum! {
+    /// Where a read-only calendar comes from. Google and Microsoft accounts join these later.
+    pub enum CalendarKind {
+        /// A subscription to an iCalendar link, refreshed in the background.
+        IcsLink => "ics_link",
+        /// An imported .ics file: a snapshot that changes only when a newer file replaces it.
+        IcsFile => "ics_file",
+    }
+}
+
+stored_enum! {
+    /// Why a calendar could not be read or refreshed. Its cached events stay until it recovers.
+    pub enum CalendarProblem {
+        NotACalendar => "not_a_calendar",
+        TooLarge => "too_large",
+        LinkNotFound => "link_not_found",
+        LinkRefused => "link_refused",
+        Unreachable => "unreachable",
+        RateLimited => "rate_limited",
+        ServerError => "server_error",
+        LinkUnavailable => "link_unavailable",
+    }
+}
+
+impl CalendarProblem {
+    pub fn message(self) -> &'static str {
+        match self {
+            Self::NotACalendar => "That isn't an iCalendar (.ics) calendar.",
+            Self::TooLarge => "That calendar is larger than the 20 MB limit.",
+            Self::LinkNotFound => {
+                "The calendar link no longer works. It may have been reset; paste the new link."
+            }
+            Self::LinkRefused => {
+                "The calendar service refused the link. Check that the calendar is still shared."
+            }
+            Self::Unreachable => {
+                "DayPlan couldn't reach the calendar service. It will try again automatically."
+            }
+            Self::RateLimited => {
+                "The calendar service asked DayPlan to slow down. It will try again later."
+            }
+            Self::ServerError => {
+                "The calendar service had a problem. DayPlan will try again automatically."
+            }
+            Self::LinkUnavailable => {
+                "DayPlan couldn't read this calendar's link from the system keychain. Paste the link again."
+            }
+        }
+    }
+
+    /// Problems that clear up on their own, as opposed to ones that need the user to act.
+    pub fn retryable(self) -> bool {
+        matches!(
+            self,
+            Self::Unreachable | Self::RateLimited | Self::ServerError
+        )
     }
 }
 
@@ -230,6 +293,108 @@ pub struct InboxItem {
     pub revision: i64,
     pub created_at: String,
     pub updated_at: String,
+}
+
+/// Time reserved for a task. Moving or deleting a block never changes its task, and deleting the
+/// task deletes its blocks.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TaskBlock {
+    pub id: String,
+    pub task_id: String,
+    pub start_at_utc: String,
+    pub time_zone: String,
+    pub duration_minutes: i64,
+    pub revision: i64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// A time block with the task it reserves time for.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ScheduledBlock {
+    pub block: TaskBlock,
+    pub task: Task,
+}
+
+/// The hours DayPlan counts as available for planned work, in the viewer's local time.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkingHours {
+    /// ISO weekdays in ascending order, Monday = 1 through Sunday = 7.
+    pub days: Vec<u8>,
+    /// Minutes after local midnight.
+    pub start_minute: i64,
+    pub end_minute: i64,
+    pub revision: i64,
+    pub updated_at: String,
+}
+
+/// A read-only calendar from another service. Its link, when it has one, stays in the system
+/// keychain and never reaches SQLite or the renderer.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Calendar {
+    pub id: String,
+    pub kind: CalendarKind,
+    pub name: String,
+    pub color: PlanColor,
+    pub visible: bool,
+    /// The link's host, such as calendar.google.com, or the imported file's name.
+    pub source_label: String,
+    pub problem: Option<CalendarIssue>,
+    pub last_synced_at: Option<String>,
+    pub last_attempt_at: Option<String>,
+    pub event_count: i64,
+    pub revision: i64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CalendarIssue {
+    pub code: CalendarProblem,
+    pub message: String,
+    pub retryable: bool,
+}
+
+impl From<CalendarProblem> for CalendarIssue {
+    fn from(problem: CalendarProblem) -> Self {
+        Self {
+            code: problem,
+            message: problem.message().into(),
+            retryable: problem.retryable(),
+        }
+    }
+}
+
+/// One occurrence of an event from a read-only calendar. Timed events carry UTC instants;
+/// all-day events carry local dates with an exclusive end.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ExternalEvent {
+    pub calendar_id: String,
+    pub key: String,
+    pub title: String,
+    pub location: String,
+    pub all_day: bool,
+    pub start_at_utc: Option<String>,
+    pub end_at_utc: Option<String>,
+    pub start_date: Option<String>,
+    pub end_date: Option<String>,
+    pub busy: bool,
+    pub tentative: bool,
+    pub recurring: bool,
+}
+
+/// Every calendar, and the events of the visible ones inside a window of local days.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CalendarAgenda {
+    pub calendars: Vec<Calendar>,
+    pub events: Vec<ExternalEvent>,
 }
 
 /// The day-bound task shape used by schema 1–2 databases and export formats 1–2.
@@ -480,6 +645,110 @@ pub struct PlanningBoard {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CreateTaskBlockInput {
+    pub task_id: String,
+    pub start_at_utc: String,
+    pub time_zone: String,
+    pub duration_minutes: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct UpdateTaskBlockInput {
+    pub id: String,
+    pub revision: i64,
+    pub start_at_utc: String,
+    pub time_zone: String,
+    pub duration_minutes: i64,
+}
+
+/// Identifies one revision of a record, for batch changes that must not overwrite newer edits.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RecordVersion {
+    pub id: String,
+    pub revision: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct UpdateWorkingHoursInput {
+    pub revision: i64,
+    pub days: Vec<u8>,
+    pub start_minute: i64,
+    pub end_minute: i64,
+}
+
+/// A span of time between two UTC instants.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TimeRange {
+    pub start_at_utc: String,
+    pub end_at_utc: String,
+}
+
+/// One local day's planning hours against what already fills them. Busy time is DayPlan events
+/// and busy events from visible calendars inside working hours; time blocks are planned work,
+/// so they reduce `free` but not `available_minutes`.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DayCapacity {
+    pub day: String,
+    pub working_minutes: i64,
+    pub busy_minutes: i64,
+    pub available_minutes: i64,
+    /// Estimates of the open tasks scheduled on this day.
+    pub planned_minutes: i64,
+    pub unestimated_tasks: i64,
+    pub blocked_minutes: i64,
+    /// Working time with no event, busy calendar event, or time block.
+    pub free: Vec<TimeRange>,
+}
+
+/// Planned work against available time for a window of local days. DayPlan reports these numbers
+/// and never rearranges anything because of them.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Capacity {
+    pub working_hours: WorkingHours,
+    pub days: Vec<DayCapacity>,
+    /// Estimates of open tasks chosen for a week that starts in the window, with no day yet.
+    pub pooled_minutes: i64,
+    pub pooled_unestimated_tasks: i64,
+    /// Whether a visible calendar has a problem, so some busy time may be missing.
+    pub calendars_incomplete: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SubscribeCalendarInput {
+    /// Empty to use the name the calendar gives itself.
+    #[serde(default)]
+    pub name: String,
+    pub link: String,
+    pub color: PlanColor,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct UpdateCalendarInput {
+    pub id: String,
+    pub revision: i64,
+    pub name: String,
+    pub color: PlanColor,
+    pub visible: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ReplaceCalendarLinkInput {
+    pub id: String,
+    pub revision: i64,
+    pub link: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CreatePersonInput {
     pub display_name: String,
     #[serde(default)]
@@ -560,6 +829,8 @@ pub struct Agenda {
     pub tasks: Vec<Task>,
     pub due_tasks: Vec<Task>,
     pub milestones: Vec<Milestone>,
+    /// Time blocks overlapping the window, with their tasks.
+    pub blocks: Vec<ScheduledBlock>,
 }
 
 /// What a permanent plan deletion removed or detached, for confirmation feedback.
@@ -616,6 +887,8 @@ pub struct ExportBundle {
     pub tasks: Vec<Task>,
     #[serde(default)]
     pub inbox_items: Vec<InboxItem>,
+    #[serde(default)]
+    pub task_blocks: Vec<TaskBlock>,
 }
 
 /// Export formats 1 and 2, which predate plans and stored day-bound tasks.
@@ -638,6 +911,7 @@ pub struct ImportPreview {
     pub event_count: usize,
     pub task_count: usize,
     pub inbox_item_count: usize,
+    pub task_block_count: usize,
     pub earliest_day: Option<String>,
     pub latest_day: Option<String>,
 }

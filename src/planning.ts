@@ -304,22 +304,6 @@ export function eventHasEnded(
   );
 }
 
-/** The event happening at `now`, or failing that the next one to start. */
-export function focusEventId(events: ScheduleEvent[], now: Date) {
-  const time = now.getTime();
-  const live = events.find((event) => {
-    const start = new Date(event.startAtUtc).getTime();
-    return start <= time && time < start + event.durationMinutes * 60_000;
-  });
-  if (live) return live.id;
-  return (
-    [...events]
-      .filter((event) => new Date(event.startAtUtc).getTime() > time)
-      .sort((left, right) => left.startAtUtc.localeCompare(right.startAtUtc))[0]
-      ?.id ?? null
-  );
-}
-
 export type UpcomingItem = {
   key: string;
   kind: "milestone" | "event" | "task";

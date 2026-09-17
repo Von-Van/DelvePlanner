@@ -34,6 +34,9 @@ This checklist gates publishing an existing draft GitHub Release. Record the tes
 - [ ] JSON export/import round-trip is exact; import backup restores correctly.
 - [ ] Reminder fires while the window is closed; permission denial prevents event/proposal mutation.
 - [ ] Stale proposal is rejected atomically.
+- [ ] Subscribing to a calendar link and importing an `.ics` file both show events on Today and Week; the link is saved in the login Keychain, and removing the calendar deletes it.
+- [ ] After updating from the previous build, saved calendar links refresh without a Keychain prompt.
+- [ ] Blocking time for a task, releasing a finished task's future blocks, and planned-versus-available capacity work, including after changing working hours.
 - [ ] Manual update from the previous beta shows notes, asks for confirmation, installs, and relaunches.
 
 ## Windows 10 22H2 / Windows 11 x64
@@ -44,6 +47,7 @@ This checklist gates publishing an existing draft GitHub Release. Record the tes
 - [ ] A running system Ollama on port 11434 is ignored and the bundled runtime executables are Authenticode signed.
 - [ ] Events/tasks persist across restart; tray behavior is correct.
 - [ ] Migration, recovery, JSON round-trip, stale-proposal rejection, and permission denial match macOS.
+- [ ] Calendar links are saved in Credential Manager, calendars refresh while DayPlan runs in the tray, and time blocks and capacity match macOS.
 - [ ] Installed-build notification fires while the window is closed and never includes notes.
 - [ ] Manual update from the previous beta verifies and installs the signed NSIS updater.
 

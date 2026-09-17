@@ -11,12 +11,13 @@ Every version answers to one test: can someone with several things going on open
 | Version | Priority | Theme                          | Contents                                                                  |
 | ------- | -------- | ------------------------------ | ------------------------------------------------------------------------- |
 | v0.2.5  | 1        | Core planning workflow         | Inbox, estimates, weekly and daily planning, carry-forward, promotion     |
-| v0.3.0  | 2        | Calendar integration           | Calendar providers, Google, time blocks, capacity, Outlook                |
+| v0.2.9  | 2        | Calendars without accounts     | Calendar links and files, time blocks, capacity                           |
+| v0.3.0  | 2        | Calendar integration           | Google and Outlook accounts                                               |
 | v0.3.2  | 3        | AI planning                    | Plan creation and breakdown, inbox, week, day, and replanning proposals   |
 | v0.3.5  | 4        | Personal planning intelligence | Planning profile, local observations, What DayPlan Knows                  |
 | v0.4.0  | 5        | Quality of life                | Templates, recurring tasks, checklists, duplication, dependencies, polish |
 
-Patch numbers between these (v0.2.1–v0.2.4, v0.3.1, v0.3.3–v0.3.4) stay free for fixes and intermediate builds.
+Other patch numbers stay free for fixes and intermediate builds. v0.2.9 is one: it shipped the part of Priority 2 that needs no account keys.
 
 ## Every version
 
@@ -74,14 +75,15 @@ One task record moves between horizons. Nothing is copied.
 
 ## v0.3.0 — Calendar integration
 
-Priority 2. DayPlan learns when you're actually busy. External calendars stay read-only and separate from DayPlan's own events.
+Priority 2. DayPlan learns when you're actually busy. External calendars stay read-only and separate from DayPlan's own events. v0.2.9 shipped everything in this section except Google and Outlook sign-in.
 
-Build order: calendar provider architecture and sync design, Google Calendar, time blocks, capacity, then Outlook.
+Build order: sync design and provider architecture, iCalendar links and files, time blocks, capacity, then Google and Outlook once their OAuth clients exist. Links and files come first because they need no keys and exercise the same cache, display, and capacity code the account connections will use.
 
-- **Sync design first.** A short written design covering data ownership, caching, refresh, recurring events, and revocation is reviewed before provider code lands.
+- **Sync design first.** [CALENDAR_SYNC.md](CALENDAR_SYNC.md) covers data ownership, caching, refresh, recurring events, and revocation, and is reviewed before provider code lands.
+- **iCalendar links and files.** Subscribing to an https or webcal link (Google's secret iCal address, an Outlook published calendar) keeps a calendar refreshed; an imported `.ics` file is a snapshot a newer file replaces. Both are read-only calendars in the same cache as the account connections.
 - **Provider architecture.** A Rust `CalendarProvider` interface normalizes every provider into one external-event shape: provider, calendar, source ID, title, start and end or all-day date, time zone, busy or free, and recurrence instance. Google and Outlook share the scheduling, display, and capacity code.
 - **Authorization.** OAuth runs in Rust with the system browser, PKCE, and a loopback redirect, using read-only scopes. Tokens live in the OS keychain and never reach SQLite, exports, backups, diagnostics, or the renderer.
-- **Storage.** External events live in a Rust-owned, non-authoritative cache kept apart from the planner database (recommended: a separate SQLite file). The cache is cleared on disconnect and excluded from export and backup. External events never get DayPlan event IDs or mix with `schedule_events`.
+- **Storage.** External events live in a Rust-owned, non-authoritative cache kept apart from the planner database, in a separate SQLite file. The cache is cleared on disconnect and excluded from export and backup. External events never get DayPlan event IDs or mix with `schedule_events`.
 - **Display.** Today and Week show external events in a distinct read-only style, with all-day events, overlaps, expanded recurring instances, and time zones handled. Revoked or expired access shows a reconnect prompt and never affects DayPlan data.
 - **Time blocks.** A `task_blocks` table links reserved time (start, duration, time zone, revision) to a task, shown on the agenda apart from events. A task can have several blocks. Moving or deleting a block never changes the task; deleting a task removes its blocks; completing a task offers to release its future blocks and keeps past ones. Blocks stay local, with no write-back to external calendars.
 - **Capacity.** Planned work is the estimated time of open tasks chosen for or scheduled in the period. Available time is planning hours minus DayPlan events and busy external events. DayPlan shows the numbers and warns when planned exceeds available ("Planned 17h, available 11h") but never rearranges anything. Planning hours come from a minimal working-hours setting (a Rust-owned, revision-checked settings record) that v0.3.5 grows into the planning profile.
@@ -89,7 +91,16 @@ Build order: calendar provider architecture and sync design, Google Calendar, ti
 
 **Done when:** a connected Google calendar appears read-only in Today and Week, a task can be blocked into free time, the week shows planned against available hours, and disconnecting removes every cached calendar record.
 
-**Prerequisites for you:**
+**Shipped in v0.2.9:** the sync design, iCalendar links and files, the calendar cache and refresh worker, keychain-held links, Today and Week display, time blocks, working hours, and capacity. Google and Outlook sign-in remain for v0.3.0.
+
+**Decided:**
+
+- An imported `.ics` file becomes a read-only calendar, not editable DayPlan events.
+- Calendar links are secrets: each one lives in the OS keychain, like the OAuth tokens that follow.
+- Working hours are a planner-database record that exports leave out.
+- Hidden calendars don't count toward busy time, and all-day events count only when they're marked busy.
+
+**Prerequisites for you** ([CALENDAR_ACCOUNTS.md](CALENDAR_ACCOUNTS.md) walks through the first two):
 
 - A Google Cloud OAuth client and consent screen. Calendar scopes need Google's app verification before a broad release: unverified apps show a warning and have a user cap, and apps left in Testing status get refresh tokens that expire after seven days.
 - A Microsoft Entra app registration for Outlook.

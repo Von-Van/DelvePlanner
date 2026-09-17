@@ -1,3 +1,4 @@
+use crate::model::CalendarProblem;
 use serde::Serialize;
 use serde_json::Value;
 use thiserror::Error;
@@ -32,6 +33,10 @@ pub enum AppError {
     ProposalExpired,
     #[error("The planner request was cancelled.")]
     RequestCancelled,
+    #[error("{}", .0.message())]
+    Calendar(CalendarProblem),
+    #[error("DayPlan couldn't use the system keychain for this calendar's link. Unlock the keychain or allow access, then try again.")]
+    Keychain,
     #[error(transparent)]
     Database(#[from] rusqlite::Error),
     #[error(transparent)]
@@ -82,6 +87,8 @@ impl From<AppError> for CommandError {
             AppError::ProposalUnavailable => ("proposal_unavailable", false),
             AppError::ProposalExpired => ("proposal_expired", true),
             AppError::RequestCancelled => ("request_cancelled", true),
+            AppError::Calendar(problem) => ("calendar", problem.retryable()),
+            AppError::Keychain => ("keychain", true),
             AppError::Database(_) | AppError::Json(_) | AppError::Io(_) => ("storage", true),
             AppError::Network(_) => ("network", true),
         };

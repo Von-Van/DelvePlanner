@@ -3561,6 +3561,542 @@ select:focus-visible,
   margin: 9px 10px 0;
 }
 
+/* Calendars: read-only calendars, time blocks, and capacity */
+.calendars-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 34px;
+  align-items: start;
+}
+.calendar-list {
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+  list-style: none;
+}
+.calendar-card {
+  display: grid;
+  grid-template-columns: 3px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 14px;
+  padding: 15px 14px 15px 16px;
+  border: 1px solid var(--frame);
+  background: var(--ground);
+  box-shadow: var(--shadow-hairline);
+  clip-path: var(--facet-8);
+}
+.calendar-card.hidden {
+  background: var(--ground-soft);
+}
+.calendar-card.hidden .calendar-main strong {
+  color: var(--secondary);
+}
+.calendar-swatch {
+  align-self: stretch;
+  background: var(--calendar-color, var(--stone));
+}
+.calendar-card.hidden .calendar-swatch {
+  background: repeating-linear-gradient(
+    180deg,
+    var(--calendar-color, var(--stone)) 0 4px,
+    transparent 4px 7px
+  );
+}
+.calendar-main {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+.calendar-main strong {
+  overflow: hidden;
+  color: var(--ink);
+  font: 300 21px/1.15 var(--font-display);
+  letter-spacing: 0.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.calendar-main small {
+  color: var(--muted);
+  font: 400 10px var(--font-mono);
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+.calendar-sync {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.calendar-problem {
+  margin: 6px 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px 9px;
+  padding: 8px 10px;
+  border-left: 2px solid var(--warning-dot);
+  background: var(--warning-wash);
+  color: var(--warning);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+.calendar-problem.blocking {
+  border-left-color: var(--danger-dot);
+  background: var(--danger-wash);
+  color: var(--danger);
+}
+.calendar-problem span {
+  flex: 1 1 200px;
+}
+.calendar-problem .text-button {
+  font-size: 11px;
+}
+.calendars-side {
+  display: grid;
+  gap: 16px;
+}
+.side-card {
+  display: grid;
+  gap: 10px;
+  padding: 18px;
+  border: 1px solid var(--frame);
+  background: var(--ground);
+  box-shadow: var(--shadow-hairline);
+}
+.side-card.subscribe-card {
+  border-color: var(--blue-frame);
+  background: linear-gradient(160deg, var(--blue-wash), #fff 45%);
+  box-shadow: var(--shadow-blue);
+  clip-path: var(--facet-14);
+}
+.side-kicker {
+  margin: 0;
+  color: var(--blue);
+  font: 500 9px var(--font-mono);
+  letter-spacing: 1.8px;
+}
+.side-card h3 {
+  margin: 0;
+  color: var(--ink);
+  font: 300 21px/1.15 var(--font-display);
+  letter-spacing: 0.5px;
+}
+.side-card > p:not(.side-kicker) {
+  margin: 0;
+  color: var(--secondary);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+.side-card label,
+.side-card .editor-field {
+  display: grid;
+  gap: 6px;
+  color: var(--text);
+  font: 600 11px var(--font-ui);
+  letter-spacing: 0.3px;
+}
+.side-card label > span {
+  color: var(--muted);
+  font: 400 10px var(--font-mono);
+}
+.side-card .editor-field > span {
+  color: var(--text);
+}
+.side-card input {
+  width: 100%;
+  border: 1px solid var(--control);
+  border-radius: 0;
+  outline: 0;
+  background: var(--ground);
+  color: var(--ink);
+  padding: 9px 10px;
+  font: 400 13px var(--font-ui);
+}
+.side-card input:focus {
+  border-color: var(--blue-frame);
+  box-shadow: 0 0 0 3px var(--blue-glow);
+}
+.side-card .primary-button,
+.side-card .secondary-button {
+  justify-self: start;
+}
+.side-card .editor-hint {
+  margin: 0;
+}
+.link-help {
+  color: var(--secondary);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+.link-help summary {
+  cursor: pointer;
+  color: var(--blue);
+  font: 600 11.5px var(--font-ui);
+}
+.link-help dl {
+  margin: 10px 0;
+  display: grid;
+  gap: 4px;
+}
+.link-help dt {
+  margin-top: 6px;
+  color: var(--ink);
+  font: 600 11px var(--font-ui);
+}
+.link-help dd,
+.link-help p {
+  margin: 0;
+}
+.weekday-toggles {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 3px;
+}
+.weekday-toggles button {
+  padding: 6px 0;
+}
+.weekday-toggles button,
+.free-slots button {
+  padding: 6px 9px;
+  border: 1px solid var(--control);
+  background: var(--ground);
+  color: var(--secondary);
+  font: 500 10px var(--font-mono);
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+}
+.weekday-toggles button:hover,
+.free-slots button:hover {
+  border-color: var(--silver);
+  color: var(--ink);
+}
+.weekday-toggles button.selected,
+.free-slots button.selected {
+  border-color: var(--blue-frame);
+  border-bottom: 2px solid var(--blue);
+  background: var(--blue-wash);
+  color: var(--ink);
+}
+.empty-note {
+  color: var(--secondary);
+  font-size: 12px;
+}
+
+/* Today: notices, all-day events, blocks, calendar events, capacity */
+.day-notices {
+  margin: -12px 0 30px;
+  display: grid;
+  gap: 8px;
+}
+.day-notices + .content-grid {
+  margin-top: 0;
+}
+.day-notice {
+  display: grid;
+  grid-template-columns: 7px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 14px;
+  border: 1px solid var(--frame);
+  background: var(--ground);
+}
+.day-notice p {
+  margin: 0;
+  display: grid;
+  gap: 2px;
+}
+.day-notice strong {
+  color: var(--ink);
+  font: 600 12.5px var(--font-ui);
+}
+.day-notice span {
+  color: var(--secondary);
+  font-size: 11.5px;
+}
+.day-notice .secondary-button,
+.day-notice .primary-button {
+  height: 32px;
+}
+.day-notice .secondary-button + .primary-button {
+  margin-left: -4px;
+}
+.all-day-strip {
+  margin: -6px 0 12px 106px;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  list-style: none;
+}
+.all-day-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  padding: 6px 11px 6px 9px;
+  border: 1px solid var(--rule);
+  background: var(--ground-soft);
+  color: var(--strong);
+  font: 500 12px var(--font-ui);
+}
+.all-day-chip i {
+  width: 3px;
+  align-self: stretch;
+  background: var(--calendar-color, var(--stone));
+}
+.all-day-chip span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.all-day-chip small {
+  color: var(--muted);
+  font: 400 9.5px var(--font-mono);
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.all-day-chip.busy {
+  border-color: var(--frame);
+  background: var(--ground);
+}
+.block-row .event-connector i {
+  background: var(--ground);
+  border: 1px solid var(--plan-color, var(--blue));
+}
+.block-row .event-card {
+  border-style: dashed;
+  border-color: var(--blue-frame);
+  background: var(--blue-wash);
+  box-shadow: none;
+}
+.block-row .event-card:hover {
+  border-color: var(--blue);
+}
+.block-check {
+  width: 11px;
+  height: 11px;
+  flex: 0 0 11px;
+  border: 1px solid var(--plan-color, var(--blue));
+  transform: rotate(45deg);
+}
+.event-main .block-kicker {
+  color: var(--blue);
+  font: 500 9px var(--font-mono);
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+}
+.block-row.done .event-main strong {
+  color: var(--chevron);
+  text-decoration: line-through;
+}
+.block-row.done .block-check {
+  background: var(--plan-color, var(--blue));
+}
+.external-row .event-connector i {
+  background: var(--calendar-color, var(--stone));
+  transform: none;
+  border-radius: 50%;
+}
+.external-card {
+  cursor: default;
+  background:
+    repeating-linear-gradient(
+      135deg,
+      transparent 0 7px,
+      rgba(154, 164, 178, 0.08) 7px 8px
+    ),
+    var(--ground);
+  box-shadow: none;
+}
+.external-card:hover {
+  border-color: var(--frame);
+}
+.external-row .event-swatch {
+  background: var(--calendar-color, var(--stone));
+}
+.external-row.free .event-card {
+  border-style: dashed;
+}
+.external-row.free .event-main strong {
+  color: var(--secondary);
+  font-weight: 500;
+}
+.event-main .external-meta {
+  color: var(--muted);
+  font: 400 9.5px var(--font-mono);
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+.event-row.external-row.current .event-card {
+  border-color: var(--blue-frame);
+}
+.capacity-card {
+  display: grid;
+  gap: 9px;
+  padding: 16px;
+  border: 1px solid var(--frame);
+  background: var(--ground);
+  box-shadow: var(--shadow-hairline);
+}
+.capacity-card > strong {
+  color: var(--ink);
+  font: 300 20px/1.15 var(--font-display);
+  letter-spacing: 0.4px;
+}
+.capacity-card.over > strong {
+  color: var(--warning);
+}
+.capacity-bars {
+  display: grid;
+  gap: 3px;
+}
+.capacity-bars span {
+  height: 5px;
+  min-width: 2px;
+}
+.capacity-bars .planned {
+  background: var(--blue);
+}
+.capacity-card.over .capacity-bars .planned {
+  background: var(--warning-dot);
+}
+.capacity-bars .available {
+  background: var(--track);
+}
+.capacity-card ul {
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+  list-style: none;
+  color: var(--secondary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+.capacity-card li.warning {
+  color: var(--warning);
+}
+.capacity-card .text-button {
+  justify-self: start;
+  font: 500 10px var(--font-mono);
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+
+/* Week and planning sessions: calendars, blocks, capacity */
+.week-capacity {
+  margin: -8px 0 18px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--secondary);
+  text-align: left;
+}
+.week-capacity strong {
+  color: var(--ink);
+  font: 600 12.5px var(--font-ui);
+}
+.week-capacity span {
+  font: 400 10px var(--font-mono);
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+.week-capacity.over strong,
+.week-capacity.over span:first-of-type {
+  color: var(--warning);
+}
+.week-capacity:hover strong {
+  text-decoration: underline;
+}
+.week-day-heading small {
+  color: var(--secondary);
+  font: 400 9.5px var(--font-mono);
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+.week-day-heading small.over {
+  color: var(--warning-text);
+}
+.week-block button:not(.check-box) {
+  border-left: 2px dashed var(--plan-color, var(--blue));
+}
+.week-block.done .week-title {
+  color: var(--chevron);
+  text-decoration: line-through;
+}
+.week-external-line {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 9px;
+  border-left: 2px solid var(--calendar-color, var(--stone));
+  color: var(--secondary);
+  font: 400 13px var(--font-ui);
+}
+.week-external.free .week-external-line {
+  border-left-style: dashed;
+}
+.week-all-day .week-external-line time {
+  width: 52px;
+  flex: 0 0 52px;
+  color: var(--muted);
+  font: 400 9.5px var(--font-mono);
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+.week-external .week-external-line time {
+  width: 52px;
+  flex: 0 0 52px;
+  color: var(--secondary);
+  font: 300 16px var(--font-display);
+  letter-spacing: 0.5px;
+}
+.load-day small.available {
+  color: var(--blue);
+}
+.load-day small.over {
+  color: var(--warning-text);
+}
+.session-note.capacity-note {
+  align-items: flex-start;
+  line-height: 1.5;
+}
+.session-note.capacity-note .mark {
+  margin-top: 4px;
+}
+.session-note.capacity-note.over {
+  color: var(--warning);
+}
+.free-time {
+  margin-bottom: 15px;
+  display: grid;
+  gap: 8px;
+}
+.free-time .editor-hint {
+  margin: 0;
+}
+.free-note {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font: 400 10px var(--font-mono);
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+.free-slots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
 @media (max-width: 1180px) {
   .overview-grid {
     grid-template-columns: minmax(0, 1fr);
@@ -3579,10 +4115,12 @@ select:focus-visible,
     grid-template-columns: minmax(0, 1fr);
     gap: 6px;
   }
-  .session-grid {
+  .session-grid,
+  .calendars-grid {
     grid-template-columns: minmax(0, 1fr);
   }
-  .day-milestones {
+  .day-milestones,
+  .all-day-strip {
     margin-left: 0;
   }
 }

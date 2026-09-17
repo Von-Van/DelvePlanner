@@ -1,5 +1,41 @@
 # Changelog
 
+## v0.2.9
+
+Calendars from Google, Outlook, and other apps without signing in, time blocks for tasks, and planned work against available time. Connecting Google and Microsoft accounts directly comes in v0.3.0.
+
+### Calendars
+
+- A new Calendars screen (⌘6, or Ctrl+6 on Windows) subscribes to a calendar's iCalendar link, such as Google Calendar's secret address or an Outlook published calendar, and refreshes it every 30 minutes while DayPlan runs.
+- An exported `.ics` file can be imported as a read-only calendar and later replaced with a newer file.
+- Today and Week show calendar events in a distinct read-only style, including all-day events and recurring events with moved, cancelled, or excluded occurrences.
+- Calendars can be hidden, renamed, recolored, refreshed, or removed. When a link stops working, Today says so and the calendar keeps its last copy until a new link is pasted.
+- Links are stored in the macOS Keychain or Windows Credential Manager. Calendar events are cached apart from planner data and aren't exported, backed up, or given to the local planner.
+
+### Time blocks
+
+- Any open task can have time blocked for it from its menu. The dialog suggests free time inside working hours and warns about overlaps.
+- Blocks appear on Today and Week apart from events; selecting one moves or removes it without changing its task.
+- When a task is finished, Today offers to release its future blocks and keeps past ones.
+
+### Capacity
+
+- Working days and hours are set on the Calendars screen.
+- Today, Week, Plan the Week, and Plan Today compare planned work with the time left after events and busy calendar time ("Planned 17 h, available 11 h") and flag when it's over. Nothing moves on its own.
+
+### Data and docs
+
+- Database schema 6 adds time blocks and working hours. Export format 6 includes time blocks, and formats 1–5 still import.
+- [CALENDAR_SYNC.md](https://github.com/Von-Van/DayPlan/blob/v0.2.9/CALENDAR_SYNC.md) describes the calendar design, and [CALENDAR_ACCOUNTS.md](https://github.com/Von-Van/DayPlan/blob/v0.2.9/CALENDAR_ACCOUNTS.md) walks through creating the Google and Microsoft OAuth clients.
+
+### Also in this release
+
+v0.2.5 wasn't published on its own, so this is the first build with its planning workflow: the Inbox and quick capture (⌘I), task estimates, Plan the Week and Plan Today, and carry-forward of unfinished tasks. See [v0.2.5 in the changelog](https://github.com/Von-Van/DayPlan/blob/v0.2.9/CHANGELOG.md#v025).
+
+### Known limitations
+
+- These builds aren't code-signed, so after each update macOS asks once for every subscribed calendar before DayPlan can read its link from the Keychain. Choose **Always Allow**.
+
 ## v0.2.5
 
 The core planning workflow: capture anything, choose a week's work, plan each day, and recover unfinished tasks, all without the AI planner.

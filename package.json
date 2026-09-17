@@ -1,7 +1,7 @@
 {
   "name": "dayplan-desktop",
   "private": true,
-  "version": "0.2.5",
+  "version": "0.2.9",
   "packageManager": "npm@11.12.1",
   "type": "module",
   "scripts": {

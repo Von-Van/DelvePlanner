@@ -7,9 +7,14 @@ import {
   useRef,
   useState,
 } from "react";
+import { listen } from "@tauri-apps/api/event";
 import {
   Agenda as AgendaData,
   api,
+  Calendar,
+  CalendarAgenda,
+  Capacity,
+  ExternalEvent,
   InboxItem,
   messageFor,
   Milestone,
@@ -20,10 +25,25 @@ import {
   PlanningBoard,
   PersonSummary,
   PlanSummary,
+  ScheduledBlock,
   ScheduleEvent,
   Task,
   TaskInput,
 } from "./api";
+import {
+  AgendaItem,
+  agendaItems,
+  allDayEventsOn,
+  calendarColor,
+  calendarsNeedingAttention,
+  capacityLine,
+  capacityTotals,
+  focusItemKey,
+  hoursLabel,
+  timeRangeLabel,
+  workingHoursLabel,
+} from "./calendars";
+import { CalendarsView } from "./CalendarsView";
 import {
   dayLabel,
   dayMonthShort,
@@ -45,7 +65,6 @@ import { PeopleView } from "./PeopleView";
 import { PlanChip, PlanDot } from "./PlanControls";
 import { PlanEditor } from "./PlanEditor";
 import {
-  focusEventId,
   inWeek,
   matchesPlanFilter,
   newTask,
@@ -69,6 +88,7 @@ import { WeekView } from "./WeekView";
 
 type View =
   | { kind: "inbox" }
+  | { kind: "calendars" }
   | { kind: "today" }
   | { kind: "week" }
   | { kind: "plan-week" }
@@ -84,11 +104,29 @@ const emptyAgenda: AgendaData = {
   tasks: [],
   dueTasks: [],
   milestones: [],
+  blocks: [],
 };
 
 const isMac = /Mac|iPhone|iPad/.test(navigator.userAgent);
 const shortcutLabel = (key: string) => `${isMac ? "⌘" : "Ctrl+"}${key}`;
 const promptStorageKey = "dayplan-planning-prompts";
+const keptBlocksStorageKey = "dayplan-kept-blocks";
+
+/** Future blocks of finished tasks the user chose to keep; kept per device. */
+function readKeptBlocks(): Set<string> {
+  try {
+    const stored = JSON.parse(
+      localStorage.getItem(keptBlocksStorageKey) ?? "[]",
+    );
+    return new Set(
+      Array.isArray(stored)
+        ? stored.filter((id): id is string => typeof id === "string")
+        : [],
+    );
+  } catch {
+    return new Set();
+  }
+}
 
 /** Which planning sessions were done or dismissed; kept per device, like onboarding. */
 function readPromptState(): PlanningPromptState {
@@ -108,7 +146,14 @@ export default function App() {
   const [focusToken, setFocusToken] = useState(0);
   const [day, setDay] = useState(todayDay());
   const [agenda, setAgenda] = useState(emptyAgenda);
+  const [calendarDay, setCalendarDay] = useState<CalendarAgenda | null>(null);
+  const [dayCapacity, setDayCapacity] = useState<Capacity | null>(null);
+  const [releasable, setReleasable] = useState<ScheduledBlock[]>([]);
+  const [keptBlocks, setKeptBlocks] = useState(readKeptBlocks);
   const [week, setWeek] = useState<AgendaData | null>(null);
+  const [calendarWeek, setCalendarWeek] = useState<CalendarAgenda | null>(null);
+  const [weekCapacity, setWeekCapacity] = useState<Capacity | null>(null);
+  const [calendarVersion, setCalendarVersion] = useState(0);
   const [weekBoard, setWeekBoard] = useState<PlanningBoard | null>(null);
   const [board, setBoard] = useState<PlanningBoard | null>(null);
   const [inbox, setInbox] = useState<InboxItem[]>([]);
@@ -146,6 +191,7 @@ export default function App() {
   const weekHeading = useRef<HTMLHeadingElement>(null);
   const peopleHeading = useRef<HTMLHeadingElement>(null);
   const inboxHeading = useRef<HTMLHeadingElement>(null);
+  const calendarsHeading = useRef<HTMLHeadingElement>(null);
   const weekStart = weekStartDay(day, weekStartsOn);
   const today = todayDay();
   const currentWeekStart = weekStartDay(today, weekStartsOn);
@@ -159,29 +205,56 @@ export default function App() {
   useHeadingFocus(weekHeading, focusToken, view.kind === "week");
   useHeadingFocus(inboxHeading, focusToken, view.kind === "inbox");
 
+  // Calendar and capacity trouble never blocks the planner's own data from showing.
+  const refreshCalendarDay = useCallback(async () => {
+    const [nextCalendars, nextCapacity] = await Promise.all([
+      api.calendarEvents(day, 1, localTimeZone).catch(() => null),
+      api.capacity(day, 1, localTimeZone).catch(() => null),
+    ]);
+    setCalendarDay(nextCalendars);
+    setDayCapacity(nextCapacity);
+  }, [day]);
+
   const refresh = useCallback(async () => {
     setIsLoading(true);
     try {
-      setAgenda(await api.listAgenda(day, localTimeZone));
+      const [nextAgenda] = await Promise.all([
+        api.listAgenda(day, localTimeZone),
+        refreshCalendarDay(),
+      ]);
+      setAgenda(nextAgenda);
     } catch (cause) {
       setError(messageFor(cause));
     } finally {
       setIsLoading(false);
     }
-  }, [day]);
+  }, [day, refreshCalendarDay]);
 
   const refreshWeek = useCallback(async () => {
     try {
-      const [nextWeek, nextBoard] = await Promise.all([
-        api.listWeek(weekStart, localTimeZone),
-        api.planningBoard(weekStart),
-      ]);
+      const [nextWeek, nextBoard, nextCalendars, nextCapacity] =
+        await Promise.all([
+          api.listWeek(weekStart, localTimeZone),
+          api.planningBoard(weekStart),
+          api.calendarEvents(weekStart, 7, localTimeZone).catch(() => null),
+          api.capacity(weekStart, 7, localTimeZone).catch(() => null),
+        ]);
       setWeek(nextWeek);
       setWeekBoard(nextBoard);
+      setCalendarWeek(nextCalendars);
+      setWeekCapacity(nextCapacity);
     } catch (cause) {
       setError(messageFor(cause));
     }
   }, [weekStart]);
+
+  const refreshReleasable = useCallback(async () => {
+    try {
+      setReleasable(await api.releasableBlocks());
+    } catch (cause) {
+      setError(messageFor(cause));
+    }
+  }, []);
 
   const refreshBoard = useCallback(async () => {
     try {
@@ -233,7 +306,29 @@ export default function App() {
     void refreshPlans();
     void refreshPeople();
     void refreshInbox();
-  }, [refreshPlans, refreshPeople, refreshInbox]);
+    void refreshReleasable();
+  }, [refreshPlans, refreshPeople, refreshInbox, refreshReleasable]);
+
+  // Background calendar refreshes announce themselves; reload whatever shows calendar time.
+  const viewKind = view.kind;
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let active = true;
+    listen("calendars-changed", () => {
+      setCalendarVersion((version) => version + 1);
+      void refreshCalendarDay();
+      if (viewKind === "week") void refreshWeek();
+    })
+      .then((stop) => {
+        if (active) unlisten = stop;
+        else stop();
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+      unlisten?.();
+    };
+  }, [refreshCalendarDay, refreshWeek, viewKind]);
   useEffect(() => {
     void refreshBoard();
   }, [refreshBoard]);
@@ -256,6 +351,7 @@ export default function App() {
         "3": { kind: "plans", archived: false },
         "4": { kind: "people" },
         "5": { kind: "inbox" },
+        "6": { kind: "calendars" },
       }[event.key] as View | undefined;
       if (!target) return;
       event.preventDefault();
@@ -307,6 +403,26 @@ export default function App() {
   const visibleMilestones = agenda.milestones.filter((milestone) =>
     matchesPlanFilter(milestone, planFilter),
   );
+  const visibleBlocks = agenda.blocks.filter((scheduled) =>
+    matchesPlanFilter(scheduled.task, planFilter),
+  );
+  // Other calendars' events belong to no plan, so a filter for one plan hides them.
+  const calendars = calendarDay?.calendars ?? [];
+  const visibleExternal =
+    planFilter === "all" || planFilter === "none"
+      ? (calendarDay?.events ?? [])
+      : [];
+  const dayItems = agendaItems(
+    visibleEvents,
+    visibleBlocks,
+    visibleExternal,
+    calendars,
+  );
+  const allDayExternal = allDayEventsOn(visibleExternal, day);
+  const attention = calendarsNeedingAttention(calendars);
+  const offeredRelease = releasable.filter(
+    (scheduled) => !keptBlocks.has(scheduled.block.id),
+  );
 
   async function dataChanged() {
     await Promise.all([
@@ -315,9 +431,35 @@ export default function App() {
       refreshPeople(),
       refreshInbox(),
       refreshBoard(),
+      refreshReleasable(),
       view.kind === "week" ? refreshWeek() : Promise.resolve(),
     ]);
     setDataVersion((version) => version + 1);
+  }
+
+  function keepBlocks(blocks: ScheduledBlock[]) {
+    setKeptBlocks((current) => {
+      const next = new Set(current);
+      for (const scheduled of blocks) next.add(scheduled.block.id);
+      // Only remember blocks that are still offered, so the list can't grow forever.
+      const offered = new Set(releasable.map((item) => item.block.id));
+      const stored = [...next].filter((id) => offered.has(id));
+      try {
+        localStorage.setItem(keptBlocksStorageKey, JSON.stringify(stored));
+      } catch {
+        // The offer returns next launch when storage is unavailable.
+      }
+      return new Set(stored);
+    });
+  }
+
+  async function releaseBlocks(blocks: ScheduledBlock[]) {
+    try {
+      await api.deleteTaskBlocks(blocks.map((scheduled) => scheduled.block));
+      await dataChanged();
+    } catch (cause) {
+      setError(messageFor(cause));
+    }
   }
 
   const mover = useTaskMover({
@@ -331,6 +473,7 @@ export default function App() {
       weekStart: currentWeekStart,
       move: (tasks, target) => void mover.move(tasks, target),
       pickDay: mover.pickDay,
+      blockTime: mover.blockTime,
     });
 
   function recordPrompt(change: Partial<PlanningPromptState>) {
@@ -641,6 +784,16 @@ export default function App() {
               count: people.length,
             },
           )}
+          {navLink(
+            { kind: "calendars" },
+            "Calendars",
+            { shape: "square", dashed: true },
+            {
+              active: view.kind === "calendars",
+              shortcut: "6",
+              count: calendars.length,
+            },
+          )}
           <button className="rail-link" onClick={() => setSettingsOpen(true)}>
             <Mark size={7} />
             Settings
@@ -742,6 +895,18 @@ export default function App() {
             onMessage={setError}
           />
         )}
+        {view.kind === "calendars" && (
+          <CalendarsView
+            version={calendarVersion}
+            headingRef={calendarsHeading}
+            focusToken={focusToken}
+            onChanged={async () => {
+              await Promise.all([refreshCalendarDay(), refreshWeek()]);
+              setDataVersion((version) => version + 1);
+            }}
+            onMessage={setError}
+          />
+        )}
         {view.kind === "people" && (
           <PeopleView
             summaries={peopleSummaries}
@@ -781,7 +946,11 @@ export default function App() {
               setDay(nextDay);
               navigate({ kind: "today" });
             }}
+            calendar={calendarWeek}
+            capacity={weekCapacity}
             onOpenEvent={setEditor}
+            onOpenBlock={mover.editBlock}
+            onOpenCalendars={() => navigate({ kind: "calendars" })}
             onOpenTask={(task) => setTaskEditor({ task })}
             onToggleTask={(task) => void toggleTask(task)}
             onOpenMilestone={openMilestone}
@@ -906,6 +1075,42 @@ export default function App() {
               </section>
             )}
 
+            {day === today &&
+              (attention.length > 0 || offeredRelease.length > 0) && (
+                <div className="day-notices">
+                  {attention.length > 0 && (
+                    <section className="day-notice" aria-label="Calendars">
+                      <Mark size={7} filled color="var(--danger-dot)" />
+                      <p>
+                        <strong>
+                          {attention.length === 1
+                            ? `“${attention[0].name}” can't refresh`
+                            : `${attention.length} calendars can't refresh`}
+                        </strong>
+                        <span>
+                          {attention.length === 1
+                            ? attention[0].problem?.message
+                            : "Their last copies still show until you fix them."}
+                        </span>
+                      </p>
+                      <button
+                        className="secondary-button"
+                        onClick={() => navigate({ kind: "calendars" })}
+                      >
+                        Open Calendars
+                      </button>
+                    </section>
+                  )}
+                  {offeredRelease.length > 0 && (
+                    <ReleaseNotice
+                      blocks={offeredRelease}
+                      onRelease={() => void releaseBlocks(offeredRelease)}
+                      onKeep={() => keepBlocks(offeredRelease)}
+                    />
+                  )}
+                </div>
+              )}
+
             <div className="content-grid">
               <section className="agenda-panel">
                 <div className="section-header">
@@ -913,8 +1118,21 @@ export default function App() {
                     <p>TIME BLOCKS</p>
                     <h2>Agenda</h2>
                   </div>
-                  <span>{visibleEvents.length} scheduled</span>
+                  <span>{dayItems.length} scheduled</span>
                 </div>
+                {allDayExternal.length > 0 && (
+                  <ul className="all-day-strip" aria-label="All-day events">
+                    {allDayExternal.map((event) => (
+                      <AllDayChip
+                        key={`${event.calendarId}-${event.key}`}
+                        event={event}
+                        calendar={calendars.find(
+                          (calendar) => calendar.id === event.calendarId,
+                        )}
+                      />
+                    ))}
+                  </ul>
+                )}
                 {visibleMilestones.length > 0 && (
                   <ul className="day-milestones" aria-label="Milestones today">
                     {visibleMilestones.map((milestone) => {
@@ -945,15 +1163,14 @@ export default function App() {
                   <LoadingLine label="Opening your local schedule" />
                 ) : (
                   <Agenda
-                    events={visibleEvents}
-                    focusId={
-                      day === today
-                        ? focusEventId(visibleEvents, new Date())
-                        : null
+                    items={dayItems}
+                    focusKey={
+                      day === today ? focusItemKey(dayItems, new Date()) : null
                     }
                     planById={planById}
                     onEdit={setEditor}
                     onDelete={removeEvent}
+                    onOpenBlock={mover.editBlock}
                     onAdd={() => setEditor("new")}
                   />
                 )}
@@ -1105,6 +1322,11 @@ export default function App() {
 
               <aside className="ai-column">
                 {plannerCard()}
+                <CapacityCard
+                  capacity={dayCapacity}
+                  isToday={day === today}
+                  onOpenCalendars={() => navigate({ kind: "calendars" })}
+                />
                 <section className="quiet-card">
                   <Mark shape="circle" size={14} />
                   <div>
@@ -1251,22 +1473,24 @@ export default function App() {
 }
 
 function Agenda({
-  events,
-  focusId,
+  items,
+  focusKey,
   planById,
   onEdit,
   onDelete,
+  onOpenBlock,
   onAdd,
 }: {
-  events: ScheduleEvent[];
-  /** The live or next event, drawn in the highlighted glass style. */
-  focusId: string | null;
+  items: AgendaItem[];
+  /** The live or next item, drawn in the highlighted glass style. */
+  focusKey: string | null;
   planById: Map<string, Plan>;
   onEdit: (event: ScheduleEvent) => void;
   onDelete: (event: ScheduleEvent) => void;
+  onOpenBlock: (scheduled: ScheduledBlock) => void;
   onAdd: () => void;
 }) {
-  if (events.length === 0)
+  if (items.length === 0)
     return (
       <div className="empty-agenda">
         <i className="empty-mark" aria-hidden="true" />
@@ -1278,16 +1502,49 @@ function Agenda({
     );
   return (
     <div className="agenda-list">
-      {events.map((event) => (
-        <EventRow
-          key={event.id}
-          event={event}
-          current={event.id === focusId}
-          plan={event.planId ? planById.get(event.planId) : undefined}
-          onEdit={() => onEdit(event)}
-          onDelete={() => onDelete(event)}
-        />
-      ))}
+      {items.map((item) => {
+        const current = item.key === focusKey;
+        switch (item.kind) {
+          case "event":
+            return (
+              <EventRow
+                key={item.key}
+                event={item.event}
+                current={current}
+                plan={
+                  item.event.planId
+                    ? planById.get(item.event.planId)
+                    : undefined
+                }
+                onEdit={() => onEdit(item.event)}
+                onDelete={() => onDelete(item.event)}
+              />
+            );
+          case "block":
+            return (
+              <BlockRow
+                key={item.key}
+                scheduled={item.scheduled}
+                current={current}
+                plan={
+                  item.scheduled.task.planId
+                    ? planById.get(item.scheduled.task.planId)
+                    : undefined
+                }
+                onOpen={() => onOpenBlock(item.scheduled)}
+              />
+            );
+          case "external":
+            return (
+              <ExternalEventRow
+                key={item.key}
+                event={item.event}
+                calendar={item.calendar}
+                current={current}
+              />
+            );
+        }
+      })}
     </div>
   );
 }
@@ -1343,6 +1600,227 @@ function EventRow({
         <Glyph>✕</Glyph>
       </button>
     </article>
+  );
+}
+
+/** Time reserved for a task: planned work, drawn apart from events. */
+function BlockRow({
+  scheduled,
+  current,
+  plan,
+  onOpen,
+}: {
+  scheduled: ScheduledBlock;
+  current: boolean;
+  plan: Plan | undefined;
+  onOpen: () => void;
+}) {
+  const { block, task } = scheduled;
+  const done = task.status === "done";
+  return (
+    <article
+      className={`event-row block-row ${current ? "current" : ""} ${done ? "done" : ""}`}
+      style={{ "--plan-color": planColor(plan) } as CSSProperties}
+    >
+      <time dateTime={block.startAtUtc}>
+        {timeLabel(block.startAtUtc)}
+        <span>{hoursLabel(block.durationMinutes)}</span>
+      </time>
+      <div className="event-connector" aria-hidden="true">
+        <i />
+      </div>
+      <button
+        className="event-card"
+        onClick={onOpen}
+        aria-label={`Time block for ${task.title}, ${hoursLabel(block.durationMinutes)}. Move or remove it`}
+      >
+        <span className="block-check" aria-hidden="true" />
+        <span className="event-main">
+          <small className="block-kicker">Time block</small>
+          <strong>{task.title}</strong>
+        </span>
+        <PlanChip plan={plan} />
+      </button>
+      <span />
+    </article>
+  );
+}
+
+/** An occurrence from a read-only calendar. It can't be edited here. */
+function ExternalEventRow({
+  event,
+  calendar,
+  current,
+}: {
+  event: ExternalEvent;
+  calendar: Calendar | undefined;
+  current: boolean;
+}) {
+  const start = event.startAtUtc as string;
+  const end = event.endAtUtc ?? start;
+  return (
+    <article
+      className={`event-row external-row ${current ? "current" : ""} ${event.busy ? "" : "free"}`}
+      style={{ "--calendar-color": calendarColor(calendar) } as CSSProperties}
+    >
+      <time dateTime={start}>
+        {timeLabel(start)}
+        <span>{timeRangeLabel(start, end).split("–")[1] ?? " "}</span>
+      </time>
+      <div className="event-connector" aria-hidden="true">
+        <i />
+      </div>
+      <div className="event-card external-card">
+        <span className="event-swatch" aria-hidden="true" />
+        <span className="event-main">
+          <strong>{event.title}</strong>
+          {event.location && <small>{event.location}</small>}
+          <small className="external-meta">
+            {calendar?.name ?? "Calendar"}
+            {event.tentative ? " · Tentative" : ""}
+            {event.busy ? "" : " · Free"}
+            {" · Read-only"}
+          </small>
+        </span>
+      </div>
+      <span />
+    </article>
+  );
+}
+
+function AllDayChip({
+  event,
+  calendar,
+}: {
+  event: ExternalEvent;
+  calendar: Calendar | undefined;
+}) {
+  return (
+    <li
+      className={`all-day-chip ${event.busy ? "busy" : ""}`}
+      style={{ "--calendar-color": calendarColor(calendar) } as CSSProperties}
+    >
+      <i aria-hidden="true" />
+      <span>{event.title}</span>
+      <small>
+        All day · {calendar?.name ?? "Calendar"}
+        {event.busy ? " · Busy" : ""}
+      </small>
+    </li>
+  );
+}
+
+/** Today's planned work against the time left in working hours. */
+function CapacityCard({
+  capacity,
+  isToday,
+  onOpenCalendars,
+}: {
+  capacity: Capacity | null;
+  isToday: boolean;
+  onOpenCalendars: () => void;
+}) {
+  const day = capacity?.days[0];
+  if (!capacity || !day) return null;
+  const totals = capacityTotals(capacity, { includePool: false });
+  const line = capacityLine(totals);
+  const scale = Math.max(totals.plannedMinutes, totals.availableMinutes, 1);
+  return (
+    <section
+      className={`capacity-card ${line.over ? "over" : ""}`}
+      aria-label="Capacity"
+    >
+      <p className="side-kicker">
+        {isToday ? "TODAY'S CAPACITY" : "THIS DAY'S CAPACITY"}
+      </p>
+      {day.workingMinutes === 0 ? (
+        <strong>Not a working day</strong>
+      ) : (
+        <strong>{line.label}</strong>
+      )}
+      {day.workingMinutes > 0 && (
+        <div className="capacity-bars" aria-hidden="true">
+          <span
+            className="planned"
+            style={{ width: `${(totals.plannedMinutes / scale) * 100}%` }}
+          />
+          <span
+            className="available"
+            style={{ width: `${(totals.availableMinutes / scale) * 100}%` }}
+          />
+        </div>
+      )}
+      <ul>
+        {line.over && (
+          <li className="warning">
+            Planned work is {hoursLabel(line.overBy)} more than the time
+            available.
+          </li>
+        )}
+        {day.workingMinutes > 0 && (
+          <li>
+            {hoursLabel(day.busyMinutes)} busy with events ·{" "}
+            {hoursLabel(day.blockedMinutes)} blocked for tasks
+          </li>
+        )}
+        {totals.unestimatedTasks > 0 && (
+          <li>
+            {totals.unestimatedTasks === 1
+              ? "1 scheduled task has no estimate"
+              : `${totals.unestimatedTasks} scheduled tasks have no estimates`}
+          </li>
+        )}
+        {capacity.calendarsIncomplete && (
+          <li>
+            A calendar couldn't refresh, so some busy time may be missing.
+          </li>
+        )}
+      </ul>
+      <button className="text-button" onClick={onOpenCalendars}>
+        {workingHoursLabel(capacity.workingHours)} <Glyph>→</Glyph>
+      </button>
+    </section>
+  );
+}
+
+/** Offers to give back future time held by tasks that are already done. */
+function ReleaseNotice({
+  blocks,
+  onRelease,
+  onKeep,
+}: {
+  blocks: ScheduledBlock[];
+  onRelease: () => void;
+  onKeep: () => void;
+}) {
+  const tasks = [...new Set(blocks.map((scheduled) => scheduled.task.title))];
+  const minutes = blocks.reduce(
+    (total, scheduled) => total + scheduled.block.durationMinutes,
+    0,
+  );
+  return (
+    <section className="day-notice" aria-label="Finished work with time blocks">
+      <Mark size={7} filled color="var(--success-dot)" />
+      <p>
+        <strong>
+          {tasks.length === 1
+            ? `“${tasks[0]}” is done but still holds time`
+            : `${tasks.length} finished tasks still hold time`}
+        </strong>
+        <span>
+          {blocks.length === 1
+            ? "1 future block"
+            : `${blocks.length} future blocks`}{" "}
+          · {hoursLabel(minutes)}. Past blocks stay as a record.
+        </span>
+      </p>
+      <button className="secondary-button" onClick={onKeep}>
+        Keep
+      </button>
+      <button className="primary-button" onClick={onRelease}>
+        Release time
+      </button>
+    </section>
   );
 }
 

@@ -1,6 +1,6 @@
 # DayPlan — Local AI Desktop Planner
 
-DayPlan is a local-first planner for macOS and Windows that turns plans into days. It connects long-range plans—launches, charity streams, trips, research projects—to what actually has to happen this week and today. It combines plans with milestones, workstreams, owners, and tasks; a Today agenda and a Week view; a run of show for event days; per-event reminders; recovery tools; and a natural-language planner that turns messy requests into reviewed changes.
+DayPlan is a local-first planner for macOS and Windows that turns plans into days. It connects long-range plans—launches, charity streams, trips, research projects—to what actually has to happen this week and today. It combines plans with milestones, workstreams, owners, and tasks; a Today agenda and a Week view with read-only Google, Outlook, and other calendars beside them; time blocks and planned-versus-available capacity; a run of show for event days; per-event reminders; recovery tools; and a natural-language planner that turns messy requests into reviewed changes.
 
 > “Move gym to 6pm tomorrow, mark Book venue done, and add a Rent cameras task to Charity Week due October 9.”
 
@@ -13,6 +13,8 @@ The important engineering idea is the permission boundary, not the chat box: the
 | Today and Week  | Timed events, overlapping events, scheduled and due tasks, milestones, plan filter    | React renderer + Rust repository           |
 | Capture         | An Inbox for unorganized thoughts, converted into tasks, plans, or events later       | React renderer + Rust repository           |
 | Planning        | Weekly and daily planning sessions, estimates, and carry-forward of unfinished work   | React renderer + Rust repository           |
+| Calendars       | Read-only calendars from iCalendar links and files, refreshed while DayPlan runs      | Rust `CalendarService` + separate cache    |
+| Time & capacity | Time blocks for tasks, working hours, and planned work against available time         | React renderer + Rust repository           |
 | Plans           | Overview with attention signals, timeline, filtered tasks, schedule, run of show      | React renderer + Rust repository           |
 | Teams           | Workstreams inside a plan and people who own tasks and events                         | React renderer + Rust repository           |
 | Manual planning | Creates, edits, and deletes plans, milestones, tasks, and events with revision checks | Typed Tauri commands + Rust transactions   |
@@ -32,6 +34,7 @@ flowchart TB
   subgraph presentation["1. Presentation layer — React + TypeScript"]
     Agenda["Today and Week agendas"]
     Sessions["Inbox, weekly and daily planning"]
+    CalendarsUI["Calendars, working hours, time blocks, capacity"]
     Plans["Plans: overview, timeline, tasks, schedule, run of show"]
     People["People and workstreams"]
     PlannerUI["Natural-language input and proposal preview"]
@@ -48,6 +51,7 @@ flowchart TB
     Agent["PlannerAgent and pending proposal registry"]
     Runtime["OllamaRuntimeManager"]
     Reminder["Reminder reconciliation worker"]
+    CalendarSvc["CalendarService and refresh worker"]
     Files["Migration, backup, import/export, diagnostics"]
   end
 
@@ -55,16 +59,20 @@ flowchart TB
     Repo["PlannerDatabase repository"]
     SQLite["Versioned local SQLite database"]
     ModelStore["Isolated qwen3:8b model files"]
+    CalendarCache["Calendar cache (separate SQLite, never exported)"]
   end
 
   subgraph native["5. Local platform integrations"]
     Ollama["Bundled Ollama server on a private loopback port"]
     Notifications["macOS / Windows notifications"]
     Dialogs["Native file dialogs and updater"]
+    Keychain["macOS Keychain / Windows Credential Manager"]
+    CalendarServices["Calendar services over HTTPS (only for added calendars)"]
   end
 
   Agenda --> Commands
   Sessions --> Commands
+  CalendarsUI --> Commands
   Plans --> Commands
   People --> Commands
   PlannerUI --> Boundary --> Commands
@@ -72,6 +80,10 @@ flowchart TB
   Commands --> Models
   Commands --> Agent
   Commands --> Files
+  Commands --> CalendarSvc
+  CalendarSvc --> CalendarCache
+  CalendarSvc -->|"Links only"| Keychain
+  CalendarSvc --> CalendarServices
   Agent --> Runtime --> Ollama
   Ollama --> ModelStore
   Models --> Repo --> SQLite
@@ -84,34 +96,39 @@ flowchart TB
 
 ### Layer responsibilities
 
-| Layer          | Owns                                                                                 | Explicitly does not own                                              |
-| -------------- | ------------------------------------------------------------------------------------ | -------------------------------------------------------------------- |
-| React renderer | Interaction state, forms, previews, accessibility, strict public-response parsing    | SQL, model processes, proposal operations, secrets, filesystem paths |
-| Tauri IPC      | A narrow command surface, argument serialization, typed error responses              | Business decisions or direct database queries                        |
-| Rust services  | Validation, time-zone handling, AI context, proposal/session state, native workflows | Presentation state                                                   |
-| Repository     | Transactions, revisions, migrations, integrity checks, backups, reminder outbox      | Natural-language interpretation                                      |
-| Ollama runtime | Local inference for one pinned model                                                 | Database access, cloud fallback, application updates                 |
+| Layer          | Owns                                                                                                                          | Explicitly does not own                                              |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| React renderer | Interaction state, forms, previews, accessibility, strict public-response parsing                                             | SQL, model processes, proposal operations, secrets, filesystem paths |
+| Tauri IPC      | A narrow command surface, argument serialization, typed error responses                                                       | Business decisions or direct database queries                        |
+| Rust services  | Validation, time-zone handling, AI context, proposal/session state, calendar fetching and parsing, capacity, native workflows | Presentation state                                                   |
+| Repository     | Transactions, revisions, migrations, integrity checks, backups, reminder outbox                                               | Natural-language interpretation                                      |
+| Ollama runtime | Local inference for one pinned model                                                                                          | Database access, cloud fallback, application updates                 |
 
 ### Repository map
 
-| Path                                                             | Responsibility                                                                         |
-| ---------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| [`src/`](src/)                                                   | React views, interaction state, accessibility, styling, and strict frontend schemas    |
-| [`src/api.ts`](src/api.ts)                                       | Typed renderer-facing command client and Zod response boundary                         |
-| [`src/planning.ts`](src/planning.ts)                             | Pure plan signals and planning sessions: attention, timeline, run of show, week, moves |
-| [`src/proposals.ts`](src/proposals.ts)                           | Readable previews of AI proposal operations                                            |
-| [`src-tauri/src/lib.rs`](src-tauri/src/lib.rs)                   | Tauri application composition, IPC commands, native plugins, tray, and reminder worker |
-| [`src-tauri/src/model.rs`](src-tauri/src/model.rs)               | Domain records, AI mutation union, proposal types, and shared limits                   |
-| [`src-tauri/src/db.rs`](src-tauri/src/db.rs)                     | SQLite repository, transactions, migrations, backups, imports, and reminder outbox     |
-| [`src-tauri/src/db/planning.rs`](src-tauri/src/db/planning.rs)   | Plan, milestone, and task repository: validation, revisions, archive and delete rules  |
-| [`src-tauri/src/db/team.rs`](src-tauri/src/db/team.rs)           | People and workstreams: link validation and detach-on-delete rules                     |
-| [`src-tauri/src/db/capture.rs`](src-tauri/src/db/capture.rs)     | The Inbox: captures and one-transaction conversion into tasks, plans, and events       |
-| [`src-tauri/src/db/horizons.rs`](src-tauri/src/db/horizons.rs)   | Weekly and daily planning data and batched moves between plan, week, and day           |
-| [`src-tauri/src/db/proposals.rs`](src-tauri/src/db/proposals.rs) | AI candidate ranking and atomic, revision-checked proposal application                 |
-| [`src-tauri/src/agent.rs`](src-tauri/src/agent.rs)               | Planner session, pending proposals, and the local model request                        |
-| [`src-tauri/src/agent/`](src-tauri/src/agent/)                   | Prompts and output grammar, deterministic pre-checks, and reply resolution             |
-| [`src-tauri/src/runtime.rs`](src-tauri/src/runtime.rs)           | Bundled Ollama process, private endpoint, model download, diagnostics, and lifecycle   |
-| [`eval/`](eval/)                                                 | Hand-labeled commands and machine-readable evaluation results                          |
+| Path                                                                   | Responsibility                                                                          |
+| ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| [`src/`](src/)                                                         | React views, interaction state, accessibility, styling, and strict frontend schemas     |
+| [`src/api.ts`](src/api.ts)                                             | Typed renderer-facing command client and Zod response boundary                          |
+| [`src/planning.ts`](src/planning.ts)                                   | Pure plan signals and planning sessions: attention, timeline, run of show, week, moves  |
+| [`src/proposals.ts`](src/proposals.ts)                                 | Readable previews of AI proposal operations                                             |
+| [`src/calendars.ts`](src/calendars.ts)                                 | Agenda items from events, time blocks, and calendars; capacity and working-hours labels |
+| [`src-tauri/src/lib.rs`](src-tauri/src/lib.rs)                         | Tauri application composition, IPC commands, native plugins, tray, and reminder worker  |
+| [`src-tauri/src/model.rs`](src-tauri/src/model.rs)                     | Domain records, AI mutation union, proposal types, and shared limits                    |
+| [`src-tauri/src/db.rs`](src-tauri/src/db.rs)                           | SQLite repository, transactions, migrations, backups, imports, and reminder outbox      |
+| [`src-tauri/src/db/planning.rs`](src-tauri/src/db/planning.rs)         | Plan, milestone, and task repository: validation, revisions, archive and delete rules   |
+| [`src-tauri/src/db/team.rs`](src-tauri/src/db/team.rs)                 | People and workstreams: link validation and detach-on-delete rules                      |
+| [`src-tauri/src/db/capture.rs`](src-tauri/src/db/capture.rs)           | The Inbox: captures and one-transaction conversion into tasks, plans, and events        |
+| [`src-tauri/src/db/horizons.rs`](src-tauri/src/db/horizons.rs)         | Weekly and daily planning data and batched moves between plan, week, and day            |
+| [`src-tauri/src/db/proposals.rs`](src-tauri/src/db/proposals.rs)       | AI candidate ranking and atomic, revision-checked proposal application                  |
+| [`src-tauri/src/db/availability.rs`](src-tauri/src/db/availability.rs) | Time blocks, working hours, and the planner facts capacity is computed from             |
+| [`src-tauri/src/calendar.rs`](src-tauri/src/calendar.rs)               | Read-only calendars: subscribing, importing, refreshing, and removing                   |
+| [`src-tauri/src/calendar/`](src-tauri/src/calendar/)                   | iCalendar reading, link fetching, keychain-held links, and the separate calendar cache  |
+| [`src-tauri/src/capacity.rs`](src-tauri/src/capacity.rs)               | Working time, busy time, free time, and planned work for a window of days               |
+| [`src-tauri/src/agent.rs`](src-tauri/src/agent.rs)                     | Planner session, pending proposals, and the local model request                         |
+| [`src-tauri/src/agent/`](src-tauri/src/agent/)                         | Prompts and output grammar, deterministic pre-checks, and reply resolution              |
+| [`src-tauri/src/runtime.rs`](src-tauri/src/runtime.rs)                 | Bundled Ollama process, private endpoint, model download, diagnostics, and lifecycle    |
+| [`eval/`](eval/)                                                       | Hand-labeled commands and machine-readable evaluation results                           |
 
 ## Core data schema
 
@@ -127,6 +144,7 @@ erDiagram
   WORKSTREAM |o--o{ SCHEDULE_EVENT : "optional, same plan"
   PERSON |o--o{ TASK : "owns"
   PERSON |o--o{ SCHEDULE_EVENT : "owns"
+  TASK ||--o{ TASK_BLOCK : "reserved time"
 
   INBOX_ITEM {
     uuid id PK
@@ -208,6 +226,26 @@ erDiagram
     datetime updated_at
   }
 
+  TASK_BLOCK {
+    uuid id PK
+    uuid task_id FK "cascade"
+    datetime start_at_utc
+    string time_zone
+    integer duration_minutes "5-1440"
+    integer revision
+    datetime created_at
+    datetime updated_at
+  }
+
+  WORKING_HOURS {
+    integer id PK "always 1"
+    string days "ISO weekdays, such as 1,2,3,4,5"
+    integer start_minute
+    integer end_minute
+    integer revision
+    datetime updated_at
+  }
+
   SCHEDULE_EVENT {
     uuid id PK
     string title
@@ -234,6 +272,10 @@ Every record is revisioned so manual edits and AI proposals can detect stale dat
 A `Plan` is a long-range container and may exist without dates. Items without a plan remain fully valid, so DayPlan still works as a plain day planner. A `Milestone` is a checkpoint rather than work; only user decisions (`pending`, `complete`, `skipped`) are stored, and "upcoming" or "overdue" are derived from dates. A `Task` is work that needs doing, kept separate from `ScheduleEvent` (a block of time). A task no longer needs a calendar day: it can live inside a plan, be chosen for a week without a day yet, be scheduled onto a day, or be due by a day, but it must have at least one of those so it always appears somewhere. `planned_week` holds the first day of the chosen week and is matched by range, so a changed week start never orphans a choice; a due date never implies a week or a day. A task can also carry an optional estimate. A task's milestone and workstream must belong to the task's plan. The Today view lists tasks scheduled for the selected day plus tasks due that day and milestones on that day; the Week view shows the same for seven days, with the week's no-day tasks above. Both can be filtered by plan. Task reminders remain outside the current scope.
 
 The Inbox holds `InboxItem` captures that need no plan, date, or priority, from its own screen or from anywhere with ⌘I (Ctrl+I on Windows). Converting an item creates a task, plan, or event and removes the item in one transaction. Weekly planning shows work left from earlier weeks, overdue and soon-due tasks, tasks behind upcoming milestones, and each active plan's unscheduled backlog beside the week's chosen work and estimates. Daily planning builds today from unfinished, due, and chosen work. Today offers each session in a quiet prompt until it is planned or dismissed, and lists open tasks whose scheduled day has passed so they can be moved on explicitly; nothing is rescheduled automatically. Every move between a plan, a week, and a day changes the same task record, and a batch of moves applies in one revision-checked transaction.
+
+A `TaskBlock` reserves time on the calendar for a task, apart from events. A task can have several blocks; moving or removing a block never changes the task, deleting the task deletes its blocks, and a finished task can't take a new one. When a task is finished, Today offers to release its future blocks and keeps past ones. `WorkingHours` is one revision-checked record of working days and hours (Monday–Friday, 09:00–17:00 by default). Capacity compares the estimates of open tasks scheduled on a day, plus a week's no-day choices, with the time working hours leave after DayPlan events and busy events from visible calendars; blocks narrow the free time the block dialog suggests but aren't subtracted twice. DayPlan shows "Planned 17 h, available 11 h" on Today, Week, and both planning sessions and never moves anything because of it.
+
+Calendars from other apps are read-only and live outside the planner database. Subscribing to an https or webcal link (such as Google's secret iCal address or an Outlook published calendar) fetches and checks it first, then refreshes it every 30 minutes while DayPlan runs; an imported `.ics` file changes only when a newer file replaces it. Recurring events are expanded from 6 weeks back to 400 days ahead, with moved and cancelled occurrences, Windows and vendor time-zone names, and Outlook busy status handled. Their events appear on Today and Week in a distinct style, count toward busy time unless marked free or hidden, and are never editable, exported, or seen by the planner. [CALENDAR_SYNC.md](CALENDAR_SYNC.md) describes the design, and [CALENDAR_ACCOUNTS.md](CALENDAR_ACCOUNTS.md) covers creating the Google and Microsoft OAuth clients that direct account connections will need.
 
 A `Workstream` is a named stream of work inside one plan, such as Production or Sponsors, with progress derived from its tasks. A `Person` is a local label for whoever owns a task or event—never an account. Deleting a workstream or person keeps their work and clears the link, advancing revisions. A plan's run of show lists one day's events in order with owners, locations, live/next status, gaps, and overlaps.
 
@@ -300,18 +342,20 @@ AI context is intentionally small. Requests that do not mention plans, tasks, or
 
 ## Storage, recovery, and privacy
 
-The current database schema is version 5. Existing databases are backed up and migrated transactionally: schema 3 adds `plans` and `milestones`, gives events a nullable `plan_id`, and moves every day-bound task into the general `tasks` table with `scheduled_day` set to its old day and a `done` or `todo` status from its completion state; schema 4 adds `people` and `workstreams`, owner and workstream links, and event locations; schema 5 adds `inbox_items` and each task's `planned_week` and `estimated_minutes`. Restoring an older backup migrates it the same way when it opens. SQLite foreign keys are enforced. Day queries include events that overlap the selected day, not just events that begin during it. Manual edits atomically update every editable field under one revision check.
+The current database schema is version 6. Existing databases are backed up and migrated transactionally: schema 3 adds `plans` and `milestones`, gives events a nullable `plan_id`, and moves every day-bound task into the general `tasks` table with `scheduled_day` set to its old day and a `done` or `todo` status from its completion state; schema 4 adds `people` and `workstreams`, owner and workstream links, and event locations; schema 5 adds `inbox_items` and each task's `planned_week` and `estimated_minutes`; schema 6 adds `task_blocks` and the `working_hours` record. Restoring an older backup migrates it the same way when it opens. SQLite foreign keys are enforced. Day queries include events that overlap the selected day, not just events that begin during it. Manual edits atomically update every editable field under one revision check.
 
 Settings offers:
 
-- strict, versioned JSON export (format 5 includes people, plans, workstreams, milestones, events, tasks, and inbox items; formats 1–4 still import, with day tasks upgraded the same way as the migration and every cross-record link checked before anything is replaced);
+- strict, versioned JSON export (format 6 includes people, plans, workstreams, milestones, events, tasks, inbox items, and time blocks; formats 1–5 still import, with day tasks upgraded the same way as the migration and every cross-record link checked before anything is replaced; working hours and calendars aren't exported);
 - import preview and explicit confirmation before replacement;
 - automatic backup before import and recovery from the five retained backups;
 - model/version diagnostics;
 - a private diagnostic ZIP generated only on request; and
 - manual update checks.
 
-Rotating local logs retain five 512 KB files. DayPlan does not log commands, plan/milestone/event/task titles, names, emails, notes, descriptions, proposal contents, or database paths. Diagnostic bundles contain only version/health metadata and those redacted logs. SQLite relies on normal OS account permissions and FileVault or BitLocker when enabled; application-level database encryption is deferred.
+Rotating local logs retain five 512 KB files. DayPlan does not log commands, plan/milestone/event/task titles, names, emails, notes, descriptions, proposal contents, calendar names, links, or events, or database paths. Diagnostic bundles contain only version/health metadata (including a calendar count and problem codes) and those redacted logs.
+
+DayPlan contacts a calendar service only for calendars you add, and only from Rust; it never uploads planner data. Calendar links grant read access, so each one is stored in the macOS Keychain or Windows Credential Manager and never in SQLite, exports, backups, logs, or the renderer, which only sees the link's host. Cached calendar events, the last fetched document, and sync state live in `calendars.sqlite3`, apart from the planner database: backups, restores, and imports don't touch it, and removing a calendar deletes everything cached for it along with its link. Because macOS ties keychain access to the app's signature, unsigned builds ask again for access to each calendar's link after an update. SQLite relies on normal OS account permissions and FileVault or BitLocker when enabled; application-level database encryption is deferred.
 
 ## Event reminders
 
@@ -390,4 +434,4 @@ Until signing is configured—detected by an empty `TAURI_UPDATER_PUBKEY` reposi
 
 ## Deliberate scope limits
 
-Plans intentionally stay lighter than project-management suites: a closed set of statuses, no custom fields, story points, sprints, dependencies, Gantt editing, workflow automation, or permission systems. People are labels, not accounts. The AI planner does not delete or archive plans, assign owners, or change workstreams or locations; those stay manual. Recurrence, sync, accounts, cloud AI, task reminders, collaboration, iOS widgets, feeds, and application-level database encryption remain out of scope. DayPlan is local-first and single-device.
+Plans intentionally stay lighter than project-management suites: a closed set of statuses, no custom fields, story points, sprints, dependencies, Gantt editing, workflow automation, or permission systems. People are labels, not accounts. The AI planner does not delete or archive plans, assign owners, or change workstreams or locations; those stay manual. Other calendars are read-only: DayPlan never writes to them. Recurrence, two-way sync, accounts, cloud AI, task reminders, collaboration, iOS widgets, and application-level database encryption remain out of scope; direct Google and Microsoft account connections are planned for v0.3.0 once OAuth clients exist. DayPlan is local-first and single-device.

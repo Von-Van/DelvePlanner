@@ -1,3 +1,4 @@
+mod availability;
 mod capture;
 mod horizons;
 mod planning;
@@ -12,6 +13,7 @@ use crate::model::{
     UpdateEventInput, MAX_LOCATION_LENGTH, MAX_NOTES_LENGTH, MAX_REMINDER_MINUTES,
     MAX_TITLE_LENGTH,
 };
+use availability::{ensure_availability_schema, validate_block_shape};
 use capture::validate_inbox_text;
 use chrono::{
     DateTime, Duration as ChronoDuration, LocalResult, NaiveDate, NaiveDateTime, NaiveTime, Offset,
@@ -34,11 +36,12 @@ use team::{
 };
 use uuid::Uuid;
 
+pub use availability::CapacityFacts;
 pub(crate) use proposals::{fold, planning_tokens, title_matches};
 pub use proposals::{validate_model_response, CandidateRequest};
 
-pub const CURRENT_SCHEMA_VERSION: u32 = 5;
-pub const EXPORT_FORMAT_VERSION: u32 = 5;
+pub const CURRENT_SCHEMA_VERSION: u32 = 6;
+pub const EXPORT_FORMAT_VERSION: u32 = 6;
 const BACKUP_RETENTION: usize = 5;
 const REMINDER_DELIVERY_GRACE_MINUTES: i64 = 15;
 const MAX_IMPORT_RECORDS: usize = 100_000;
@@ -118,6 +121,7 @@ impl PlannerDatabase {
             events: self.all_events()?,
             tasks: self.all_tasks()?,
             inbox_items: self.all_inbox_items()?,
+            task_blocks: self.all_task_blocks()?,
         })
     }
 
@@ -139,9 +143,14 @@ impl PlannerDatabase {
                     .cloned(),
             );
         }
-        for event in &bundle.events {
-            let parsed = DateTime::parse_from_rfc3339(&event.start_at_utc).map_err(|_| {
-                AppError::Validation("An imported event has an invalid start time.".into())
+        for start_at_utc in bundle
+            .events
+            .iter()
+            .map(|event| &event.start_at_utc)
+            .chain(bundle.task_blocks.iter().map(|block| &block.start_at_utc))
+        {
+            let parsed = DateTime::parse_from_rfc3339(start_at_utc).map_err(|_| {
+                AppError::Validation("An imported event or time block has an invalid start.".into())
             })?;
             days.push(parsed.date_naive().format("%Y-%m-%d").to_string());
         }
@@ -154,6 +163,7 @@ impl PlannerDatabase {
             event_count: bundle.events.len(),
             task_count: bundle.tasks.len(),
             inbox_item_count: bundle.inbox_items.len(),
+            task_block_count: bundle.task_blocks.len(),
             earliest_day: days.first().cloned(),
             latest_day: days.last().cloned(),
         })
@@ -166,6 +176,7 @@ impl PlannerDatabase {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         for table in [
+            "task_blocks",
             "inbox_items",
             "tasks",
             "milestones",
@@ -327,6 +338,24 @@ impl PlannerDatabase {
                     item.revision,
                     item.created_at,
                     item.updated_at
+                ],
+            )?;
+        }
+        for block in &bundle.task_blocks {
+            transaction.execute(
+                "INSERT INTO task_blocks
+                 (id, task_id, start_at_utc, time_zone, duration_minutes, revision, created_at,
+                  updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    block.id,
+                    block.task_id,
+                    block.start_at_utc,
+                    block.time_zone,
+                    block.duration_minutes,
+                    block.revision,
+                    block.created_at,
+                    block.updated_at
                 ],
             )?;
         }
@@ -543,6 +572,7 @@ impl PlannerDatabase {
             tasks: self.tasks_scheduled_between(&start, &end)?,
             due_tasks: self.tasks_due_between(&start, &end)?,
             milestones: self.milestones_between(&start, &end)?,
+            blocks: self.blocks_between(&start, &end, time_zone)?,
         })
     }
 
@@ -1039,6 +1069,7 @@ fn migrate(connection: &Connection, from_version: u32) -> AppResult<()> {
         ensure_planning_schema(connection)?;
         ensure_team_schema(connection)?;
         ensure_horizon_schema(connection)?;
+        ensure_availability_schema(connection)?;
         connection.pragma_update(None, "user_version", CURRENT_SCHEMA_VERSION)?;
         Ok::<(), AppError>(())
     })();
@@ -1396,8 +1427,8 @@ pub fn restore_backup(path: &Path, backup_name: &str) -> AppResult<()> {
 }
 
 /// Reads any supported export format. Formats 1–2 are upgraded to the current bundle shape;
-/// format 3 predates people and workstreams, and formats 3–4 predate the inbox, task weeks, and
-/// estimates, whose fields default to empty.
+/// format 3 predates people and workstreams, formats 3–4 predate the inbox, task weeks, and
+/// estimates, and formats 3–5 predate time blocks. Missing fields default to empty.
 pub fn parse_export_bundle(contents: &str) -> AppResult<ExportBundle> {
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
@@ -1406,7 +1437,7 @@ pub fn parse_export_bundle(contents: &str) -> AppResult<ExportBundle> {
     }
     match serde_json::from_str::<FormatHeader>(contents)?.format_version {
         1 | 2 => Ok(upgrade_legacy_bundle(serde_json::from_str(contents)?)),
-        3 | 4 | EXPORT_FORMAT_VERSION => {
+        3..=5 | EXPORT_FORMAT_VERSION => {
             let bundle: ExportBundle = serde_json::from_str(contents)?;
             Ok(ExportBundle {
                 format_version: EXPORT_FORMAT_VERSION,
@@ -1430,6 +1461,7 @@ fn upgrade_legacy_bundle(legacy: LegacyExportBundle) -> ExportBundle {
         workstreams: Vec::new(),
         milestones: Vec::new(),
         inbox_items: Vec::new(),
+        task_blocks: Vec::new(),
         events: legacy
             .events
             .into_iter()
@@ -1488,6 +1520,7 @@ fn validate_export_bundle(bundle: &ExportBundle) -> AppResult<()> {
         bundle.events.len(),
         bundle.tasks.len(),
         bundle.inbox_items.len(),
+        bundle.task_blocks.len(),
     ]
     .into_iter()
     .any(|count| count > MAX_IMPORT_RECORDS)
@@ -1697,6 +1730,22 @@ fn validate_export_bundle(bundle: &ExportBundle) -> AppResult<()> {
         }
         validate_inbox_text(&item.text, &item.notes)?;
         validate_record_metadata(item.revision, &item.created_at, &item.updated_at)?;
+    }
+    let mut block_ids = HashSet::new();
+    for block in &bundle.task_blocks {
+        validate_id(&block.id)?;
+        if !block_ids.insert(&block.id) {
+            return Err(duplicate_identifiers("time block"));
+        }
+        if !task_ids.contains(&block.task_id) {
+            return Err(missing_reference("A time block"));
+        }
+        validate_block_shape(
+            &block.start_at_utc,
+            &block.time_zone,
+            block.duration_minutes,
+        )?;
+        validate_record_metadata(block.revision, &block.created_at, &block.updated_at)?;
     }
     Ok(())
 }
@@ -2619,6 +2668,111 @@ mod tests {
         duplicate.inbox_items.push(duplicate.inbox_items[0].clone());
         assert!(matches!(
             PlannerDatabase::preview_import(&duplicate),
+            Err(AppError::Validation(_))
+        ));
+    }
+
+    #[test]
+    fn migrates_schema_five_to_time_blocks_and_working_hours() {
+        let directory = tempdir().unwrap().keep();
+        let path = directory.join("dayplan.sqlite3");
+        let connection = Connection::open(&path).unwrap();
+        connection.execute_batch(SCHEMA_TWO_TABLES).unwrap();
+        ensure_reminder_columns(&connection).unwrap();
+        ensure_planning_schema(&connection).unwrap();
+        ensure_team_schema(&connection).unwrap();
+        ensure_horizon_schema(&connection).unwrap();
+        connection.pragma_update(None, "user_version", 5).unwrap();
+        let task_id = Uuid::new_v4().to_string();
+        connection
+            .execute(
+                "INSERT INTO tasks (id, title, scheduled_day, estimated_minutes, status, revision,
+                                    created_at, updated_at)
+                 VALUES (?1, 'Draft the grant', '2030-09-16', 90, 'todo', 4, ?2, ?2)",
+                params![task_id, "2026-09-14T12:00:00.000Z"],
+            )
+            .unwrap();
+        drop(connection);
+
+        let mut migrated = PlannerDatabase::open(&path).unwrap();
+        assert_eq!(migrated.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+        assert!(migrated.list_backups().unwrap()[0]
+            .name
+            .starts_with("dayplan-v5-"));
+        let kept = migrated.tasks_for_day("2030-09-16").unwrap().remove(0);
+        assert_eq!(
+            (kept.revision, kept.estimated_minutes),
+            (4, Some(90)),
+            "tasks migrate unchanged"
+        );
+        let hours = migrated.working_hours().unwrap();
+        assert_eq!(
+            (hours.days, hours.start_minute, hours.end_minute),
+            (vec![1, 2, 3, 4, 5], 540, 1020)
+        );
+        migrated
+            .create_task_block(crate::model::CreateTaskBlockInput {
+                task_id: task_id.clone(),
+                start_at_utc: "2030-09-16T14:00:00Z".into(),
+                time_zone: "America/New_York".into(),
+                duration_minutes: 90,
+            })
+            .unwrap();
+        let overlong = migrated.connection.execute(
+            "UPDATE task_blocks SET duration_minutes = 1441 WHERE task_id = ?1",
+            params![task_id],
+        );
+        assert!(overlong.is_err(), "the duration check constraint applies");
+    }
+
+    #[test]
+    fn export_round_trips_time_blocks_and_reads_format_five() {
+        let mut database = database();
+        let task = database
+            .create_task(crate::model::CreateTaskInput {
+                scheduled_day: Some("2030-09-16".into()),
+                ..task_input("Draft the grant")
+            })
+            .unwrap();
+        database
+            .create_task_block(crate::model::CreateTaskBlockInput {
+                task_id: task.id.clone(),
+                start_at_utc: "2030-09-16T14:00:00.000Z".into(),
+                time_zone: "America/New_York".into(),
+                duration_minutes: 90,
+            })
+            .unwrap();
+
+        let bundle = database.export_bundle().unwrap();
+        assert_eq!(bundle.task_blocks.len(), 1);
+        let json = serde_json::to_value(&bundle).unwrap();
+        let parsed = parse_export_bundle(&json.to_string()).unwrap();
+        assert_eq!(parsed, bundle);
+        let preview = database.import_bundle(&parsed).unwrap();
+        assert_eq!((preview.task_block_count, preview.task_count), (1, 1));
+        assert_eq!(
+            database.export_bundle().unwrap().task_blocks,
+            bundle.task_blocks
+        );
+
+        let mut format_five = json.clone();
+        format_five["formatVersion"] = serde_json::json!(5);
+        format_five.as_object_mut().unwrap().remove("taskBlocks");
+        let upgraded = parse_export_bundle(&format_five.to_string()).unwrap();
+        assert_eq!(upgraded.format_version, EXPORT_FORMAT_VERSION);
+        assert!(upgraded.task_blocks.is_empty());
+        PlannerDatabase::preview_import(&upgraded).unwrap();
+
+        let mut orphan = bundle.clone();
+        orphan.tasks.clear();
+        assert!(matches!(
+            PlannerDatabase::preview_import(&orphan),
+            Err(AppError::Validation(_))
+        ));
+        let mut shifted = bundle;
+        shifted.task_blocks[0].start_at_utc = "2030-09-16T10:00:00-04:00".into();
+        assert!(matches!(
+            PlannerDatabase::preview_import(&shifted),
             Err(AppError::Validation(_))
         ));
     }

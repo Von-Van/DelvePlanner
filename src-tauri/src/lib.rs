@@ -1,23 +1,30 @@
 pub mod agent;
+pub mod calendar;
+pub mod capacity;
 pub mod db;
 pub mod error;
 pub mod model;
 pub mod runtime;
 
 use agent::{OllamaStatus, PlannerAgent, PlannerRequest};
+use calendar::{parse_zone, CalendarService, DayRange};
+use chrono::NaiveDate;
 use db::{
     backups_for_path, parse_export_bundle, restore_backup, CandidateRequest, DueReminder,
     PlannerDatabase, CURRENT_SCHEMA_VERSION,
 };
 use error::{AppError, CommandError};
 use model::{
-    Agenda, AppliedProposal, CreateEventInput, CreateInboxItemInput, CreateMilestoneInput,
-    CreatePersonInput, CreatePlanInput, CreateTaskInput, CreateWorkstreamInput, DatabaseStatus,
-    ExportBundle, ImportPreview, InboxConversion, InboxItem, LocalDateTimeInput,
-    LocalDateTimeResolution, Milestone, Person, PersonSummary, Plan, PlanDeletion, PlanSummary,
-    PlanWorkspace, PlannerResponse, PlanningBoard, ProcessInboxItemInput, RescheduleEventInput,
-    ScheduleEvent, Task, TaskMove, UpdateEventInput, UpdateInboxItemInput, UpdateMilestoneInput,
-    UpdatePersonInput, UpdatePlanInput, UpdateTaskInput, UpdateWorkstreamInput, Workstream,
+    Agenda, AppliedProposal, Calendar, CalendarAgenda, Capacity, CreateEventInput,
+    CreateInboxItemInput, CreateMilestoneInput, CreatePersonInput, CreatePlanInput,
+    CreateTaskBlockInput, CreateTaskInput, CreateWorkstreamInput, DatabaseStatus, ExportBundle,
+    ImportPreview, InboxConversion, InboxItem, LocalDateTimeInput, LocalDateTimeResolution,
+    Milestone, Person, PersonSummary, Plan, PlanColor, PlanDeletion, PlanSummary, PlanWorkspace,
+    PlannerResponse, PlanningBoard, ProcessInboxItemInput, RecordVersion, ReplaceCalendarLinkInput,
+    RescheduleEventInput, ScheduleEvent, ScheduledBlock, SubscribeCalendarInput, Task, TaskBlock,
+    TaskMove, UpdateCalendarInput, UpdateEventInput, UpdateInboxItemInput, UpdateMilestoneInput,
+    UpdatePersonInput, UpdatePlanInput, UpdateTaskBlockInput, UpdateTaskInput,
+    UpdateWorkingHoursInput, UpdateWorkstreamInput, WorkingHours, Workstream,
 };
 use runtime::OllamaRuntimeManager;
 use serde::Serialize;
@@ -28,16 +35,19 @@ use std::sync::Mutex;
 use std::time::Duration;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_notification::NotificationExt;
 use uuid::Uuid;
 use zip::write::SimpleFileOptions;
 
 const MAX_IMPORT_BYTES: u64 = 50 * 1024 * 1024;
+/// Emitted when a background refresh changed what calendars show.
+const CALENDARS_CHANGED: &str = "calendars-changed";
 
 struct AppState {
     database: Mutex<DatabaseRuntime>,
+    calendars: CalendarService,
     agent: PlannerAgent,
     ollama: OllamaRuntimeManager,
     pending_import: Mutex<Option<PendingImport>>,
@@ -103,6 +113,8 @@ struct DiagnosticManifest {
     ollama_phase: runtime::RuntimePhase,
     model_license: Option<String>,
     model_storage_bytes: Option<u64>,
+    calendar_count: usize,
+    calendar_problems: Vec<&'static str>,
     privacy_note: &'static str,
 }
 
@@ -375,6 +387,240 @@ fn move_tasks(state: State<'_, AppState>, moves: Vec<TaskMove>) -> Result<Vec<Ta
 }
 
 #[tauri::command]
+fn create_task_block(
+    state: State<'_, AppState>,
+    input: CreateTaskBlockInput,
+) -> Result<ScheduledBlock, CommandError> {
+    with_database(&state, |database| database.create_task_block(input))
+}
+
+#[tauri::command]
+fn update_task_block(
+    state: State<'_, AppState>,
+    input: UpdateTaskBlockInput,
+) -> Result<ScheduledBlock, CommandError> {
+    with_database(&state, |database| database.update_task_block(input))
+}
+
+#[tauri::command]
+fn delete_task_blocks(
+    state: State<'_, AppState>,
+    blocks: Vec<RecordVersion>,
+) -> Result<(), CommandError> {
+    with_database(&state, |database| database.delete_task_blocks(blocks))
+}
+
+#[tauri::command]
+fn list_task_blocks(
+    state: State<'_, AppState>,
+    task_id: String,
+) -> Result<Vec<TaskBlock>, CommandError> {
+    with_database(&state, |database| database.task_blocks(&task_id))
+}
+
+#[tauri::command]
+fn list_releasable_blocks(state: State<'_, AppState>) -> Result<Vec<ScheduledBlock>, CommandError> {
+    with_database(&state, |database| database.releasable_blocks())
+}
+
+#[tauri::command]
+fn get_working_hours(state: State<'_, AppState>) -> Result<WorkingHours, CommandError> {
+    with_database(&state, |database| database.working_hours())
+}
+
+#[tauri::command]
+fn update_working_hours(
+    state: State<'_, AppState>,
+    input: UpdateWorkingHoursInput,
+) -> Result<WorkingHours, CommandError> {
+    with_database(&state, |database| database.update_working_hours(input))
+}
+
+/// Planned work against available time. Calendar trouble never blocks the planner's numbers; it
+/// marks them incomplete instead. `excluded_block_id` names a block being moved, whose current
+/// time shouldn't count as taken.
+#[tauri::command]
+fn get_capacity(
+    state: State<'_, AppState>,
+    start_day: String,
+    days: u32,
+    time_zone: String,
+    excluded_block_id: Option<String>,
+) -> Result<Capacity, CommandError> {
+    let range = DayRange::new(&start_day, days, &time_zone)?;
+    let zone = parse_zone(&time_zone)?;
+    let first_day = NaiveDate::parse_from_str(&range.first_day, "%Y-%m-%d")
+        .map_err(|_| AppError::Validation("Dates must use YYYY-MM-DD.".into()))?;
+    let facts = with_database(&state, |database| {
+        database.capacity_facts(
+            &range.first_day,
+            &range.end_day,
+            &time_zone,
+            excluded_block_id.as_deref(),
+        )
+    })?;
+    let (busy, incomplete) = state
+        .calendars
+        .busy(&range)
+        .unwrap_or_else(|_| (Vec::new(), true));
+    Ok(capacity::capacity(
+        first_day, days, zone, facts, &busy, incomplete,
+    ))
+}
+
+#[tauri::command]
+fn list_calendars(state: State<'_, AppState>) -> Result<Vec<Calendar>, CommandError> {
+    state.calendars.list().map_err(CommandError::from)
+}
+
+#[tauri::command]
+fn list_calendar_events(
+    state: State<'_, AppState>,
+    start_day: String,
+    days: u32,
+    time_zone: String,
+) -> Result<CalendarAgenda, CommandError> {
+    let range = DayRange::new(&start_day, days, &time_zone)?;
+    state.calendars.agenda(&range).map_err(CommandError::from)
+}
+
+#[tauri::command]
+async fn subscribe_calendar(
+    state: State<'_, AppState>,
+    input: SubscribeCalendarInput,
+) -> Result<Calendar, CommandError> {
+    state
+        .calendars
+        .subscribe(input)
+        .await
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+async fn replace_calendar_link(
+    state: State<'_, AppState>,
+    input: ReplaceCalendarLinkInput,
+) -> Result<Calendar, CommandError> {
+    state
+        .calendars
+        .replace_link(input)
+        .await
+        .map_err(CommandError::from)
+}
+
+/// Asks for an .ics file and adds it as a read-only calendar. Returns `None` when cancelled.
+#[tauri::command]
+async fn import_calendar_file(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    color: PlanColor,
+) -> Result<Option<Calendar>, CommandError> {
+    let Some((file_name, content)) = pick_calendar_file(&app, "Import a calendar").await? else {
+        return Ok(None);
+    };
+    state
+        .calendars
+        .import_file(&file_name, content, color)
+        .await
+        .map(Some)
+        .map_err(CommandError::from)
+}
+
+/// Asks for a newer .ics file and replaces an imported calendar's events with it.
+#[tauri::command]
+async fn replace_calendar_file(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    revision: i64,
+) -> Result<Option<Calendar>, CommandError> {
+    let Some((file_name, content)) =
+        pick_calendar_file(&app, "Choose a newer copy of this calendar").await?
+    else {
+        return Ok(None);
+    };
+    state
+        .calendars
+        .replace_file(&id, revision, &file_name, content)
+        .await
+        .map(Some)
+        .map_err(CommandError::from)
+}
+
+async fn pick_calendar_file(
+    app: &AppHandle,
+    title: &'static str,
+) -> Result<Option<(String, String)>, CommandError> {
+    let app_for_dialog = app.clone();
+    let path = tauri::async_runtime::spawn_blocking(move || {
+        app_for_dialog
+            .dialog()
+            .file()
+            .set_title(title)
+            .add_filter("iCalendar", &["ics", "ical", "icalendar", "ifb"])
+            .blocking_pick_file()
+            .and_then(|path| path.as_path().map(PathBuf::from))
+    })
+    .await
+    .map_err(|_| CommandError::internal("The calendar file dialog could not be opened."))?;
+    let Some(path) = path else {
+        return Ok(None);
+    };
+    let too_large = path
+        .metadata()
+        .map_err(AppError::from)
+        .map_err(CommandError::from)?
+        .len()
+        > calendar::ics::MAX_CALENDAR_BYTES as u64;
+    if too_large {
+        return Err(AppError::Calendar(model::CalendarProblem::TooLarge).into());
+    }
+    let bytes = fs::read(&path)
+        .map_err(AppError::from)
+        .map_err(CommandError::from)?;
+    let file_name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_default();
+    Ok(Some((
+        file_name,
+        String::from_utf8_lossy(&bytes).into_owned(),
+    )))
+}
+
+#[tauri::command]
+fn update_calendar(
+    state: State<'_, AppState>,
+    input: UpdateCalendarInput,
+) -> Result<Calendar, CommandError> {
+    state.calendars.update(input).map_err(CommandError::from)
+}
+
+#[tauri::command]
+async fn refresh_calendar(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<Calendar, CommandError> {
+    state
+        .calendars
+        .refresh(&id)
+        .await
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+fn remove_calendar(
+    state: State<'_, AppState>,
+    id: String,
+    revision: i64,
+) -> Result<(), CommandError> {
+    state
+        .calendars
+        .remove(&id, revision)
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
 fn resolve_local_datetime(
     input: LocalDateTimeInput,
 ) -> Result<LocalDateTimeResolution, CommandError> {
@@ -595,6 +841,7 @@ async fn export_diagnostic_bundle(
         )
     };
     let model = state.ollama.status(&state.agent).await;
+    let calendars = state.calendars.list().unwrap_or_default();
     let manifest = DiagnosticManifest {
         generated_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
         app_version: app.package_info().version.to_string(),
@@ -611,7 +858,12 @@ async fn export_diagnostic_bundle(
         ollama_phase: model.phase,
         model_license: model.model_license,
         model_storage_bytes: model.storage_bytes,
-        privacy_note: "Commands, plan/milestone/event/task titles, people, workstreams, notes, descriptions, locations, proposal contents, and database paths are excluded.",
+        calendar_count: calendars.len(),
+        calendar_problems: calendars
+            .iter()
+            .filter_map(|calendar| calendar.problem.as_ref().map(|issue| issue.code.as_str()))
+            .collect(),
+        privacy_note: "Commands, plan/milestone/event/task titles, people, workstreams, notes, descriptions, locations, proposal contents, calendar names, links, and events, and database paths are excluded.",
     };
     let app_for_dialog = app.clone();
     let path = tauri::async_runtime::spawn_blocking(move || {
@@ -821,6 +1073,20 @@ async fn reminder_worker(app: AppHandle) {
     }
 }
 
+/// Refreshes link calendars when they are due and re-reads calendars whose window moved at
+/// midnight, then tells the renderer if anything it shows may have changed.
+async fn calendar_worker(app: AppHandle) {
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    let mut interval = tokio::time::interval(Duration::from_secs(60));
+    loop {
+        interval.tick().await;
+        let state = app.state::<AppState>();
+        if let Ok(true) = state.calendars.run_due().await {
+            let _ = app.emit(CALENDARS_CHANGED, ());
+        }
+    }
+}
+
 fn reminder_body(reminder: &DueReminder) -> String {
     let formatted = chrono::DateTime::parse_from_rfc3339(&reminder.start_at_utc)
         .ok()
@@ -907,8 +1173,15 @@ pub fn run() {
             let ollama = OllamaRuntimeManager::new(resource_directory, directory.clone())
                 .map_err(|error| error.to_string())?;
             let agent = PlannerAgent::new(ollama.endpoint(), agent::MODEL_NAME);
+            let calendars = CalendarService::new(
+                directory.join("calendars.sqlite3"),
+                calendar::secrets::system_vault(&app.config().identifier),
+                &app.package_info().version.to_string(),
+            )
+            .map_err(|error| error.to_string())?;
             app.manage(AppState {
                 database: Mutex::new(DatabaseRuntime::new(directory.join("dayplan.sqlite3"))),
+                calendars,
                 agent,
                 ollama,
                 pending_import: Mutex::new(None),
@@ -916,7 +1189,8 @@ pub fn run() {
             tauri_plugin_log::log::info!("app_started");
             install_tray(app)?;
             let handle = app.handle().clone();
-            tauri::async_runtime::spawn(reminder_worker(handle));
+            tauri::async_runtime::spawn(reminder_worker(handle.clone()));
+            tauri::async_runtime::spawn(calendar_worker(handle));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -952,6 +1226,23 @@ pub fn run() {
             process_inbox_item,
             get_planning_board,
             move_tasks,
+            create_task_block,
+            update_task_block,
+            delete_task_blocks,
+            list_task_blocks,
+            list_releasable_blocks,
+            get_working_hours,
+            update_working_hours,
+            get_capacity,
+            list_calendars,
+            list_calendar_events,
+            subscribe_calendar,
+            replace_calendar_link,
+            import_calendar_file,
+            replace_calendar_file,
+            update_calendar,
+            refresh_calendar,
+            remove_calendar,
             resolve_local_datetime,
             export_planner_file,
             select_planner_import,

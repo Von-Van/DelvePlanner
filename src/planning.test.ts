@@ -9,7 +9,6 @@ import {
   estimateLabel,
   featuredTasks,
   filterTasks,
-  focusEventId,
   groupWeek,
   runOfShow,
   workstreamProgress,
@@ -247,28 +246,6 @@ describe("display labels", () => {
       ),
     ).toBe(1);
   });
-
-  it("focuses the live event, else the next one to start", () => {
-    const morning = event({
-      startAtUtc: "2026-09-14T08:30:00.000Z",
-      durationMinutes: 45,
-    });
-    const lunch = event({
-      startAtUtc: "2026-09-14T12:00:00.000Z",
-      durationMinutes: 60,
-    });
-    const evening = event({ startAtUtc: "2026-09-14T18:00:00.000Z" });
-    const events = [evening, morning, lunch];
-    expect(focusEventId(events, new Date("2026-09-14T08:45:00.000Z"))).toBe(
-      morning.id,
-    );
-    expect(focusEventId(events, new Date("2026-09-14T10:00:00.000Z"))).toBe(
-      lunch.id,
-    );
-    expect(focusEventId(events, new Date("2026-09-14T20:00:00.000Z"))).toBe(
-      null,
-    );
-  });
 });
 
 describe("timeline", () => {
@@ -498,6 +475,7 @@ describe("plan views", () => {
         ],
         tasks: [task({ title: "Overlays", scheduledDay: "2026-11-10" })],
         dueTasks: [task({ title: "Graphics", dueDate: "2026-11-15" })],
+        blocks: [],
         milestones: [
           milestone({ title: "Event start", targetDate: "2026-11-09" }),
         ],

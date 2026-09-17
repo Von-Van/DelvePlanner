@@ -87,7 +87,7 @@ export function SettingsModal({
     if (
       !selection ||
       !window.confirm(
-        `Replace local data with ${selection.preview.planCount} plans, ${selection.preview.workstreamCount} workstreams, ${selection.preview.milestoneCount} milestones, ${selection.preview.eventCount} events, ${selection.preview.taskCount} tasks, ${selection.preview.personCount} people, and ${selection.preview.inboxItemCount} inbox items? A backup is created first.`,
+        `Replace local data with ${selection.preview.planCount} plans, ${selection.preview.workstreamCount} workstreams, ${selection.preview.milestoneCount} milestones, ${selection.preview.eventCount} events, ${selection.preview.taskCount} tasks, ${selection.preview.personCount} people, ${selection.preview.inboxItemCount} inbox items, and ${selection.preview.taskBlockCount} time blocks? A backup is created first. Calendars and working hours aren't part of exports and stay as they are.`,
       )
     )
       return;
@@ -308,7 +308,8 @@ export function SettingsModal({
                   {selection.preview.personCount} people ·{" "}
                   {selection.preview.eventCount} events ·{" "}
                   {selection.preview.taskCount} tasks ·{" "}
-                  {selection.preview.inboxItemCount} inbox items
+                  {selection.preview.inboxItemCount} inbox items ·{" "}
+                  {selection.preview.taskBlockCount} time blocks
                 </span>
                 <div>
                   <button
