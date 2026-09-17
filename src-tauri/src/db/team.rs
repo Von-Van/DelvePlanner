@@ -509,6 +509,8 @@ mod tests {
             owner_id: None,
             due_date: None,
             scheduled_day: None,
+            planned_week: None,
+            estimated_minutes: None,
             status: TaskStatus::Todo,
             priority: TaskPriority::Normal,
         }
@@ -764,6 +766,8 @@ mod tests {
             owner_id: None,
             due_date: None,
             scheduled_day: None,
+            planned_week: None,
+            estimated_minutes: None,
             status: approved.status,
             priority: approved.priority,
         });

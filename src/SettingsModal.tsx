@@ -87,7 +87,7 @@ export function SettingsModal({
     if (
       !selection ||
       !window.confirm(
-        `Replace local data with ${selection.preview.planCount} plans, ${selection.preview.workstreamCount} workstreams, ${selection.preview.milestoneCount} milestones, ${selection.preview.eventCount} events, ${selection.preview.taskCount} tasks, and ${selection.preview.personCount} people? A backup is created first.`,
+        `Replace local data with ${selection.preview.planCount} plans, ${selection.preview.workstreamCount} workstreams, ${selection.preview.milestoneCount} milestones, ${selection.preview.eventCount} events, ${selection.preview.taskCount} tasks, ${selection.preview.personCount} people, and ${selection.preview.inboxItemCount} inbox items? A backup is created first.`,
       )
     )
       return;
@@ -307,7 +307,8 @@ export function SettingsModal({
                   {selection.preview.milestoneCount} milestones ·{" "}
                   {selection.preview.personCount} people ·{" "}
                   {selection.preview.eventCount} events ·{" "}
-                  {selection.preview.taskCount} tasks
+                  {selection.preview.taskCount} tasks ·{" "}
+                  {selection.preview.inboxItemCount} inbox items
                 </span>
                 <div>
                   <button

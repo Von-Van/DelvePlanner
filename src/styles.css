@@ -512,9 +512,10 @@ select:focus-visible,
 }
 .topbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-end;
   justify-content: space-between;
-  gap: 22px;
+  gap: 16px 22px;
 }
 .date-heading p {
   margin: 0 0 9px;
@@ -3220,6 +3221,346 @@ select:focus-visible,
   text-transform: uppercase;
 }
 
+/* Menus */
+.menu-popover {
+  position: fixed;
+  z-index: 50;
+  min-width: 210px;
+  max-width: 290px;
+  padding: 6px;
+  border: 1px solid var(--control);
+  background: var(--ground);
+  box-shadow: 0 14px 34px rgba(21, 27, 34, 0.16);
+}
+.menu-item {
+  width: 100%;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 8px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--strong);
+  text-align: left;
+  font: 400 12.5px var(--font-ui);
+}
+.menu-item:hover:not(:disabled),
+.menu-item:focus-visible {
+  outline: none;
+  background: var(--blue-wash);
+  box-shadow: inset 2px 0 0 var(--blue);
+  color: var(--ink);
+}
+.menu-item small {
+  color: var(--muted);
+  font: 400 9px var(--font-mono);
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+.menu-item.danger {
+  color: var(--danger);
+}
+.menu-separator {
+  height: 1px;
+  margin: 5px 4px;
+  background: var(--hairline);
+}
+.task-meta small.task-week {
+  color: var(--blue);
+}
+
+/* Today: planning prompt and carry-forward */
+.planning-prompt {
+  margin: -12px 0 30px;
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--blue-frame);
+  background: linear-gradient(160deg, var(--blue-wash), #fff 55%);
+  box-shadow: var(--shadow-blue);
+  clip-path: var(--facet-9);
+}
+.planning-prompt p {
+  margin: 0;
+  color: var(--blue);
+  font: 500 9px var(--font-mono);
+  letter-spacing: 1.8px;
+}
+.planning-prompt strong {
+  display: block;
+  margin-top: 5px;
+  color: var(--ink);
+  font: 300 21px/1.1 var(--font-display);
+  letter-spacing: 0.6px;
+}
+.planning-prompt small {
+  display: block;
+  margin-top: 3px;
+  color: var(--secondary);
+  font-size: 11.5px;
+}
+.unfinished-tasks {
+  margin-top: 18px;
+}
+.due-heading.late {
+  color: var(--danger);
+}
+.due-heading .text-button {
+  margin-left: auto;
+  font-size: 11px;
+  letter-spacing: 0;
+}
+.topbar-note {
+  margin: 0 0 4px;
+  color: var(--muted);
+  font: 400 10px var(--font-mono);
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+}
+
+/* Inbox and capture */
+.inbox-capture {
+  margin-bottom: 6px;
+}
+.inbox-list {
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.inbox-row {
+  min-height: 54px;
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto auto 22px;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid var(--hairline);
+}
+.inbox-row > .mark {
+  justify-self: center;
+}
+.inbox-text {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+  padding: 10px 0;
+  border: 0;
+  background: transparent;
+  color: var(--strong);
+  text-align: left;
+}
+.inbox-text strong {
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  font: 400 13.5px var(--font-ui);
+}
+.inbox-text small {
+  overflow: hidden;
+  color: var(--secondary);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.inbox-text:hover strong {
+  color: var(--blue-deep);
+}
+.inbox-row time {
+  color: var(--muted);
+  font: 400 10px var(--font-mono);
+  text-transform: uppercase;
+}
+.inbox-actions {
+  display: flex;
+  gap: 5px;
+}
+.inbox-actions button {
+  min-height: 28px;
+  padding: 0 11px;
+  border: 1px solid var(--control);
+  background: var(--ground);
+  color: var(--strong);
+  font: 500 11px var(--font-ui);
+}
+.inbox-actions button:hover {
+  border-color: var(--blue-frame);
+  background: var(--blue-wash);
+  color: var(--ink);
+}
+.inbox-empty {
+  min-height: 180px;
+  margin-top: 18px;
+}
+.capture-status {
+  margin: 0 auto 0 0;
+  color: var(--muted);
+  font: 400 11px var(--font-ui);
+}
+.dialog-subject {
+  margin: -6px 0 16px;
+  color: var(--strong);
+  font: 300 19px/1.25 var(--font-display);
+  letter-spacing: 0.4px;
+}
+.day-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 16px;
+}
+.day-choices .day-chip {
+  width: 52px;
+}
+
+/* Weekly and daily planning sessions */
+.session-range {
+  display: block;
+  margin-top: 11px;
+  color: var(--secondary);
+  font: 400 12px var(--font-mono);
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+}
+.week-load {
+  margin: 0 0 30px;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+  list-style: none;
+}
+.load-day {
+  display: grid;
+  align-content: start;
+  gap: 3px;
+  padding: 11px 12px;
+  border-left: 1px solid var(--hairline);
+}
+.load-day:first-child {
+  border-left: 0;
+}
+.load-day span {
+  color: var(--muted);
+  font: 500 8px var(--font-mono);
+  letter-spacing: 0.8px;
+}
+.load-day strong {
+  color: var(--ink);
+  font: 300 22px/1 var(--font-display);
+}
+.load-day small {
+  color: var(--secondary);
+  font: 400 9.5px var(--font-mono);
+  text-transform: uppercase;
+}
+.load-day.today {
+  background: var(--blue-wash);
+  box-shadow: inset 0 -2px 0 var(--blue);
+}
+.load-day.today span {
+  color: var(--blue);
+}
+.load-day.past {
+  opacity: 0.55;
+}
+.session-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+  gap: 34px;
+  align-items: start;
+}
+.session-column {
+  min-width: 0;
+}
+.session-column.chosen {
+  padding: 20px 22px 8px;
+  border: 1px solid var(--blue-frame);
+  background: linear-gradient(160deg, var(--blue-wash), #fff 40%);
+  box-shadow: var(--shadow-blue);
+  clip-path: var(--facet-14);
+}
+.session-group {
+  margin-bottom: 22px;
+}
+.session-group h3 {
+  margin: 0 0 2px;
+  padding-bottom: 7px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 9px;
+  border-bottom: 1px solid var(--rule);
+}
+.session-group h3 > span {
+  color: var(--muted);
+  font: 500 9px var(--font-mono);
+  letter-spacing: 1.8px;
+  text-transform: uppercase;
+}
+.session-group h3 small {
+  color: var(--silver);
+  font: 400 9.5px var(--font-mono);
+  text-transform: uppercase;
+}
+.session-group h3 em {
+  color: var(--muted);
+  font: 400 9.5px var(--font-mono);
+  font-style: normal;
+}
+.session-group h3 .text-button {
+  margin-left: auto;
+  font-size: 11px;
+}
+.session-group.late h3 > span {
+  color: var(--danger);
+}
+.session-note {
+  margin: -6px 0 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--secondary);
+  font: 400 10.5px var(--font-mono);
+  text-transform: uppercase;
+}
+.milestones-ahead {
+  margin: 0;
+  padding: 4px 0 0;
+  display: grid;
+  gap: 2px;
+  list-style: none;
+}
+.milestones-ahead li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  padding: 6px 2px;
+  color: var(--strong);
+  font: 400 12.5px var(--font-ui);
+}
+.milestones-ahead small {
+  color: var(--muted);
+  font: 400 9.5px var(--font-mono);
+  text-transform: uppercase;
+}
+.milestones-ahead li.late small {
+  color: var(--danger);
+}
+.week-pool {
+  display: grid;
+  grid-template-columns: 190px minmax(0, 1fr);
+  gap: 18px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--hairline);
+}
+.week-pool .due-heading {
+  align-self: start;
+  margin: 9px 10px 0;
+}
+
 @media (max-width: 1180px) {
   .overview-grid {
     grid-template-columns: minmax(0, 1fr);
@@ -3233,9 +3574,13 @@ select:focus-visible,
     grid-template-columns: minmax(440px, 1fr) 330px;
     gap: 22px;
   }
-  .week-day {
+  .week-day,
+  .week-pool {
     grid-template-columns: minmax(0, 1fr);
     gap: 6px;
+  }
+  .session-grid {
+    grid-template-columns: minmax(0, 1fr);
   }
   .day-milestones {
     margin-left: 0;

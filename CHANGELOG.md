@@ -1,5 +1,31 @@
 # Changelog
 
+## v0.2.5
+
+The core planning workflow: capture anything, choose a week's work, plan each day, and recover unfinished tasks, all without the AI planner.
+
+### Capture
+
+- A new Inbox holds thoughts, tasks, and ideas with no plan, date, or priority required. Capture from the Inbox screen or from anywhere with ⌘I (Ctrl+I on Windows).
+- Each item becomes a task, plan, or event when you're ready. The new record is created and the item removed in one step.
+
+### Weekly and daily planning
+
+- Plan the Week shows work left from earlier weeks, overdue and soon-due tasks, tasks behind upcoming milestones, and each active plan's backlog, next to the week's chosen work and its estimated hours.
+- Plan Today builds the day from unfinished, due, and chosen work, next to the time already on the calendar.
+- Today offers each session in a quiet prompt until you plan or dismiss it, and still lists what's due that day.
+- Tasks can be chosen for a week without picking a day, and the Week view shows those tasks above its days.
+
+### Moving work
+
+- Unfinished tasks from earlier days collect on Today. Move them to today, tomorrow, a picked day, this or next week, or back to their plan; mark them done; or move them all at once. Nothing moves on its own.
+- Every task row offers the same moves, and each move changes the same task rather than copying it.
+
+### Tasks and data
+
+- Tasks take an optional estimate (15, 30, or 45 minutes, 1 or 2 hours, or a custom length).
+- Database schema 5 and export format 5 add the Inbox, task weeks, and estimates. Earlier databases migrate with a backup, and earlier exports still import.
+
 ## v0.2.0
 
 The first published DayPlan build, released as an unsigned pre-release for macOS and Windows.

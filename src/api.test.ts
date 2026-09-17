@@ -19,6 +19,8 @@ describe("planning record boundary", () => {
     ownerId: null,
     dueDate: "2026-10-13",
     scheduledDay: null,
+    plannedWeek: null,
+    estimatedMinutes: null,
     status: "todo",
     priority: "high",
     completedAt: null,
@@ -30,6 +32,19 @@ describe("planning record boundary", () => {
 
   it("accepts a general task without a scheduled day", () => {
     expect(taskSchema.parse(task).scheduledDay).toBeNull();
+  });
+
+  it("accepts a chosen week and an estimate within one day", () => {
+    const chosen = { ...task, plannedWeek: "2026-10-11", estimatedMinutes: 90 };
+    expect(taskSchema.parse(chosen).estimatedMinutes).toBe(90);
+    expect(() =>
+      taskSchema.parse({ ...chosen, estimatedMinutes: 1441 }),
+    ).toThrow();
+    expect(() =>
+      taskSchema.parse({ ...chosen, plannedWeek: "next" }),
+    ).toThrow();
+    const { plannedWeek: _plannedWeek, ...withoutWeek } = chosen;
+    expect(() => taskSchema.parse(withoutWeek)).toThrow();
   });
 
   it("rejects the legacy day-bound task shape and unknown statuses", () => {

@@ -11,12 +11,13 @@ use db::{
 };
 use error::{AppError, CommandError};
 use model::{
-    Agenda, AppliedProposal, CreateEventInput, CreateMilestoneInput, CreatePersonInput,
-    CreatePlanInput, CreateTaskInput, CreateWorkstreamInput, DatabaseStatus, ExportBundle,
-    ImportPreview, LocalDateTimeInput, LocalDateTimeResolution, Milestone, Person, PersonSummary,
-    Plan, PlanDeletion, PlanSummary, PlanWorkspace, PlannerResponse, RescheduleEventInput,
-    ScheduleEvent, Task, UpdateEventInput, UpdateMilestoneInput, UpdatePersonInput,
-    UpdatePlanInput, UpdateTaskInput, UpdateWorkstreamInput, Workstream,
+    Agenda, AppliedProposal, CreateEventInput, CreateInboxItemInput, CreateMilestoneInput,
+    CreatePersonInput, CreatePlanInput, CreateTaskInput, CreateWorkstreamInput, DatabaseStatus,
+    ExportBundle, ImportPreview, InboxConversion, InboxItem, LocalDateTimeInput,
+    LocalDateTimeResolution, Milestone, Person, PersonSummary, Plan, PlanDeletion, PlanSummary,
+    PlanWorkspace, PlannerResponse, PlanningBoard, ProcessInboxItemInput, RescheduleEventInput,
+    ScheduleEvent, Task, TaskMove, UpdateEventInput, UpdateInboxItemInput, UpdateMilestoneInput,
+    UpdatePersonInput, UpdatePlanInput, UpdateTaskInput, UpdateWorkstreamInput, Workstream,
 };
 use runtime::OllamaRuntimeManager;
 use serde::Serialize;
@@ -320,6 +321,57 @@ fn update_task(state: State<'_, AppState>, input: UpdateTaskInput) -> Result<Tas
 #[tauri::command]
 fn delete_task(state: State<'_, AppState>, id: String, revision: i64) -> Result<(), CommandError> {
     with_database(&state, |database| database.delete_task(&id, revision))
+}
+
+#[tauri::command]
+fn list_inbox_items(state: State<'_, AppState>) -> Result<Vec<InboxItem>, CommandError> {
+    with_database(&state, |database| database.list_inbox_items())
+}
+
+#[tauri::command]
+fn create_inbox_item(
+    state: State<'_, AppState>,
+    input: CreateInboxItemInput,
+) -> Result<InboxItem, CommandError> {
+    with_database(&state, |database| database.create_inbox_item(input))
+}
+
+#[tauri::command]
+fn update_inbox_item(
+    state: State<'_, AppState>,
+    input: UpdateInboxItemInput,
+) -> Result<InboxItem, CommandError> {
+    with_database(&state, |database| database.update_inbox_item(input))
+}
+
+#[tauri::command]
+fn delete_inbox_item(
+    state: State<'_, AppState>,
+    id: String,
+    revision: i64,
+) -> Result<(), CommandError> {
+    with_database(&state, |database| database.delete_inbox_item(&id, revision))
+}
+
+#[tauri::command]
+fn process_inbox_item(
+    state: State<'_, AppState>,
+    input: ProcessInboxItemInput,
+) -> Result<InboxConversion, CommandError> {
+    with_database(&state, |database| database.process_inbox_item(input))
+}
+
+#[tauri::command]
+fn get_planning_board(
+    state: State<'_, AppState>,
+    start_day: String,
+) -> Result<PlanningBoard, CommandError> {
+    with_database(&state, |database| database.planning_board(&start_day))
+}
+
+#[tauri::command]
+fn move_tasks(state: State<'_, AppState>, moves: Vec<TaskMove>) -> Result<Vec<Task>, CommandError> {
+    with_database(&state, |database| database.move_tasks(moves))
 }
 
 #[tauri::command]
@@ -893,6 +945,13 @@ pub fn run() {
             create_task,
             update_task,
             delete_task,
+            list_inbox_items,
+            create_inbox_item,
+            update_inbox_item,
+            delete_inbox_item,
+            process_inbox_item,
+            get_planning_board,
+            move_tasks,
             resolve_local_datetime,
             export_planner_file,
             select_planner_import,

@@ -414,6 +414,8 @@ fn seed(database: &mut PlannerDatabase, case: &EvalCase) -> HashMap<String, Stri
                 owner_id: None,
                 due_date: fixture.due_date.clone(),
                 scheduled_day: fixture.scheduled_day.clone(),
+                planned_week: None,
+                estimated_minutes: None,
                 status: fixture.status.unwrap_or(TaskStatus::Todo),
                 priority: fixture.priority.unwrap_or(TaskPriority::Normal),
             })
@@ -629,6 +631,8 @@ fn disturb(database: &mut PlannerDatabase, references: &[ProposalReference], aft
                         owner_id: task.owner_id,
                         due_date: task.due_date,
                         scheduled_day: task.scheduled_day,
+                        planned_week: task.planned_week,
+                        estimated_minutes: task.estimated_minutes,
                         status: task.status,
                         priority: task.priority,
                     })

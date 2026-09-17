@@ -10,6 +10,7 @@ use crate::model::{
     CreateMilestoneInput, CreatePlanInput, CreateTaskInput, Milestone, MilestoneStatus, Plan,
     PlanColor, PlanDeletion, PlanStatus, PlanSummary, PlanWorkspace, Task, TaskPriority,
     TaskStatus, UpdateMilestoneInput, UpdatePlanInput, UpdateTaskInput, MAX_DESCRIPTION_LENGTH,
+    MAX_ESTIMATE_MINUTES,
 };
 use rusqlite::{params, types::Type, OptionalExtension, Row, TransactionBehavior};
 use std::collections::HashMap;
@@ -18,16 +19,17 @@ use uuid::Uuid;
 const PLAN_SELECT: &str = "SELECT id, title, description, status, start_date, target_date, color,
         archived, revision, created_at, updated_at
      FROM plans";
-const MILESTONE_SELECT: &str = "SELECT id, plan_id, title, description, target_date, status,
+pub(super) const MILESTONE_SELECT: &str =
+    "SELECT id, plan_id, title, description, target_date, status,
         workstream_id, sort_order, revision, created_at, updated_at
      FROM milestones";
 pub(super) const TASK_SELECT: &str = "SELECT id, title, description, plan_id, milestone_id,
         workstream_id, owner_id, due_date, scheduled_day, status, priority, completed_at,
-        sort_order, revision, created_at, updated_at
+        sort_order, revision, created_at, updated_at, planned_week, estimated_minutes
      FROM tasks";
 const PLAN_ORDER: &str =
     "ORDER BY archived ASC, target_date IS NULL, target_date ASC, created_at ASC";
-const MILESTONE_ORDER: &str =
+pub(super) const MILESTONE_ORDER: &str =
     "ORDER BY target_date IS NULL, target_date ASC, sort_order ASC, created_at ASC";
 const TASK_ORDER: &str = "ORDER BY status = 'done', sort_order ASC, created_at ASC";
 
@@ -127,9 +129,9 @@ impl PlannerDatabase {
     }
 
     /// Permanently deletes an archived plan in one transaction. Its workstreams, milestones, and
-    /// the tasks that exist only inside it are removed; tasks with a scheduled or due day and all
-    /// events are kept without a plan or workstream, with their revisions advanced so stale edits
-    /// and proposals are rejected. Owners are people outside the plan and stay assigned.
+    /// the tasks that exist only inside it are removed; tasks with a week, scheduled day, or due
+    /// day and all events are kept without a plan or workstream, with their revisions advanced so
+    /// stale edits and proposals are rejected. Owners are people outside the plan and stay assigned.
     pub fn delete_plan(&mut self, id: &str, revision: i64) -> AppResult<PlanDeletion> {
         validate_id(id)?;
         validate_revision(revision)?;
@@ -148,7 +150,8 @@ impl PlannerDatabase {
         let timestamp = now();
         let deleted_tasks = transaction.execute(
             "DELETE FROM tasks
-             WHERE plan_id = ?1 AND scheduled_day IS NULL AND due_date IS NULL",
+             WHERE plan_id = ?1 AND scheduled_day IS NULL AND due_date IS NULL
+               AND planned_week IS NULL",
             params![id],
         )?;
         let detached_tasks = transaction.execute(
@@ -491,6 +494,8 @@ pub(super) fn insert_task<C: SqlConnection>(
         owner_id: input.owner_id.as_deref(),
         due_date: input.due_date.as_deref(),
         scheduled_day: input.scheduled_day.as_deref(),
+        planned_week: input.planned_week.as_deref(),
+        estimated_minutes: input.estimated_minutes,
     };
     let days = validate_task_shape(&shape)?;
     validate_task_references(connection, &shape)?;
@@ -506,9 +511,9 @@ pub(super) fn insert_task<C: SqlConnection>(
     connection.execute(
         "INSERT INTO tasks
          (id, title, description, plan_id, milestone_id, workstream_id, owner_id, due_date,
-          scheduled_day, status, priority, completed_at, sort_order, revision, created_at,
-          updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 1, ?14, ?14)",
+          scheduled_day, planned_week, estimated_minutes, status, priority, completed_at,
+          sort_order, revision, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, 1, ?16, ?16)",
         params![
             id,
             input.title.trim(),
@@ -519,6 +524,8 @@ pub(super) fn insert_task<C: SqlConnection>(
             input.owner_id,
             days.due_date,
             days.scheduled_day,
+            days.planned_week,
+            input.estimated_minutes,
             input.status.as_str(),
             input.priority.as_str(),
             completed_at,
@@ -549,6 +556,8 @@ pub(super) fn replace_task<C: SqlConnection>(
         owner_id: input.owner_id.as_deref(),
         due_date: input.due_date.as_deref(),
         scheduled_day: input.scheduled_day.as_deref(),
+        planned_week: input.planned_week.as_deref(),
+        estimated_minutes: input.estimated_minutes,
     };
     let days = validate_task_shape(&shape)?;
     validate_task_references(connection, &shape)?;
@@ -562,9 +571,10 @@ pub(super) fn replace_task<C: SqlConnection>(
     let changed = connection.connection().execute(
         "UPDATE tasks
          SET title = ?1, description = ?2, plan_id = ?3, milestone_id = ?4, workstream_id = ?5,
-             owner_id = ?6, due_date = ?7, scheduled_day = ?8, status = ?9, priority = ?10,
-             completed_at = ?11, revision = revision + 1, updated_at = ?12
-         WHERE id = ?13 AND revision = ?14",
+             owner_id = ?6, due_date = ?7, scheduled_day = ?8, planned_week = ?9,
+             estimated_minutes = ?10, status = ?11, priority = ?12, completed_at = ?13,
+             revision = revision + 1, updated_at = ?14
+         WHERE id = ?15 AND revision = ?16",
         params![
             input.title.trim(),
             input.description.trim(),
@@ -574,6 +584,8 @@ pub(super) fn replace_task<C: SqlConnection>(
             input.owner_id,
             days.due_date,
             days.scheduled_day,
+            days.planned_week,
+            input.estimated_minutes,
             input.status.as_str(),
             input.priority.as_str(),
             completed_at,
@@ -598,11 +610,14 @@ pub(super) struct TaskShape<'a> {
     pub owner_id: Option<&'a str>,
     pub due_date: Option<&'a str>,
     pub scheduled_day: Option<&'a str>,
+    pub planned_week: Option<&'a str>,
+    pub estimated_minutes: Option<i64>,
 }
 
 pub(super) struct TaskDays {
     pub due_date: Option<String>,
     pub scheduled_day: Option<String>,
+    pub planned_week: Option<String>,
 }
 
 pub(super) fn validate_task_shape(shape: &TaskShape<'_>) -> AppResult<TaskDays> {
@@ -623,13 +638,26 @@ pub(super) fn validate_task_shape(shape: &TaskShape<'_>) -> AppResult<TaskDays> 
             return Err(super::team::workstream_plan_mismatch());
         }
     }
+    if shape
+        .estimated_minutes
+        .is_some_and(|minutes| !(1..=MAX_ESTIMATE_MINUTES).contains(&minutes))
+    {
+        return Err(AppError::Validation(
+            "A task estimate must be between 1 minute and 24 hours.".into(),
+        ));
+    }
     let days = TaskDays {
         due_date: shape.due_date.map(normalize_day).transpose()?,
         scheduled_day: shape.scheduled_day.map(normalize_day).transpose()?,
+        planned_week: shape.planned_week.map(normalize_day).transpose()?,
     };
-    if shape.plan_id.is_none() && days.due_date.is_none() && days.scheduled_day.is_none() {
+    if shape.plan_id.is_none()
+        && days.due_date.is_none()
+        && days.scheduled_day.is_none()
+        && days.planned_week.is_none()
+    {
         return Err(AppError::Validation(
-            "A task needs a plan, a scheduled day, or a due date.".into(),
+            "A task needs a plan, a week, a scheduled day, or a due date.".into(),
         ));
     }
     Ok(days)
@@ -794,7 +822,7 @@ fn plan_from_row(row: &Row<'_>) -> rusqlite::Result<Plan> {
     })
 }
 
-fn milestone_from_row(row: &Row<'_>) -> rusqlite::Result<Milestone> {
+pub(super) fn milestone_from_row(row: &Row<'_>) -> rusqlite::Result<Milestone> {
     Ok(Milestone {
         id: row.get(0)?,
         plan_id: row.get(1)?,
@@ -828,6 +856,8 @@ pub(super) fn task_from_row(row: &Row<'_>) -> rusqlite::Result<Task> {
         revision: row.get(13)?,
         created_at: row.get(14)?,
         updated_at: row.get(15)?,
+        planned_week: row.get(16)?,
+        estimated_minutes: row.get(17)?,
     })
 }
 
@@ -921,6 +951,8 @@ mod tests {
             owner_id: None,
             due_date: None,
             scheduled_day: None,
+            planned_week: None,
+            estimated_minutes: None,
             status: TaskStatus::Todo,
             priority: TaskPriority::Normal,
         }
@@ -938,6 +970,8 @@ mod tests {
             owner_id: task.owner_id.clone(),
             due_date: task.due_date.clone(),
             scheduled_day: task.scheduled_day.clone(),
+            planned_week: task.planned_week.clone(),
+            estimated_minutes: task.estimated_minutes,
             status: task.status,
             priority: task.priority,
         }
@@ -1129,6 +1163,44 @@ mod tests {
     }
 
     #[test]
+    fn a_week_is_a_home_and_estimates_stay_within_a_day() {
+        let mut database = database();
+        let chosen = database
+            .create_task(CreateTaskInput {
+                planned_week: Some("2026-09-13".into()),
+                estimated_minutes: Some(30),
+                ..task("Call dentist")
+            })
+            .unwrap();
+        assert_eq!(
+            (chosen.planned_week.as_deref(), chosen.estimated_minutes),
+            (Some("2026-09-13"), Some(30))
+        );
+        for estimated_minutes in [0, 1_441] {
+            assert!(matches!(
+                database.create_task(CreateTaskInput {
+                    planned_week: Some("2026-09-13".into()),
+                    estimated_minutes: Some(estimated_minutes),
+                    ..task("Out of range")
+                }),
+                Err(AppError::Validation(_))
+            ));
+        }
+        assert!(matches!(
+            database.create_task(CreateTaskInput {
+                planned_week: Some("next week".into()),
+                ..task("Unreadable week")
+            }),
+            Err(AppError::Validation(_))
+        ));
+        let cleared = database.update_task(UpdateTaskInput {
+            planned_week: None,
+            ..edit(&chosen)
+        });
+        assert!(matches!(cleared, Err(AppError::Validation(_))));
+    }
+
+    #[test]
     fn completion_time_follows_done_status() {
         let mut database = database();
         let created = database
@@ -1301,6 +1373,13 @@ mod tests {
                 ..task("Laundry")
             })
             .unwrap();
+        let chosen = database
+            .create_task(CreateTaskInput {
+                plan_id: Some(showcase.id.clone()),
+                planned_week: Some("2026-10-11".into()),
+                ..task("Order lanyards")
+            })
+            .unwrap();
         let event = database
             .create_event(CreateEventInput {
                 title: "Creator briefing".into(),
@@ -1326,7 +1405,7 @@ mod tests {
                 deleted_workstreams: 0,
                 deleted_milestones: 1,
                 deleted_tasks: 1,
-                detached_tasks: 1,
+                detached_tasks: 2,
                 detached_events: 1,
             }
         );
@@ -1342,6 +1421,16 @@ mod tests {
         assert_eq!(
             database.tasks_for_day("2026-10-13").unwrap()[0].revision,
             unrelated.revision
+        );
+        let kept_chosen = database
+            .all_tasks()
+            .unwrap()
+            .into_iter()
+            .find(|task| task.id == chosen.id)
+            .expect("a task chosen for a week survives its plan");
+        assert_eq!(
+            (kept_chosen.plan_id, kept_chosen.planned_week.as_deref()),
+            (None, Some("2026-10-11"))
         );
         let kept_event = database
             .events_for_day("2026-10-16", "America/New_York")

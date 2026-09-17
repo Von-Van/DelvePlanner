@@ -1,6 +1,7 @@
 import { FormEvent, ReactNode, useRef, useState } from "react";
 import {
   api,
+  InboxItem,
   messageFor,
   Milestone,
   MilestoneInput,
@@ -19,6 +20,7 @@ import { useModalFocus } from "./useModalFocus";
 
 export function PlanEditor({
   plan,
+  inboxItem,
   defaultColor,
   onClose,
   onSaved,
@@ -26,16 +28,18 @@ export function PlanEditor({
   onError,
 }: {
   plan?: Plan;
+  /** Converts this inbox item: saving creates the plan and removes the item together. */
+  inboxItem?: InboxItem;
   defaultColor: PlanColor;
   onClose: () => void;
-  onSaved: (plan: Plan) => Promise<void> | void;
+  onSaved: (planId: string) => Promise<void> | void;
   /** Offered for an existing, unarchived plan. Unsaved edits in the form are discarded. */
   onArchive?: () => void;
   onError: (message: string) => void;
 }) {
   const [draft, setDraft] = useState<PlanInput>(() => ({
-    title: plan?.title ?? "",
-    description: plan?.description ?? "",
+    title: plan?.title ?? inboxItem?.text ?? "",
+    description: plan?.description ?? inboxItem?.notes ?? "",
     status: plan?.status ?? "planning",
     startDate: plan?.startDate ?? null,
     targetDate: plan?.targetDate ?? null,
@@ -51,15 +55,20 @@ export function PlanEditor({
     form.preventDefault();
     setSaving(true);
     try {
-      const saved = plan
-        ? await api.updatePlan({
-            ...draft,
-            id: plan.id,
-            revision: plan.revision,
-            archived: plan.archived,
-          })
-        : await api.createPlan(draft);
-      await onSaved(saved);
+      const savedId = inboxItem
+        ? (await api.processInboxItem(inboxItem, { kind: "plan", plan: draft }))
+            .id
+        : plan
+          ? (
+              await api.updatePlan({
+                ...draft,
+                id: plan.id,
+                revision: plan.revision,
+                archived: plan.archived,
+              })
+            ).id
+          : (await api.createPlan(draft)).id;
+      await onSaved(savedId);
     } catch (cause) {
       onError(messageFor(cause));
     } finally {
@@ -69,9 +78,15 @@ export function PlanEditor({
 
   return (
     <EditorShell
-      label={plan ? "Edit plan" : "New plan"}
-      kicker={plan ? "EDIT PLAN" : "NEW PLAN"}
-      heading={plan ? "Adjust the plan" : "What are you working toward?"}
+      label={inboxItem ? "Make a plan" : plan ? "Edit plan" : "New plan"}
+      kicker={inboxItem ? "FROM INBOX" : plan ? "EDIT PLAN" : "NEW PLAN"}
+      heading={
+        inboxItem
+          ? "Make it a plan"
+          : plan
+            ? "Adjust the plan"
+            : "What are you working toward?"
+      }
       busy={saving}
       onClose={onClose}
       onSubmit={submit}

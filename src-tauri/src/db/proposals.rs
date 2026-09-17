@@ -561,6 +561,8 @@ impl ProposalWriter<'_, '_> {
                         owner_id: None,
                         due_date: due_date.clone(),
                         scheduled_day: scheduled_day.clone(),
+                        planned_week: None,
+                        estimated_minutes: None,
                         status: *status,
                         priority: *priority,
                     },
@@ -598,9 +600,8 @@ impl ProposalWriter<'_, '_> {
                 due_date,
             } => {
                 self.edit_task(task_id, *expected_revision, |_, input| {
-                    input.scheduled_day =
-                        apply_day_change(scheduled_day, input.scheduled_day.take());
-                    input.due_date = apply_day_change(due_date, input.due_date.take());
+                    input.scheduled_day = scheduled_day.apply(input.scheduled_day.take());
+                    input.due_date = due_date.apply(input.due_date.take());
                     Ok(())
                 })?;
             }
@@ -737,6 +738,8 @@ impl ProposalWriter<'_, '_> {
             owner_id: current.owner_id.clone(),
             due_date: current.due_date.clone(),
             scheduled_day: current.scheduled_day.clone(),
+            planned_week: current.planned_week.clone(),
+            estimated_minutes: current.estimated_minutes,
             status: current.status,
             priority: current.priority,
         };
@@ -795,14 +798,6 @@ struct EventEdit<'a> {
     start: Option<(&'a String, &'a String)>,
     duration_minutes: Option<i64>,
     reminder_change: &'a ReminderChange,
-}
-
-fn apply_day_change(change: &DayChange, current: Option<String>) -> Option<String> {
-    match change {
-        DayChange::Unchanged => current,
-        DayChange::Clear => None,
-        DayChange::Set { day } => Some(day.clone()),
-    }
 }
 
 /// Case- and whitespace-insensitive form of a title, used to match references by title.
@@ -1287,6 +1282,8 @@ mod tests {
                 owner_id: None,
                 due_date: None,
                 scheduled_day: plan_id.is_none().then(|| "2026-09-15".into()),
+                planned_week: None,
+                estimated_minutes: None,
                 status: TaskStatus::Todo,
                 priority: TaskPriority::Normal,
             })
@@ -1379,6 +1376,8 @@ mod tests {
                 owner_id: None,
                 due_date: None,
                 scheduled_day: None,
+                planned_week: None,
+                estimated_minutes: None,
                 status: TaskStatus::Todo,
                 priority: TaskPriority::Normal,
             })

@@ -17,6 +17,7 @@ import {
 import { Glyph, Mark, Spinner } from "./Geometry";
 import { PlanChip } from "./PlanControls";
 import {
+  estimateLabel,
   groupWeek,
   isOverdue,
   matchesPlanFilter,
@@ -31,6 +32,8 @@ export function WeekView({
   startDay,
   today,
   agenda,
+  plannedTasks,
+  onPlanWeek,
   loading,
   planFilter,
   filterControl,
@@ -49,6 +52,9 @@ export function WeekView({
   startDay: string;
   today: string;
   agenda: Agenda | null;
+  /** Tasks chosen for this week that have no day yet. */
+  plannedTasks: Task[];
+  onPlanWeek: () => void;
   loading: boolean;
   planFilter: PlanFilter;
   filterControl: ReactNode;
@@ -75,6 +81,9 @@ export function WeekView({
     ),
   };
   const days = filtered ? groupWeek(filtered, startDay) : [];
+  const pooled = plannedTasks.filter((task) =>
+    matchesPlanFilter(task, planFilter),
+  );
   const endDay = offsetDay(startDay, 6);
   return (
     <div className="week-page">
@@ -103,6 +112,9 @@ export function WeekView({
           >
             <Glyph>→</Glyph>
           </button>
+          <button className="secondary-button" onClick={onPlanWeek}>
+            Plan the week
+          </button>
         </div>
       </header>
       <div className="week-toolbar">
@@ -111,9 +123,13 @@ export function WeekView({
             {[
               plural(filtered.events.length, "event"),
               plural(filtered.tasks.length, "scheduled task"),
+              pooled.length > 0 &&
+                `${plural(pooled.length, "task")} with no day`,
               plural(filtered.dueTasks.length, "due task"),
               plural(filtered.milestones.length, "milestone"),
-            ].join(" · ")}
+            ]
+              .filter(Boolean)
+              .join(" · ")}
           </p>
         ) : (
           <span />
@@ -126,127 +142,173 @@ export function WeekView({
           Gathering your week
         </div>
       ) : (
-        <ol className="week-days">
-          {days.map((group) => {
-            const empty =
-              group.events.length +
-                group.tasks.length +
-                group.dueTasks.length +
-                group.milestones.length ===
-              0;
-            return (
-              <li
-                key={group.day}
-                className={`week-day ${group.day === today ? "today" : ""}`}
-              >
-                <button
-                  className="week-day-heading"
-                  onClick={() => onOpenDay(group.day)}
-                  aria-label={`Open ${dayLabel(group.day)}`}
+        <>
+          {pooled.length > 0 && (
+            <section
+              className="week-pool"
+              aria-label="Chosen for this week, no day yet"
+            >
+              <p className="due-heading">
+                NO DAY YET <span>{pooled.length}</span>
+              </p>
+              <ul className="week-items">
+                {pooled.map((task) => {
+                  const done = task.status === "done";
+                  return (
+                    <li
+                      key={task.id}
+                      className={`week-task ${done ? "done" : ""}`}
+                    >
+                      <button
+                        className="check-box"
+                        disabled={busyTaskId === task.id}
+                        onClick={() => onToggleTask(task)}
+                        aria-label={`Mark ${task.title} ${done ? "not done" : "done"}`}
+                      />
+                      <button
+                        className="week-task-open"
+                        onClick={() => onOpenTask(task)}
+                      >
+                        <span className="week-title">{task.title}</span>
+                        {task.estimatedMinutes !== null && (
+                          <small>{estimateLabel(task.estimatedMinutes)}</small>
+                        )}
+                        <PlanChip
+                          plan={
+                            task.planId ? planById.get(task.planId) : undefined
+                          }
+                        />
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+          )}
+          <ol className="week-days">
+            {days.map((group) => {
+              const empty =
+                group.events.length +
+                  group.tasks.length +
+                  group.dueTasks.length +
+                  group.milestones.length ===
+                0;
+              return (
+                <li
+                  key={group.day}
+                  className={`week-day ${group.day === today ? "today" : ""}`}
                 >
-                  <strong>{weekdayName(group.day)}</strong>
-                  <span>
-                    {shortDate(group.day)} ·{" "}
-                    {relativeDayLabel(group.day, today)}
-                  </span>
-                </button>
-                {empty ? (
-                  <p className="week-empty">Nothing planned.</p>
-                ) : (
-                  <ul className="week-items">
-                    {group.milestones.map((milestone) => (
-                      <li key={milestone.id} className="week-milestone">
-                        <button onClick={() => onOpenMilestone(milestone)}>
-                          <Mark
-                            size={7}
-                            color={planColor(planById.get(milestone.planId))}
-                            filled={milestone.status === "complete"}
-                            dashed={milestone.status === "skipped"}
-                          />
-                          <span className="week-title">{milestone.title}</span>
-                          <PlanChip plan={planById.get(milestone.planId)} />
-                        </button>
-                      </li>
-                    ))}
-                    {group.events.map((event) => (
-                      <li key={event.id} className="week-event">
-                        <button onClick={() => onOpenEvent(event)}>
-                          <time>{timeLabel(event.startAtUtc)}</time>
-                          <span className="week-title">{event.title}</span>
-                          {event.reminderMinutesBefore !== null && (
-                            <i
-                              className="week-reminder"
-                              role="img"
-                              aria-label="Has a reminder"
+                  <button
+                    className="week-day-heading"
+                    onClick={() => onOpenDay(group.day)}
+                    aria-label={`Open ${dayLabel(group.day)}`}
+                  >
+                    <strong>{weekdayName(group.day)}</strong>
+                    <span>
+                      {shortDate(group.day)} ·{" "}
+                      {relativeDayLabel(group.day, today)}
+                    </span>
+                  </button>
+                  {empty ? (
+                    <p className="week-empty">Nothing planned.</p>
+                  ) : (
+                    <ul className="week-items">
+                      {group.milestones.map((milestone) => (
+                        <li key={milestone.id} className="week-milestone">
+                          <button onClick={() => onOpenMilestone(milestone)}>
+                            <Mark
+                              size={7}
+                              color={planColor(planById.get(milestone.planId))}
+                              filled={milestone.status === "complete"}
+                              dashed={milestone.status === "skipped"}
                             />
-                          )}
-                          {event.ownerId && (
-                            <small>
-                              {personById.get(event.ownerId)?.displayName}
-                            </small>
-                          )}
-                          <PlanChip
-                            plan={
-                              event.planId
-                                ? planById.get(event.planId)
-                                : undefined
-                            }
-                          />
-                        </button>
-                      </li>
-                    ))}
-                    {[...group.tasks, ...group.dueTasks].map((task) => {
-                      const done = task.status === "done";
-                      const due = task.dueDate === group.day;
-                      return (
-                        <li
-                          key={`${task.id}-${due ? "due" : "scheduled"}`}
-                          className={`week-task ${done ? "done" : ""}`}
-                        >
-                          <button
-                            className="check-box"
-                            disabled={busyTaskId === task.id}
-                            onClick={() => onToggleTask(task)}
-                            aria-label={`Mark ${task.title} ${done ? "not done" : "done"}`}
-                          />
-                          <button
-                            className="week-task-open"
-                            onClick={() => onOpenTask(task)}
-                          >
-                            <span className="week-title">{task.title}</span>
-                            {due && (
-                              <small
-                                className={
-                                  !done && isOverdue(task.dueDate, today)
-                                    ? "late"
-                                    : ""
-                                }
-                              >
-                                Due
-                              </small>
+                            <span className="week-title">
+                              {milestone.title}
+                            </span>
+                            <PlanChip plan={planById.get(milestone.planId)} />
+                          </button>
+                        </li>
+                      ))}
+                      {group.events.map((event) => (
+                        <li key={event.id} className="week-event">
+                          <button onClick={() => onOpenEvent(event)}>
+                            <time>{timeLabel(event.startAtUtc)}</time>
+                            <span className="week-title">{event.title}</span>
+                            {event.reminderMinutesBefore !== null && (
+                              <i
+                                className="week-reminder"
+                                role="img"
+                                aria-label="Has a reminder"
+                              />
                             )}
-                            {task.ownerId && (
+                            {event.ownerId && (
                               <small>
-                                {personById.get(task.ownerId)?.displayName}
+                                {personById.get(event.ownerId)?.displayName}
                               </small>
                             )}
                             <PlanChip
                               plan={
-                                task.planId
-                                  ? planById.get(task.planId)
+                                event.planId
+                                  ? planById.get(event.planId)
                                   : undefined
                               }
                             />
                           </button>
                         </li>
-                      );
-                    })}
-                  </ul>
-                )}
-              </li>
-            );
-          })}
-        </ol>
+                      ))}
+                      {[...group.tasks, ...group.dueTasks].map((task) => {
+                        const done = task.status === "done";
+                        const due = task.dueDate === group.day;
+                        return (
+                          <li
+                            key={`${task.id}-${due ? "due" : "scheduled"}`}
+                            className={`week-task ${done ? "done" : ""}`}
+                          >
+                            <button
+                              className="check-box"
+                              disabled={busyTaskId === task.id}
+                              onClick={() => onToggleTask(task)}
+                              aria-label={`Mark ${task.title} ${done ? "not done" : "done"}`}
+                            />
+                            <button
+                              className="week-task-open"
+                              onClick={() => onOpenTask(task)}
+                            >
+                              <span className="week-title">{task.title}</span>
+                              {due && (
+                                <small
+                                  className={
+                                    !done && isOverdue(task.dueDate, today)
+                                      ? "late"
+                                      : ""
+                                  }
+                                >
+                                  Due
+                                </small>
+                              )}
+                              {task.ownerId && (
+                                <small>
+                                  {personById.get(task.ownerId)?.displayName}
+                                </small>
+                              )}
+                              <PlanChip
+                                plan={
+                                  task.planId
+                                    ? planById.get(task.planId)
+                                    : undefined
+                                }
+                              />
+                            </button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                </li>
+              );
+            })}
+          </ol>
+        </>
       )}
     </div>
   );

@@ -137,6 +137,8 @@ export const taskSchema = z
     ownerId: z.string().uuid().nullable(),
     dueDate: daySchema.nullable(),
     scheduledDay: daySchema.nullable(),
+    plannedWeek: daySchema.nullable(),
+    estimatedMinutes: z.number().int().min(1).max(1440).nullable(),
     status: z.enum(taskStatuses),
     priority: z.enum(taskPriorities),
     completedAt: timestampSchema.nullable(),
@@ -144,6 +146,24 @@ export const taskSchema = z
     revision: revisionSchema,
     createdAt: timestampSchema,
     updatedAt: timestampSchema,
+  })
+  .strict();
+
+export const inboxItemSchema = z
+  .object({
+    id: z.string().uuid(),
+    text: z.string(),
+    notes: z.string(),
+    revision: revisionSchema,
+    createdAt: timestampSchema,
+    updatedAt: timestampSchema,
+  })
+  .strict();
+
+const inboxConversionSchema = z
+  .object({
+    kind: z.enum(["task", "plan", "event"]),
+    id: z.string().uuid(),
   })
   .strict();
 
@@ -400,6 +420,13 @@ const agendaSchema = z
     milestones: z.array(milestoneSchema),
   })
   .strict();
+
+const planningBoardSchema = z
+  .object({
+    tasks: z.array(taskSchema),
+    milestones: z.array(milestoneSchema),
+  })
+  .strict();
 const statusSchema = z
   .object({
     phase: z.enum([
@@ -483,6 +510,7 @@ const importPreviewSchema = z
     milestoneCount: z.number().int().nonnegative(),
     eventCount: z.number().int().nonnegative(),
     taskCount: z.number().int().nonnegative(),
+    inboxItemCount: z.number().int().nonnegative(),
     earliestDay: z.string().nullable(),
     latestDay: z.string().nullable(),
   })
@@ -506,6 +534,9 @@ export type Person = z.infer<typeof personSchema>;
 export type PersonSummary = z.infer<typeof personSummarySchema>;
 export type Workstream = z.infer<typeof workstreamSchema>;
 export type Agenda = z.infer<typeof agendaSchema>;
+export type PlanningBoard = z.infer<typeof planningBoardSchema>;
+export type InboxItem = z.infer<typeof inboxItemSchema>;
+export type InboxConversion = z.infer<typeof inboxConversionSchema>;
 export type Milestone = z.infer<typeof milestoneSchema>;
 export type MilestoneStatus = Milestone["status"];
 export type Task = z.infer<typeof taskSchema>;
@@ -538,9 +569,37 @@ export type TaskInput = Pick<
   | "ownerId"
   | "dueDate"
   | "scheduledDay"
+  | "plannedWeek"
+  | "estimatedMinutes"
   | "status"
   | "priority"
 >;
+export type InboxInput = Pick<InboxItem, "text" | "notes">;
+export type EventInput = {
+  title: string;
+  notes: string;
+  startAtUtc: string;
+  timeZone: string;
+  durationMinutes: number;
+  reminderMinutesBefore: number | null;
+  planId: string | null;
+  location: string;
+  workstreamId: string | null;
+  ownerId: string | null;
+};
+/** What an inbox item becomes; the record is created and the item removed together. */
+export type InboxTarget =
+  | { kind: "task"; task: TaskInput }
+  | { kind: "plan"; plan: PlanInput }
+  | { kind: "event"; event: EventInput };
+/** Moves one task between Plan, Week, and Today; a batch applies in one transaction. */
+export type TaskMove = {
+  id: string;
+  revision: number;
+  scheduledDay: DayChange;
+  plannedWeek: DayChange;
+  status?: TaskStatus;
+};
 export type PersonInput = Pick<
   Person,
   "displayName" | "role" | "email" | "notes"
@@ -661,18 +720,7 @@ export const api = {
   async deleteMilestone(id: string, revision: number) {
     await invokeCommand("delete_milestone", { id, revision });
   },
-  async createEvent(input: {
-    title: string;
-    notes: string;
-    startAtUtc: string;
-    timeZone: string;
-    durationMinutes: number;
-    reminderMinutesBefore: number | null;
-    planId: string | null;
-    location: string;
-    workstreamId: string | null;
-    ownerId: string | null;
-  }) {
+  async createEvent(input: EventInput) {
     return eventSchema.parse(await invokeCommand("create_event", { input }));
   },
   async updateEvent(input: {
@@ -714,6 +762,42 @@ export const api = {
   },
   async deleteTask(id: string, revision: number) {
     await invokeCommand("delete_task", { id, revision });
+  },
+  async listInbox() {
+    return z
+      .array(inboxItemSchema)
+      .parse(await invokeCommand("list_inbox_items"));
+  },
+  async createInboxItem(input: InboxInput) {
+    return inboxItemSchema.parse(
+      await invokeCommand("create_inbox_item", { input }),
+    );
+  },
+  async updateInboxItem(input: InboxInput & { id: string; revision: number }) {
+    return inboxItemSchema.parse(
+      await invokeCommand("update_inbox_item", { input }),
+    );
+  },
+  async deleteInboxItem(id: string, revision: number) {
+    await invokeCommand("delete_inbox_item", { id, revision });
+  },
+  async processInboxItem(item: InboxItem, target: InboxTarget) {
+    return inboxConversionSchema.parse(
+      await invokeCommand("process_inbox_item", {
+        input: { id: item.id, revision: item.revision, target },
+      }),
+    );
+  },
+  /** Open work, plus the finished work chosen for or scheduled in the week starting `startDay`. */
+  async planningBoard(startDay: string) {
+    return planningBoardSchema.parse(
+      await invokeCommand("get_planning_board", { startDay }),
+    );
+  },
+  async moveTasks(moves: TaskMove[]) {
+    return z
+      .array(taskSchema)
+      .parse(await invokeCommand("move_tasks", { moves }));
   },
   async status() {
     return statusSchema.parse(await invokeCommand("current_ollama_status"));

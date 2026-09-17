@@ -2,7 +2,13 @@ import {
   isPermissionGranted,
   requestPermission,
 } from "@tauri-apps/plugin-notification";
-import { api, LinkChange, ReminderChange, ScheduleEvent } from "./api";
+import {
+  api,
+  EventInput,
+  LinkChange,
+  ReminderChange,
+  ScheduleEvent,
+} from "./api";
 import { dateTimeFields, localTimeZone } from "./date";
 
 export type EventDraft = {
@@ -62,6 +68,25 @@ export function draftFor(
   };
 }
 
+/** The create-event input for a resolved editor draft. */
+export function eventInputFor(
+  draft: EventDraft,
+  startAtUtc: string,
+): EventInput {
+  return {
+    title: draft.title,
+    notes: draft.notes,
+    startAtUtc,
+    timeZone: localTimeZone,
+    durationMinutes: draft.durationMinutes,
+    reminderMinutesBefore: draft.reminderMinutesBefore,
+    planId: draft.planId,
+    location: draft.location,
+    workstreamId: draft.workstreamId,
+    ownerId: draft.ownerId,
+  };
+}
+
 /** Creates or updates an event from a resolved editor draft. */
 export async function saveEventDraft(
   draft: EventDraft,
@@ -71,18 +96,7 @@ export async function saveEventDraft(
   if (draft.reminderMinutesBefore !== null)
     await ensureNotificationPermission();
   if (!event) {
-    await api.createEvent({
-      title: draft.title,
-      notes: draft.notes,
-      startAtUtc,
-      timeZone: localTimeZone,
-      durationMinutes: draft.durationMinutes,
-      reminderMinutesBefore: draft.reminderMinutesBefore,
-      planId: draft.planId,
-      location: draft.location,
-      workstreamId: draft.workstreamId,
-      ownerId: draft.ownerId,
-    });
+    await api.createEvent(eventInputFor(draft, startAtUtc));
     return;
   }
   await api.updateEvent({

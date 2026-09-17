@@ -20,7 +20,13 @@ import {
   taskStatuses,
   Workstream,
 } from "./api";
-import { dateTimeFields, dayLabel, dayMonthShort, timeLabel } from "./date";
+import {
+  dateTimeFields,
+  dayLabel,
+  dayMonthShort,
+  timeLabel,
+  weekStartDay,
+} from "./date";
 import { EventEditor } from "./EventEditor";
 import { reminderShortLabel } from "./events";
 import { Glyph, Mark, Spinner } from "./Geometry";
@@ -63,9 +69,11 @@ import {
   UpcomingItem,
   workstreamProgress,
 } from "./planning";
+import type { MenuItem } from "./Menu";
 import { TaskEditor } from "./TaskEditor";
 import { TaskRow } from "./TaskRow";
 import { useHeadingFocus } from "./useHeadingFocus";
+import { taskMoveItems, useTaskMover, weekStartsOn } from "./useTaskMover";
 
 export type PlanTab = "overview" | "timeline" | "tasks" | "schedule" | "show";
 
@@ -113,6 +121,12 @@ export function PlanView({
   const onMessageRef = useRef(onMessage);
   onMessageRef.current = onMessage;
   useHeadingFocus(headingRef, focusToken, workspace !== null);
+  const weekStart = weekStartDay(today, weekStartsOn);
+  const mover = useTaskMover({
+    today,
+    onChanged: () => changed(),
+    onError: onMessage,
+  });
 
   const refresh = useCallback(async () => {
     try {
@@ -370,7 +384,17 @@ export function PlanView({
             people={people}
             lookups={lookups}
             today={today}
+            weekStart={weekStart}
             busy={busy}
+            busyIds={mover.busyIds}
+            moveItemsFor={(task) =>
+              taskMoveItems(task, {
+                today,
+                weekStart,
+                move: (tasks, target) => void mover.move(tasks, target),
+                pickDay: mover.pickDay,
+              })
+            }
             onAdd={addTask}
             onToggle={toggleTask}
             onOpen={(task) => setEditor({ kind: "task", task })}
@@ -397,6 +421,7 @@ export function PlanView({
         )}
       </section>
 
+      {mover.dialog}
       {editor?.kind === "plan" && (
         <PlanEditor
           plan={plan}
@@ -757,7 +782,10 @@ function TasksPanel({
   people,
   lookups,
   today,
+  weekStart,
   busy,
+  busyIds,
+  moveItemsFor,
   onAdd,
   onToggle,
   onOpen,
@@ -767,7 +795,10 @@ function TasksPanel({
   people: Person[];
   lookups: Lookups;
   today: string;
+  weekStart: string;
   busy: string | null;
+  busyIds: ReadonlySet<string>;
+  moveItemsFor: (task: Task) => MenuItem[];
   onAdd: (title: string, filters: TaskFilters) => Promise<boolean>;
   onToggle: (task: Task) => void;
   onOpen: (task: Task) => void;
@@ -934,7 +965,9 @@ function TasksPanel({
                         : undefined
                     }
                     showScheduledDay
-                    busy={busy === `task-${task.id}`}
+                    weekStart={weekStart}
+                    busy={busy === `task-${task.id}` || busyIds.has(task.id)}
+                    moveItems={moveItemsFor(task)}
                     onToggle={() => onToggle(task)}
                     onOpen={() => onOpen(task)}
                   />

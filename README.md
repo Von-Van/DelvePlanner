@@ -11,6 +11,8 @@ The important engineering idea is the permission boundary, not the chat box: the
 | Area            | What it does                                                                          | Where it runs                              |
 | --------------- | ------------------------------------------------------------------------------------- | ------------------------------------------ |
 | Today and Week  | Timed events, overlapping events, scheduled and due tasks, milestones, plan filter    | React renderer + Rust repository           |
+| Capture         | An Inbox for unorganized thoughts, converted into tasks, plans, or events later       | React renderer + Rust repository           |
+| Planning        | Weekly and daily planning sessions, estimates, and carry-forward of unfinished work   | React renderer + Rust repository           |
 | Plans           | Overview with attention signals, timeline, filtered tasks, schedule, run of show      | React renderer + Rust repository           |
 | Teams           | Workstreams inside a plan and people who own tasks and events                         | React renderer + Rust repository           |
 | Manual planning | Creates, edits, and deletes plans, milestones, tasks, and events with revision checks | Typed Tauri commands + Rust transactions   |
@@ -29,6 +31,7 @@ The renderer is intentionally the least-trusted application layer. It can reques
 flowchart TB
   subgraph presentation["1. Presentation layer — React + TypeScript"]
     Agenda["Today and Week agendas"]
+    Sessions["Inbox, weekly and daily planning"]
     Plans["Plans: overview, timeline, tasks, schedule, run of show"]
     People["People and workstreams"]
     PlannerUI["Natural-language input and proposal preview"]
@@ -61,6 +64,7 @@ flowchart TB
   end
 
   Agenda --> Commands
+  Sessions --> Commands
   Plans --> Commands
   People --> Commands
   PlannerUI --> Boundary --> Commands
@@ -90,22 +94,24 @@ flowchart TB
 
 ### Repository map
 
-| Path                                                             | Responsibility                                                                            |
-| ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| [`src/`](src/)                                                   | React views, interaction state, accessibility, styling, and strict frontend schemas       |
-| [`src/api.ts`](src/api.ts)                                       | Typed renderer-facing command client and Zod response boundary                            |
-| [`src/planning.ts`](src/planning.ts)                             | Pure plan signals: attention, next milestone, upcoming items, timeline, run of show, week |
-| [`src/proposals.ts`](src/proposals.ts)                           | Readable previews of AI proposal operations                                               |
-| [`src-tauri/src/lib.rs`](src-tauri/src/lib.rs)                   | Tauri application composition, IPC commands, native plugins, tray, and reminder worker    |
-| [`src-tauri/src/model.rs`](src-tauri/src/model.rs)               | Domain records, AI mutation union, proposal types, and shared limits                      |
-| [`src-tauri/src/db.rs`](src-tauri/src/db.rs)                     | SQLite repository, transactions, migrations, backups, imports, and reminder outbox        |
-| [`src-tauri/src/db/planning.rs`](src-tauri/src/db/planning.rs)   | Plan, milestone, and task repository: validation, revisions, archive and delete rules     |
-| [`src-tauri/src/db/team.rs`](src-tauri/src/db/team.rs)           | People and workstreams: link validation and detach-on-delete rules                        |
-| [`src-tauri/src/db/proposals.rs`](src-tauri/src/db/proposals.rs) | AI candidate ranking and atomic, revision-checked proposal application                    |
-| [`src-tauri/src/agent.rs`](src-tauri/src/agent.rs)               | Planner session, pending proposals, and the local model request                           |
-| [`src-tauri/src/agent/`](src-tauri/src/agent/)                   | Prompts and output grammar, deterministic pre-checks, and reply resolution                |
-| [`src-tauri/src/runtime.rs`](src-tauri/src/runtime.rs)           | Bundled Ollama process, private endpoint, model download, diagnostics, and lifecycle      |
-| [`eval/`](eval/)                                                 | Hand-labeled commands and machine-readable evaluation results                             |
+| Path                                                             | Responsibility                                                                         |
+| ---------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| [`src/`](src/)                                                   | React views, interaction state, accessibility, styling, and strict frontend schemas    |
+| [`src/api.ts`](src/api.ts)                                       | Typed renderer-facing command client and Zod response boundary                         |
+| [`src/planning.ts`](src/planning.ts)                             | Pure plan signals and planning sessions: attention, timeline, run of show, week, moves |
+| [`src/proposals.ts`](src/proposals.ts)                           | Readable previews of AI proposal operations                                            |
+| [`src-tauri/src/lib.rs`](src-tauri/src/lib.rs)                   | Tauri application composition, IPC commands, native plugins, tray, and reminder worker |
+| [`src-tauri/src/model.rs`](src-tauri/src/model.rs)               | Domain records, AI mutation union, proposal types, and shared limits                   |
+| [`src-tauri/src/db.rs`](src-tauri/src/db.rs)                     | SQLite repository, transactions, migrations, backups, imports, and reminder outbox     |
+| [`src-tauri/src/db/planning.rs`](src-tauri/src/db/planning.rs)   | Plan, milestone, and task repository: validation, revisions, archive and delete rules  |
+| [`src-tauri/src/db/team.rs`](src-tauri/src/db/team.rs)           | People and workstreams: link validation and detach-on-delete rules                     |
+| [`src-tauri/src/db/capture.rs`](src-tauri/src/db/capture.rs)     | The Inbox: captures and one-transaction conversion into tasks, plans, and events       |
+| [`src-tauri/src/db/horizons.rs`](src-tauri/src/db/horizons.rs)   | Weekly and daily planning data and batched moves between plan, week, and day           |
+| [`src-tauri/src/db/proposals.rs`](src-tauri/src/db/proposals.rs) | AI candidate ranking and atomic, revision-checked proposal application                 |
+| [`src-tauri/src/agent.rs`](src-tauri/src/agent.rs)               | Planner session, pending proposals, and the local model request                        |
+| [`src-tauri/src/agent/`](src-tauri/src/agent/)                   | Prompts and output grammar, deterministic pre-checks, and reply resolution             |
+| [`src-tauri/src/runtime.rs`](src-tauri/src/runtime.rs)           | Bundled Ollama process, private endpoint, model download, diagnostics, and lifecycle   |
+| [`eval/`](eval/)                                                 | Hand-labeled commands and machine-readable evaluation results                          |
 
 ## Core data schema
 
@@ -121,6 +127,15 @@ erDiagram
   WORKSTREAM |o--o{ SCHEDULE_EVENT : "optional, same plan"
   PERSON |o--o{ TASK : "owns"
   PERSON |o--o{ SCHEDULE_EVENT : "owns"
+
+  INBOX_ITEM {
+    uuid id PK
+    string text
+    string notes
+    integer revision
+    datetime created_at
+    datetime updated_at
+  }
 
   PLAN {
     uuid id PK
@@ -182,6 +197,8 @@ erDiagram
     uuid owner_id FK "nullable"
     date due_date "nullable"
     date scheduled_day "nullable"
+    date planned_week "nullable, first day of the chosen week"
+    integer estimated_minutes "nullable, 1-1440"
     string status "todo | in_progress | blocked | done"
     string priority "low | normal | high | critical"
     datetime completed_at "set only when done"
@@ -214,11 +231,13 @@ erDiagram
 
 Every record is revisioned so manual edits and AI proposals can detect stale data. Times are persisted in UTC alongside their IANA time zone. Reminder offset, status, internal notification ID, and retry error are columns on the event itself; together they form the transactional reminder outbox that startup reconciliation processes.
 
-A `Plan` is a long-range container and may exist without dates. Items without a plan remain fully valid, so DayPlan still works as a plain day planner. A `Milestone` is a checkpoint rather than work; only user decisions (`pending`, `complete`, `skipped`) are stored, and "upcoming" or "overdue" are derived from dates. A `Task` is work that needs doing, kept separate from `ScheduleEvent` (a block of time). A task no longer needs a calendar day: it can be scheduled onto a day, due by a day, or live only inside a plan, but it must have at least one of those so it always appears somewhere. A task's milestone and workstream must belong to the task's plan. The Today view lists tasks scheduled for the selected day plus tasks due that day and milestones on that day; the Week view shows the same for seven days. Both can be filtered by plan. Task reminders remain outside the current scope.
+A `Plan` is a long-range container and may exist without dates. Items without a plan remain fully valid, so DayPlan still works as a plain day planner. A `Milestone` is a checkpoint rather than work; only user decisions (`pending`, `complete`, `skipped`) are stored, and "upcoming" or "overdue" are derived from dates. A `Task` is work that needs doing, kept separate from `ScheduleEvent` (a block of time). A task no longer needs a calendar day: it can live inside a plan, be chosen for a week without a day yet, be scheduled onto a day, or be due by a day, but it must have at least one of those so it always appears somewhere. `planned_week` holds the first day of the chosen week and is matched by range, so a changed week start never orphans a choice; a due date never implies a week or a day. A task can also carry an optional estimate. A task's milestone and workstream must belong to the task's plan. The Today view lists tasks scheduled for the selected day plus tasks due that day and milestones on that day; the Week view shows the same for seven days, with the week's no-day tasks above. Both can be filtered by plan. Task reminders remain outside the current scope.
+
+The Inbox holds `InboxItem` captures that need no plan, date, or priority, from its own screen or from anywhere with ⌘I (Ctrl+I on Windows). Converting an item creates a task, plan, or event and removes the item in one transaction. Weekly planning shows work left from earlier weeks, overdue and soon-due tasks, tasks behind upcoming milestones, and each active plan's unscheduled backlog beside the week's chosen work and estimates. Daily planning builds today from unfinished, due, and chosen work. Today offers each session in a quiet prompt until it is planned or dismissed, and lists open tasks whose scheduled day has passed so they can be moved on explicitly; nothing is rescheduled automatically. Every move between a plan, a week, and a day changes the same task record, and a batch of moves applies in one revision-checked transaction.
 
 A `Workstream` is a named stream of work inside one plan, such as Production or Sponsors, with progress derived from its tasks. A `Person` is a local label for whoever owns a task or event—never an account. Deleting a workstream or person keeps their work and clears the link, advancing revisions. A plan's run of show lists one day's events in order with owners, locations, live/next status, gaps, and overlaps.
 
-Archiving is the normal way to put a plan away; it hides the plan from navigation and keeps everything. A plan must be archived before it can be deleted permanently. Deletion runs in one transaction and is previewed in the confirmation: the plan's workstreams, milestones, and undated, unscheduled tasks are deleted, while its dated tasks and all of its events stay on the calendar without a plan or workstream (their revisions advance). Owners stay assigned. Deleting a milestone keeps its tasks in the plan.
+Archiving is the normal way to put a plan away; it hides the plan from navigation and keeps everything. A plan must be archived before it can be deleted permanently. Deletion runs in one transaction and is previewed in the confirmation: the plan's workstreams, milestones, and tasks with no week, scheduled day, or due date are deleted, while its other tasks and all of its events stay on the calendar without a plan or workstream (their revisions advance). Owners stay assigned. Deleting a milestone keeps its tasks in the plan.
 
 AI proposals are not database records. They live only in memory, expire after ten minutes, and contain up to twelve operations from a closed union of event, plan, milestone, and task operations (listed below).
 
@@ -281,11 +300,11 @@ AI context is intentionally small. Requests that do not mention plans, tasks, or
 
 ## Storage, recovery, and privacy
 
-The current database schema is version 4. Existing databases are backed up and migrated transactionally: schema 3 adds `plans` and `milestones`, gives events a nullable `plan_id`, and moves every day-bound task into the general `tasks` table with `scheduled_day` set to its old day and a `done` or `todo` status from its completion state; schema 4 adds `people` and `workstreams`, owner and workstream links, and event locations. Restoring an older backup migrates it the same way when it opens. SQLite foreign keys are enforced. Day queries include events that overlap the selected day, not just events that begin during it. Manual edits atomically update every editable field under one revision check.
+The current database schema is version 5. Existing databases are backed up and migrated transactionally: schema 3 adds `plans` and `milestones`, gives events a nullable `plan_id`, and moves every day-bound task into the general `tasks` table with `scheduled_day` set to its old day and a `done` or `todo` status from its completion state; schema 4 adds `people` and `workstreams`, owner and workstream links, and event locations; schema 5 adds `inbox_items` and each task's `planned_week` and `estimated_minutes`. Restoring an older backup migrates it the same way when it opens. SQLite foreign keys are enforced. Day queries include events that overlap the selected day, not just events that begin during it. Manual edits atomically update every editable field under one revision check.
 
 Settings offers:
 
-- strict, versioned JSON export (format 4 includes people, plans, workstreams, milestones, events, and tasks; formats 1–3 still import, with day tasks upgraded the same way as the migration and every cross-record link checked before anything is replaced);
+- strict, versioned JSON export (format 5 includes people, plans, workstreams, milestones, events, tasks, and inbox items; formats 1–4 still import, with day tasks upgraded the same way as the migration and every cross-record link checked before anything is replaced);
 - import preview and explicit confirmation before replacement;
 - automatic backup before import and recovery from the five retained backups;
 - model/version diagnostics;

@@ -651,6 +651,8 @@ mod tests {
             owner_id: None,
             due_date: None,
             scheduled_day: Some("2026-09-15".into()),
+            planned_week: None,
+            estimated_minutes: None,
             status: TaskStatus::Todo,
             priority: TaskPriority::Normal,
             completed_at: None,

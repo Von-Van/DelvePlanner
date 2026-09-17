@@ -10,12 +10,14 @@ import {
 import {
   Agenda as AgendaData,
   api,
+  InboxItem,
   messageFor,
   Milestone,
   OllamaStatus,
   Plan,
   planColors,
   PlannerResponse,
+  PlanningBoard,
   PersonSummary,
   PlanSummary,
   ScheduleEvent,
@@ -25,7 +27,6 @@ import {
 import {
   dayLabel,
   dayMonthShort,
-  localeWeekStart,
   localTimeZone,
   offsetDay,
   timeLabel,
@@ -36,6 +37,7 @@ import {
 import { EventEditor } from "./EventEditor";
 import { ensureNotificationPermission, reminderShortLabel } from "./events";
 import { Glyph, Mark, MarkShape, Spinner } from "./Geometry";
+import { InboxConversionKind, InboxView, QuickCapture } from "./InboxView";
 import { PlannerCard } from "./PlannerCard";
 import { proposalEnablesReminder } from "./proposals";
 import { Onboarding } from "./Onboarding";
@@ -44,24 +46,33 @@ import { PlanChip, PlanDot } from "./PlanControls";
 import { PlanEditor } from "./PlanEditor";
 import {
   focusEventId,
+  inWeek,
   matchesPlanFilter,
   newTask,
   paddedCount,
   planColor,
   PlanFilter,
+  planningPrompt,
+  PlanningPromptState,
   taskUpdate,
+  unfinishedTasks,
 } from "./planning";
+import { PlanTodayView, PlanWeekView } from "./PlanningViews";
 import { PlansView } from "./PlansView";
 import { PlanTab, PlanView } from "./PlanView";
 import { SettingsModal } from "./SettingsModal";
 import { TaskEditor } from "./TaskEditor";
 import { TaskRow } from "./TaskRow";
 import { useHeadingFocus } from "./useHeadingFocus";
+import { taskMoveItems, useTaskMover, weekStartsOn } from "./useTaskMover";
 import { WeekView } from "./WeekView";
 
 type View =
+  | { kind: "inbox" }
   | { kind: "today" }
   | { kind: "week" }
+  | { kind: "plan-week" }
+  | { kind: "plan-today" }
   | { kind: "plans"; archived: boolean }
   | { kind: "plan"; planId: string; tab: PlanTab }
   | { kind: "people" };
@@ -77,7 +88,20 @@ const emptyAgenda: AgendaData = {
 
 const isMac = /Mac|iPhone|iPad/.test(navigator.userAgent);
 const shortcutLabel = (key: string) => `${isMac ? "⌘" : "Ctrl+"}${key}`;
-const weekStartsOn = localeWeekStart();
+const promptStorageKey = "dayplan-planning-prompts";
+
+/** Which planning sessions were done or dismissed; kept per device, like onboarding. */
+function readPromptState(): PlanningPromptState {
+  try {
+    const stored = JSON.parse(localStorage.getItem(promptStorageKey) ?? "null");
+    return {
+      week: typeof stored?.week === "string" ? stored.week : null,
+      day: typeof stored?.day === "string" ? stored.day : null,
+    };
+  } catch {
+    return { week: null, day: null };
+  }
+}
 
 export default function App() {
   const [view, setViewState] = useState<View>({ kind: "today" });
@@ -85,6 +109,16 @@ export default function App() {
   const [day, setDay] = useState(todayDay());
   const [agenda, setAgenda] = useState(emptyAgenda);
   const [week, setWeek] = useState<AgendaData | null>(null);
+  const [weekBoard, setWeekBoard] = useState<PlanningBoard | null>(null);
+  const [board, setBoard] = useState<PlanningBoard | null>(null);
+  const [inbox, setInbox] = useState<InboxItem[]>([]);
+  const [dataVersion, setDataVersion] = useState(0);
+  const [converting, setConverting] = useState<{
+    item: InboxItem;
+    kind: InboxConversionKind;
+  } | null>(null);
+  const [captureOpen, setCaptureOpen] = useState(false);
+  const [promptState, setPromptState] = useState(readPromptState);
   const [summaries, setSummaries] = useState<PlanSummary[]>([]);
   const [peopleSummaries, setPeopleSummaries] = useState<PersonSummary[]>([]);
   const [planFilter, setPlanFilter] = useState<PlanFilter>("all");
@@ -111,7 +145,10 @@ export default function App() {
   const todayHeading = useRef<HTMLHeadingElement>(null);
   const weekHeading = useRef<HTMLHeadingElement>(null);
   const peopleHeading = useRef<HTMLHeadingElement>(null);
+  const inboxHeading = useRef<HTMLHeadingElement>(null);
   const weekStart = weekStartDay(day, weekStartsOn);
+  const today = todayDay();
+  const currentWeekStart = weekStartDay(today, weekStartsOn);
 
   /** Changes the view and moves focus to its heading, as a page change would. */
   const navigate = useCallback((next: View) => {
@@ -120,6 +157,7 @@ export default function App() {
   }, []);
   useHeadingFocus(todayHeading, focusToken, view.kind === "today");
   useHeadingFocus(weekHeading, focusToken, view.kind === "week");
+  useHeadingFocus(inboxHeading, focusToken, view.kind === "inbox");
 
   const refresh = useCallback(async () => {
     setIsLoading(true);
@@ -134,11 +172,32 @@ export default function App() {
 
   const refreshWeek = useCallback(async () => {
     try {
-      setWeek(await api.listWeek(weekStart, localTimeZone));
+      const [nextWeek, nextBoard] = await Promise.all([
+        api.listWeek(weekStart, localTimeZone),
+        api.planningBoard(weekStart),
+      ]);
+      setWeek(nextWeek);
+      setWeekBoard(nextBoard);
     } catch (cause) {
       setError(messageFor(cause));
     }
   }, [weekStart]);
+
+  const refreshBoard = useCallback(async () => {
+    try {
+      setBoard(await api.planningBoard(currentWeekStart));
+    } catch (cause) {
+      setError(messageFor(cause));
+    }
+  }, [currentWeekStart]);
+
+  const refreshInbox = useCallback(async () => {
+    try {
+      setInbox(await api.listInbox());
+    } catch (cause) {
+      setError(messageFor(cause));
+    }
+  }, []);
 
   const refreshPlans = useCallback(async () => {
     try {
@@ -173,7 +232,11 @@ export default function App() {
   useEffect(() => {
     void refreshPlans();
     void refreshPeople();
-  }, [refreshPlans, refreshPeople]);
+    void refreshInbox();
+  }, [refreshPlans, refreshPeople, refreshInbox]);
+  useEffect(() => {
+    void refreshBoard();
+  }, [refreshBoard]);
   useEffect(() => {
     void refreshStatus();
   }, [refreshStatus]);
@@ -182,11 +245,17 @@ export default function App() {
     const onKey = (event: KeyboardEvent) => {
       if (!(isMac ? event.metaKey : event.ctrlKey) || event.altKey) return;
       if (document.querySelector('[aria-modal="true"]')) return;
+      if (event.key.toLowerCase() === "i" && !event.shiftKey) {
+        event.preventDefault();
+        setCaptureOpen(true);
+        return;
+      }
       const target = {
         "1": { kind: "today" },
         "2": { kind: "week" },
         "3": { kind: "plans", archived: false },
         "4": { kind: "people" },
+        "5": { kind: "inbox" },
       }[event.key] as View | undefined;
       if (!target) return;
       event.preventDefault();
@@ -244,9 +313,38 @@ export default function App() {
       refresh(),
       refreshPlans(),
       refreshPeople(),
+      refreshInbox(),
+      refreshBoard(),
       view.kind === "week" ? refreshWeek() : Promise.resolve(),
     ]);
+    setDataVersion((version) => version + 1);
   }
+
+  const mover = useTaskMover({
+    today,
+    onChanged: dataChanged,
+    onError: setError,
+  });
+  const moveItemsFor = (task: Task) =>
+    taskMoveItems(task, {
+      today,
+      weekStart: currentWeekStart,
+      move: (tasks, target) => void mover.move(tasks, target),
+      pickDay: mover.pickDay,
+    });
+
+  function recordPrompt(change: Partial<PlanningPromptState>) {
+    setPromptState((current) => {
+      const next = { ...current, ...change };
+      try {
+        localStorage.setItem(promptStorageKey, JSON.stringify(next));
+      } catch {
+        // Prompts reappear next launch when storage is unavailable.
+      }
+      return next;
+    });
+  }
+  const prompt = planningPrompt(promptState, currentWeekStart, today);
 
   async function removeEvent(event: ScheduleEvent) {
     if (!window.confirm(`Delete “${event.title}”?`)) return;
@@ -380,7 +478,11 @@ export default function App() {
     () => Array.from({ length: 7 }, (_, index) => offsetDay(day, index - 3)),
     [day],
   );
-  const today = todayDay();
+  const visibleUnfinished = board
+    ? unfinishedTasks(board.tasks, today).filter((task) =>
+        matchesPlanFilter(task, planFilter),
+      )
+    : [];
 
   const filterPlan = filterPlanId ? planById.get(filterPlanId) : undefined;
   const planFilterControl = (
@@ -412,7 +514,7 @@ export default function App() {
   const navLink = (
     target: View,
     label: string,
-    mark: { shape: MarkShape; size?: number },
+    mark: { shape: MarkShape; size?: number; dashed?: boolean },
     options: { active: boolean; shortcut?: string; count?: number },
   ) => (
     <button
@@ -430,7 +532,12 @@ export default function App() {
       }
       onClick={() => navigate(target)}
     >
-      <Mark shape={mark.shape} size={mark.size ?? 6} filled={options.active} />
+      <Mark
+        shape={mark.shape}
+        size={mark.size ?? 6}
+        filled={options.active}
+        dashed={mark.dashed}
+      />
       {label}
       {options.count ? (
         <span className="rail-count">{paddedCount(options.count)}</span>
@@ -454,16 +561,32 @@ export default function App() {
         </div>
         <nav aria-label="Workspace sections">
           {navLink(
+            { kind: "inbox" },
+            "Inbox",
+            { shape: "rhombus", dashed: true },
+            {
+              active: view.kind === "inbox",
+              shortcut: "5",
+              count: inbox.length,
+            },
+          )}
+          {navLink(
             { kind: "today" },
             "Today",
             { shape: "rhombus" },
-            { active: view.kind === "today", shortcut: "1" },
+            {
+              active: view.kind === "today" || view.kind === "plan-today",
+              shortcut: "1",
+            },
           )}
           {navLink(
             { kind: "week" },
             "Week",
             { shape: "rule" },
-            { active: view.kind === "week", shortcut: "2" },
+            {
+              active: view.kind === "week" || view.kind === "plan-week",
+              shortcut: "2",
+            },
           )}
           {navLink(
             { kind: "plans", archived: false },
@@ -538,6 +661,56 @@ export default function App() {
       </aside>
 
       <section className="workspace">
+        {view.kind === "inbox" && (
+          <InboxView
+            items={inbox}
+            headingRef={inboxHeading}
+            captureShortcut={shortcutLabel("I")}
+            onConvert={(item, kind) => setConverting({ item, kind })}
+            onChanged={dataChanged}
+            onMessage={setError}
+          />
+        )}
+        {view.kind === "plan-week" && (
+          <PlanWeekView
+            today={today}
+            plans={plans}
+            planById={planById}
+            personById={personById}
+            dataVersion={dataVersion}
+            focusToken={focusToken}
+            onChanged={dataChanged}
+            onOpenTask={(task) => setTaskEditor({ task })}
+            onMessage={setError}
+            onDone={(plannedWeek) => {
+              if (plannedWeek >= currentWeekStart)
+                recordPrompt({
+                  week:
+                    promptState.week && promptState.week > plannedWeek
+                      ? promptState.week
+                      : plannedWeek,
+                });
+              navigate({ kind: "today" });
+            }}
+          />
+        )}
+        {view.kind === "plan-today" && (
+          <PlanTodayView
+            today={today}
+            planById={planById}
+            personById={personById}
+            dataVersion={dataVersion}
+            focusToken={focusToken}
+            onChanged={dataChanged}
+            onOpenTask={(task) => setTaskEditor({ task })}
+            onMessage={setError}
+            onDone={() => {
+              recordPrompt({ day: today });
+              setDay(today);
+              navigate({ kind: "today" });
+            }}
+          />
+        )}
         {view.kind === "plans" && (
           <PlansView
             summaries={summaries}
@@ -587,6 +760,14 @@ export default function App() {
             startDay={weekStart}
             today={today}
             agenda={week}
+            plannedTasks={
+              weekBoard?.tasks.filter(
+                (task) =>
+                  task.scheduledDay === null &&
+                  inWeek(task.plannedWeek, weekStart),
+              ) ?? []
+            }
+            onPlanWeek={() => navigate({ kind: "plan-week" })}
             loading={week === null}
             planFilter={planFilter}
             filterControl={planFilterControl}
@@ -637,6 +818,15 @@ export default function App() {
                   <Glyph>→</Glyph>
                 </button>
                 <button
+                  className="secondary-button"
+                  onClick={() => {
+                    setDay(today);
+                    navigate({ kind: "plan-today" });
+                  }}
+                >
+                  Plan today
+                </button>
+                <button
                   className="primary-button"
                   onClick={() => setEditor("new")}
                 >
@@ -673,6 +863,48 @@ export default function App() {
                 <i aria-hidden="true" />
               </button>
             </div>
+
+            {day === today && prompt && (
+              <section className="planning-prompt" aria-label="Planning">
+                <span className="planner-orb" aria-hidden="true">
+                  <i />
+                </span>
+                <div>
+                  <p>{prompt === "week" ? "A NEW WEEK" : "A NEW DAY"}</p>
+                  <strong>
+                    {prompt === "week" ? "Plan this week" : "Plan today"}
+                  </strong>
+                  <small>
+                    {prompt === "week"
+                      ? "Choose what this week is for before the days fill up."
+                      : "Build today from what's unfinished, due, and chosen for this week."}
+                  </small>
+                </div>
+                <button
+                  className="secondary-button"
+                  onClick={() =>
+                    recordPrompt(
+                      prompt === "week"
+                        ? { week: currentWeekStart }
+                        : { day: today },
+                    )
+                  }
+                >
+                  Not now
+                </button>
+                <button
+                  className="primary-button"
+                  onClick={() =>
+                    navigate({
+                      kind: prompt === "week" ? "plan-week" : "plan-today",
+                    })
+                  }
+                >
+                  <Mark filled />
+                  {prompt === "week" ? "Plan the week" : "Plan today"}
+                </button>
+              </section>
+            )}
 
             <div className="content-grid">
               <section className="agenda-panel">
@@ -775,7 +1007,11 @@ export default function App() {
                               ? personById.get(task.ownerId)
                               : undefined
                           }
-                          busy={busyTaskId === task.id}
+                          weekStart={currentWeekStart}
+                          busy={
+                            busyTaskId === task.id || mover.busyIds.has(task.id)
+                          }
+                          moveItems={moveItemsFor(task)}
                           onToggle={() => void toggleTask(task)}
                           onOpen={() => setTaskEditor({ task })}
                           onDelete={() => void removeTask(task)}
@@ -783,6 +1019,51 @@ export default function App() {
                       ))
                     )}
                   </div>
+                  {day === today && visibleUnfinished.length > 0 && (
+                    <div className="unfinished-tasks">
+                      <p className="due-heading late">
+                        UNFINISHED <span>{visibleUnfinished.length}</span>
+                        <button
+                          className="text-button"
+                          onClick={() =>
+                            void mover.move(visibleUnfinished, {
+                              kind: "day",
+                              day: today,
+                            })
+                          }
+                        >
+                          {visibleUnfinished.length === 1
+                            ? "Move to today"
+                            : "Move all to today"}{" "}
+                          <Glyph>→</Glyph>
+                        </button>
+                      </p>
+                      <div className="task-list">
+                        {visibleUnfinished.map((task) => (
+                          <TaskRow
+                            key={task.id}
+                            task={task}
+                            today={today}
+                            plan={
+                              task.planId
+                                ? planById.get(task.planId)
+                                : undefined
+                            }
+                            owner={
+                              task.ownerId
+                                ? personById.get(task.ownerId)
+                                : undefined
+                            }
+                            showScheduledDay
+                            busy={mover.busyIds.has(task.id)}
+                            moveItems={moveItemsFor(task)}
+                            onToggle={() => void toggleTask(task)}
+                            onOpen={() => setTaskEditor({ task })}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   {visibleDueTasks.length > 0 && (
                     <div className="due-tasks">
                       <p className="due-heading">
@@ -805,7 +1086,12 @@ export default function App() {
                                 : undefined
                             }
                             showScheduledDay
-                            busy={busyTaskId === task.id}
+                            weekStart={currentWeekStart}
+                            busy={
+                              busyTaskId === task.id ||
+                              mover.busyIds.has(task.id)
+                            }
+                            moveItems={moveItemsFor(task)}
                             onToggle={() => void toggleTask(task)}
                             onOpen={() => setTaskEditor({ task })}
                             onScheduleHere={() => void scheduleTaskHere(task)}
@@ -872,14 +1158,65 @@ export default function App() {
             ) ?? planColors[plans.length % planColors.length]
           }
           onClose={() => setPlanEditorOpen(false)}
-          onSaved={async (plan: Plan) => {
+          onSaved={async (planId) => {
             setPlanEditorOpen(false);
             await refreshPlans();
-            navigate({ kind: "plan", planId: plan.id, tab: "overview" });
+            navigate({ kind: "plan", planId, tab: "overview" });
           }}
           onError={setError}
         />
       )}
+      {converting?.kind === "task" && (
+        <TaskEditor
+          inboxItem={converting.item}
+          plans={plans}
+          people={people}
+          onClose={() => setConverting(null)}
+          onSaved={async () => {
+            setConverting(null);
+            await dataChanged();
+          }}
+          onError={setError}
+        />
+      )}
+      {converting?.kind === "plan" && (
+        <PlanEditor
+          inboxItem={converting.item}
+          defaultColor={
+            planColors.find(
+              (color) => !activePlans.some((plan) => plan.color === color),
+            ) ?? planColors[plans.length % planColors.length]
+          }
+          onClose={() => setConverting(null)}
+          onSaved={async () => {
+            setConverting(null);
+            await dataChanged();
+          }}
+          onError={setError}
+        />
+      )}
+      {converting?.kind === "event" && (
+        <EventEditor
+          day={today}
+          inboxItem={converting.item}
+          plans={plans}
+          people={people}
+          onClose={() => setConverting(null)}
+          onSaved={async () => {
+            setConverting(null);
+            await dataChanged();
+          }}
+          onError={setError}
+        />
+      )}
+      {captureOpen && (
+        <QuickCapture
+          onClose={() => setCaptureOpen(false)}
+          onCaptured={refreshInbox}
+          onError={setError}
+        />
+      )}
+      {mover.dialog}
       {settingsOpen && (
         <SettingsModal
           status={status}

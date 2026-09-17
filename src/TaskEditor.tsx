@@ -1,6 +1,7 @@
 import { FormEvent, useRef, useState } from "react";
 import {
   api,
+  InboxItem,
   messageFor,
   Person,
   Plan,
@@ -9,6 +10,7 @@ import {
   taskPriorities,
   taskStatuses,
 } from "./api";
+import { offsetDay, todayDay, weekStartDay } from "./date";
 import { Glyph, Spinner } from "./Geometry";
 import {
   OptionalDate,
@@ -17,18 +19,24 @@ import {
   WorkstreamSelect,
 } from "./PlanControls";
 import {
+  estimateLabel,
+  estimatePresets,
+  inWeek,
   newTask,
   shortDate,
   taskHasHome,
   taskPriorityLabels,
   taskStatusLabels,
   taskUpdate,
+  weekLabel,
 } from "./planning";
 import { useModalFocus } from "./useModalFocus";
 import { usePlanLinks } from "./usePlanLinks";
+import { weekStartsOn } from "./useTaskMover";
 
 export function TaskEditor({
   task,
+  inboxItem,
   defaults,
   plans,
   people,
@@ -37,6 +45,8 @@ export function TaskEditor({
   onError,
 }: {
   task?: Task;
+  /** Converts this inbox item: saving creates the task and removes the item together. */
+  inboxItem?: InboxItem;
   defaults?: Partial<TaskInput>;
   plans: Plan[];
   people: Person[];
@@ -44,15 +54,30 @@ export function TaskEditor({
   onSaved: () => Promise<void> | void;
   onError: (message: string) => void;
 }) {
+  const thisWeek = weekStartDay(todayDay(), weekStartsOn);
+  const nextWeek = offsetDay(thisWeek, 7);
   const [draft, setDraft] = useState<TaskInput>(() =>
-    task ? taskUpdate(task) : newTask({ title: "", ...defaults }),
+    task
+      ? taskUpdate(task)
+      : newTask({
+          title: inboxItem?.text ?? "",
+          description: inboxItem?.notes ?? "",
+          // A converted thought lands in this week's pool until it is given a better place.
+          ...(inboxItem ? { plannedWeek: thisWeek } : {}),
+          ...defaults,
+        }),
+  );
+  const [customEstimate, setCustomEstimate] = useState(
+    () =>
+      draft.estimatedMinutes !== null &&
+      !(estimatePresets as readonly number[]).includes(draft.estimatedMinutes),
   );
   const [saving, setSaving] = useState(false);
   const dialogRef = useRef<HTMLFormElement>(null);
   useModalFocus(dialogRef, onClose, saving);
   const { milestones, workstreams } = usePlanLinks(draft.planId, onError);
 
-  async function run(action: () => Promise<void>) {
+  async function run(action: () => Promise<unknown>) {
     setSaving(true);
     try {
       await action();
@@ -67,9 +92,17 @@ export function TaskEditor({
   function submit(form: FormEvent) {
     form.preventDefault();
     const input = pickTaskInput(draft);
+    // A newly scheduled day also records its week, so returning the task to the pool keeps it there.
+    if (
+      input.scheduledDay !== null &&
+      input.scheduledDay !== task?.scheduledDay
+    )
+      input.plannedWeek = weekStartDay(input.scheduledDay, weekStartsOn);
 
     void run(async () => {
-      if (task) {
+      if (inboxItem) {
+        await api.processInboxItem(inboxItem, { kind: "task", task: input });
+      } else if (task) {
         await api.updateTask({
           ...input,
           id: task.id,
@@ -86,6 +119,14 @@ export function TaskEditor({
     void run(() => api.deleteTask(task.id, task.revision));
   }
 
+  const weekChoice =
+    draft.plannedWeek === null
+      ? ""
+      : inWeek(draft.plannedWeek, thisWeek)
+        ? thisWeek
+        : inWeek(draft.plannedWeek, nextWeek)
+          ? nextWeek
+          : draft.plannedWeek;
   const hasHome = taskHasHome(draft);
   return (
     <div
@@ -101,12 +142,18 @@ export function TaskEditor({
         onSubmit={submit}
         role="dialog"
         aria-modal="true"
-        aria-label={task ? "Edit task" : "New task"}
+        aria-label={inboxItem ? "Make a task" : task ? "Edit task" : "New task"}
       >
         <header>
           <div>
-            <p>{task ? "EDIT TASK" : "NEW TASK"}</p>
-            <h2>{task ? "Shape the work" : "Name the work"}</h2>
+            <p>{inboxItem ? "FROM INBOX" : task ? "EDIT TASK" : "NEW TASK"}</p>
+            <h2>
+              {inboxItem
+                ? "Make it a task"
+                : task
+                  ? "Shape the work"
+                  : "Name the work"}
+            </h2>
           </div>
           <button type="button" onClick={onClose} aria-label="Close editor">
             <Glyph>✕</Glyph>
@@ -163,6 +210,82 @@ export function TaskEditor({
             </select>
           </label>
         </div>
+        <div className="form-pair">
+          <label>
+            Estimate
+            <select
+              value={
+                customEstimate
+                  ? "custom"
+                  : draft.estimatedMinutes === null
+                    ? ""
+                    : String(draft.estimatedMinutes)
+              }
+              onChange={(input) => {
+                const value = input.target.value;
+                setCustomEstimate(value === "custom");
+                if (value !== "custom")
+                  setDraft({
+                    ...draft,
+                    estimatedMinutes: value === "" ? null : Number(value),
+                  });
+              }}
+            >
+              <option value="">No estimate</option>
+              {estimatePresets.map((minutes) => (
+                <option key={minutes} value={minutes}>
+                  {estimateLabel(minutes)}
+                </option>
+              ))}
+              <option value="custom">Custom…</option>
+            </select>
+          </label>
+          <label>
+            Week
+            <select
+              value={weekChoice}
+              onChange={(input) =>
+                setDraft({ ...draft, plannedWeek: input.target.value || null })
+              }
+            >
+              <option value="">No week</option>
+              <option value={thisWeek}>
+                This week · from {shortDate(thisWeek)}
+              </option>
+              <option value={nextWeek}>
+                Next week · from {shortDate(nextWeek)}
+              </option>
+              {weekChoice !== "" &&
+                weekChoice !== thisWeek &&
+                weekChoice !== nextWeek && (
+                  <option value={weekChoice}>
+                    {weekLabel(weekChoice, thisWeek)}
+                  </option>
+                )}
+            </select>
+          </label>
+        </div>
+        {customEstimate && (
+          <label>
+            Custom estimate <span>Minutes, up to 24 hours</span>
+            <input
+              type="number"
+              min={1}
+              max={1440}
+              required
+              value={draft.estimatedMinutes ?? ""}
+              onChange={(input) =>
+                setDraft({
+                  ...draft,
+                  estimatedMinutes:
+                    input.target.value === ""
+                      ? null
+                      : Math.round(Number(input.target.value)),
+                })
+              }
+            />
+          </label>
+        )}
         <div className="form-pair">
           <PlanSelect
             plans={plans}
@@ -224,8 +347,8 @@ export function TaskEditor({
         </div>
         {!hasHome && (
           <p className="editor-hint" role="status">
-            Choose a plan, a scheduled day, or a due date so this task has a
-            place to appear.
+            Choose a plan, a week, a scheduled day, or a due date so this task
+            has a place to appear.
           </p>
         )}
         <label>
@@ -276,6 +399,8 @@ function pickTaskInput(draft: TaskInput): TaskInput {
     ownerId: draft.ownerId,
     dueDate: draft.dueDate,
     scheduledDay: draft.scheduledDay,
+    plannedWeek: draft.plannedWeek,
+    estimatedMinutes: draft.estimatedMinutes,
     status: draft.status,
     priority: draft.priority,
   };

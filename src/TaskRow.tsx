@@ -1,11 +1,14 @@
 import type { Milestone, Person, Plan, Task, Workstream } from "./api";
 import { Glyph, Mark } from "./Geometry";
+import { Menu, MenuItem } from "./Menu";
 import { PlanChip } from "./PlanControls";
 import {
+  estimateLabel,
   isOverdue,
   shortDate,
   taskPriorityLabels,
   taskStatusLabels,
+  weekLabel,
 } from "./planning";
 
 export function TaskRow({
@@ -16,7 +19,10 @@ export function TaskRow({
   workstream,
   owner,
   showScheduledDay = false,
+  weekStart,
   busy = false,
+  addLabel = "Schedule for this day",
+  moveItems,
   onToggle,
   onOpen,
   onDelete,
@@ -29,7 +35,13 @@ export function TaskRow({
   workstream?: Workstream;
   owner?: Person;
   showScheduledDay?: boolean;
+  /** The current week's first day; when set, a task chosen for a week without a day says which. */
+  weekStart?: string;
   busy?: boolean;
+  /** What the add button does, such as "Schedule for this day" or "Add to this week". */
+  addLabel?: string;
+  /** Offers moves between Plan, Week, and Today from a menu at the end of the row. */
+  moveItems?: MenuItem[];
   onToggle: () => void;
   onOpen: () => void;
   onDelete?: () => void;
@@ -63,6 +75,11 @@ export function TaskRow({
               {taskPriorityLabels[task.priority]}
             </small>
           )}
+          {task.estimatedMinutes !== null && (
+            <small className="task-estimate">
+              {estimateLabel(task.estimatedMinutes)}
+            </small>
+          )}
           {milestone && (
             <small>
               <Mark size={5} filled={milestone.status === "complete"} />
@@ -77,6 +94,11 @@ export function TaskRow({
           {owner && (
             <small className="task-link" title={`Owner: ${owner.displayName}`}>
               <Mark shape="circle" size={6} /> {owner.displayName}
+            </small>
+          )}
+          {weekStart && task.scheduledDay === null && task.plannedWeek && (
+            <small className="task-week">
+              {weekLabel(task.plannedWeek, weekStart)}
             </small>
           )}
           {showScheduledDay && task.scheduledDay && (
@@ -97,11 +119,20 @@ export function TaskRow({
           className="task-action"
           onClick={onScheduleHere}
           disabled={busy}
-          title="Schedule for this day"
-          aria-label={`Schedule ${task.title} for this day`}
+          title={addLabel}
+          aria-label={`${addLabel}: ${task.title}`}
         >
           <Glyph>+</Glyph>
         </button>
+      )}
+      {moveItems && (
+        <Menu
+          label={`Move ${task.title}`}
+          trigger={<Glyph>⋯</Glyph>}
+          items={moveItems}
+          className="task-action"
+          disabled={busy}
+        />
       )}
       {onDelete && (
         <button

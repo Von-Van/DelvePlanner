@@ -9,6 +9,8 @@ pub const MAX_EMAIL_LENGTH: usize = 254;
 pub const MAX_COMMAND_LENGTH: usize = 1_000;
 pub const MAX_OPERATIONS: usize = 12;
 pub const MAX_REMINDER_MINUTES: i64 = 7 * 24 * 60;
+pub const MAX_ESTIMATE_MINUTES: i64 = 24 * 60;
+pub const MAX_TASK_MOVES: usize = 500;
 
 /// Declares a closed enum whose serde name and SQLite text value come from one literal.
 macro_rules! stored_enum {
@@ -188,7 +190,8 @@ pub struct Milestone {
     pub updated_at: String,
 }
 
-/// Work that needs doing. A task may be scheduled onto a day, due by a day, or live only in a plan.
+/// Work that needs doing. A task lives in a plan, is chosen for a week, is scheduled onto a day,
+/// or is due by a day; one record moves between those horizons and is never copied.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Task {
@@ -203,10 +206,27 @@ pub struct Task {
     pub owner_id: Option<String>,
     pub due_date: Option<String>,
     pub scheduled_day: Option<String>,
+    /// The first local day of the week the task was chosen for, with no day picked yet.
+    #[serde(default)]
+    pub planned_week: Option<String>,
+    #[serde(default)]
+    pub estimated_minutes: Option<i64>,
     pub status: TaskStatus,
     pub priority: TaskPriority,
     pub completed_at: Option<String>,
     pub sort_order: i64,
+    pub revision: i64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// Something captured before it is organized. Converting it into a task, plan, or event removes it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct InboxItem {
+    pub id: String,
+    pub text: String,
+    pub notes: String,
     pub revision: i64,
     pub created_at: String,
     pub updated_at: String,
@@ -359,6 +379,10 @@ pub struct CreateTaskInput {
     #[serde(default)]
     pub scheduled_day: Option<String>,
     #[serde(default)]
+    pub planned_week: Option<String>,
+    #[serde(default)]
+    pub estimated_minutes: Option<i64>,
+    #[serde(default)]
     pub status: TaskStatus,
     #[serde(default)]
     pub priority: TaskPriority,
@@ -378,8 +402,80 @@ pub struct UpdateTaskInput {
     pub owner_id: Option<String>,
     pub due_date: Option<String>,
     pub scheduled_day: Option<String>,
+    pub planned_week: Option<String>,
+    pub estimated_minutes: Option<i64>,
     pub status: TaskStatus,
     pub priority: TaskPriority,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CreateInboxItemInput {
+    pub text: String,
+    #[serde(default)]
+    pub notes: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct UpdateInboxItemInput {
+    pub id: String,
+    pub revision: i64,
+    pub text: String,
+    pub notes: String,
+}
+
+/// What an inbox item becomes. The new record is created and the item removed in one transaction.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum InboxTarget {
+    Task { task: CreateTaskInput },
+    Plan { plan: CreatePlanInput },
+    Event { event: CreateEventInput },
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProcessInboxItemInput {
+    pub id: String,
+    pub revision: i64,
+    pub target: InboxTarget,
+}
+
+/// The record an inbox item was converted into.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct InboxConversion {
+    pub kind: RecordKind,
+    pub id: String,
+}
+
+/// Moves one task between planning horizons: onto a day, into a week's pool, out of both, or done.
+/// Every move in a batch is applied in one transaction.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TaskMove {
+    pub id: String,
+    pub revision: i64,
+    #[serde(default)]
+    pub scheduled_day: DayChange,
+    #[serde(default)]
+    pub planned_week: DayChange,
+    #[serde(default)]
+    pub status: Option<TaskStatus>,
+}
+
+/// Open work plus everything chosen for or scheduled in one week, for weekly and daily planning.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanningBoard {
+    pub tasks: Vec<Task>,
+    pub milestones: Vec<Milestone>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -518,6 +614,8 @@ pub struct ExportBundle {
     pub milestones: Vec<Milestone>,
     pub events: Vec<ScheduleEvent>,
     pub tasks: Vec<Task>,
+    #[serde(default)]
+    pub inbox_items: Vec<InboxItem>,
 }
 
 /// Export formats 1 and 2, which predate plans and stored day-bound tasks.
@@ -539,6 +637,7 @@ pub struct ImportPreview {
     pub milestone_count: usize,
     pub event_count: usize,
     pub task_count: usize,
+    pub inbox_item_count: usize,
     pub earliest_day: Option<String>,
     pub latest_day: Option<String>,
 }
@@ -649,6 +748,16 @@ pub enum DayChange {
     Set {
         day: String,
     },
+}
+
+impl DayChange {
+    pub fn apply(&self, current: Option<String>) -> Option<String> {
+        match self {
+            Self::Unchanged => current,
+            Self::Clear => None,
+            Self::Set { day } => Some(day.clone()),
+        }
+    }
 }
 
 /// The closed set of changes the local planner may propose. Nothing here is applied until the

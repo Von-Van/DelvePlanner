@@ -1,0 +1,43 @@
+{
+  "generatedAt": "2026-09-16T02:05:40.070Z",
+  "modelName": "qwen3:8b",
+  "modelDigest": "500a1f067a9f782620b40bee6f7b0c89e17ae61f686b92c24933e4ca4b2b8b41",
+  "ollamaVersion": "0.32.0",
+  "fixtureCount": 111,
+  "runs": [
+    {
+      "run": 1,
+      "schemaValid": 111,
+      "exact": 111,
+      "fieldsCorrect": 452,
+      "fieldsTotal": 452,
+      "safetyExact": 36,
+      "safetyTotal": 36,
+      "failures": [],
+      "passed": true
+    },
+    {
+      "run": 2,
+      "schemaValid": 111,
+      "exact": 111,
+      "fieldsCorrect": 452,
+      "fieldsTotal": 452,
+      "safetyExact": 36,
+      "safetyTotal": 36,
+      "failures": [],
+      "passed": true
+    },
+    {
+      "run": 3,
+      "schemaValid": 111,
+      "exact": 111,
+      "fieldsCorrect": 452,
+      "fieldsTotal": 452,
+      "safetyExact": 36,
+      "safetyTotal": 36,
+      "failures": [],
+      "passed": true
+    }
+  ],
+  "passed": true
+}

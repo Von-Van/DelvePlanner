@@ -3,7 +3,7 @@ import { addDays, format, parseISO, startOfToday, startOfWeek } from "date-fns";
 export const localTimeZone =
   Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 
-type WeekStart = 0 | 1 | 2 | 3 | 4 | 5 | 6;
+export type WeekStart = 0 | 1 | 2 | 3 | 4 | 5 | 6;
 
 /** The locale's first day of the week (0 = Sunday), falling back to Monday. */
 export function localeWeekStart(locale = navigator.language): WeekStart {

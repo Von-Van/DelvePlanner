@@ -1,3 +1,5 @@
+mod capture;
+mod horizons;
 mod planning;
 mod proposals;
 mod team;
@@ -10,6 +12,7 @@ use crate::model::{
     UpdateEventInput, MAX_LOCATION_LENGTH, MAX_NOTES_LENGTH, MAX_REMINDER_MINUTES,
     MAX_TITLE_LENGTH,
 };
+use capture::validate_inbox_text;
 use chrono::{
     DateTime, Duration as ChronoDuration, LocalResult, NaiveDate, NaiveDateTime, NaiveTime, Offset,
     TimeZone, Utc,
@@ -34,8 +37,8 @@ use uuid::Uuid;
 pub(crate) use proposals::{fold, planning_tokens, title_matches};
 pub use proposals::{validate_model_response, CandidateRequest};
 
-pub const CURRENT_SCHEMA_VERSION: u32 = 4;
-pub const EXPORT_FORMAT_VERSION: u32 = 4;
+pub const CURRENT_SCHEMA_VERSION: u32 = 5;
+pub const EXPORT_FORMAT_VERSION: u32 = 5;
 const BACKUP_RETENTION: usize = 5;
 const REMINDER_DELIVERY_GRACE_MINUTES: i64 = 15;
 const MAX_IMPORT_RECORDS: usize = 100_000;
@@ -114,6 +117,7 @@ impl PlannerDatabase {
             milestones: self.all_milestones()?,
             events: self.all_events()?,
             tasks: self.all_tasks()?,
+            inbox_items: self.all_inbox_items()?,
         })
     }
 
@@ -127,7 +131,13 @@ impl PlannerDatabase {
             days.extend(milestone.target_date.iter().cloned());
         }
         for task in &bundle.tasks {
-            days.extend(task.scheduled_day.iter().chain(&task.due_date).cloned());
+            days.extend(
+                task.scheduled_day
+                    .iter()
+                    .chain(&task.due_date)
+                    .chain(&task.planned_week)
+                    .cloned(),
+            );
         }
         for event in &bundle.events {
             let parsed = DateTime::parse_from_rfc3339(&event.start_at_utc).map_err(|_| {
@@ -143,6 +153,7 @@ impl PlannerDatabase {
             milestone_count: bundle.milestones.len(),
             event_count: bundle.events.len(),
             task_count: bundle.tasks.len(),
+            inbox_item_count: bundle.inbox_items.len(),
             earliest_day: days.first().cloned(),
             latest_day: days.last().cloned(),
         })
@@ -155,6 +166,7 @@ impl PlannerDatabase {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         for table in [
+            "inbox_items",
             "tasks",
             "milestones",
             "schedule_events",
@@ -278,9 +290,10 @@ impl PlannerDatabase {
             transaction.execute(
                 "INSERT INTO tasks
                  (id, title, description, plan_id, milestone_id, workstream_id, owner_id,
-                  due_date, scheduled_day, status, priority, completed_at, sort_order, revision,
-                  created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+                  due_date, scheduled_day, planned_week, estimated_minutes, status, priority,
+                  completed_at, sort_order, revision, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
+                         ?17, ?18)",
                 params![
                     task.id,
                     task.title.trim(),
@@ -291,6 +304,8 @@ impl PlannerDatabase {
                     task.owner_id,
                     task.due_date,
                     task.scheduled_day,
+                    task.planned_week,
+                    task.estimated_minutes,
                     task.status.as_str(),
                     task.priority.as_str(),
                     task.completed_at,
@@ -298,6 +313,20 @@ impl PlannerDatabase {
                     task.revision,
                     task.created_at,
                     task.updated_at
+                ],
+            )?;
+        }
+        for item in &bundle.inbox_items {
+            transaction.execute(
+                "INSERT INTO inbox_items (id, text, notes, revision, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    item.id,
+                    item.text.trim(),
+                    item.notes.trim(),
+                    item.revision,
+                    item.created_at,
+                    item.updated_at
                 ],
             )?;
         }
@@ -1009,6 +1038,7 @@ fn migrate(connection: &Connection, from_version: u32) -> AppResult<()> {
         ensure_reminder_columns(connection)?;
         ensure_planning_schema(connection)?;
         ensure_team_schema(connection)?;
+        ensure_horizon_schema(connection)?;
         connection.pragma_update(None, "user_version", CURRENT_SCHEMA_VERSION)?;
         Ok::<(), AppError>(())
     })();
@@ -1200,6 +1230,41 @@ fn ensure_team_schema(connection: &Connection) -> AppResult<()> {
     Ok(())
 }
 
+/// Schema 5: adds the capture inbox, lets a task be chosen for a week without a day, and gives
+/// tasks an optional effort estimate. Existing tasks keep every value they had.
+fn ensure_horizon_schema(connection: &Connection) -> AppResult<()> {
+    connection.execute_batch(
+        "CREATE TABLE IF NOT EXISTS inbox_items (
+             id TEXT PRIMARY KEY NOT NULL,
+             text TEXT NOT NULL,
+             notes TEXT NOT NULL DEFAULT '',
+             revision INTEGER NOT NULL DEFAULT 1,
+             created_at TEXT NOT NULL,
+             updated_at TEXT NOT NULL
+         );
+         CREATE INDEX IF NOT EXISTS inbox_items_created_idx ON inbox_items(created_at);",
+    )?;
+    for (column, definition) in [
+        ("planned_week", "TEXT"),
+        (
+            "estimated_minutes",
+            "INTEGER CHECK(estimated_minutes BETWEEN 1 AND 1440)",
+        ),
+    ] {
+        if !column_exists(connection, "tasks", column)? {
+            connection.execute(
+                &format!("ALTER TABLE tasks ADD COLUMN {column} {definition}"),
+                [],
+            )?;
+        }
+    }
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS tasks_planned_week_idx ON tasks(planned_week)",
+        [],
+    )?;
+    Ok(())
+}
+
 fn table_exists(connection: &Connection, table: &str) -> AppResult<bool> {
     connection
         .query_row(
@@ -1331,7 +1396,8 @@ pub fn restore_backup(path: &Path, backup_name: &str) -> AppResult<()> {
 }
 
 /// Reads any supported export format. Formats 1–2 are upgraded to the current bundle shape;
-/// format 3 predates people and workstreams, whose fields default to empty.
+/// format 3 predates people and workstreams, and formats 3–4 predate the inbox, task weeks, and
+/// estimates, whose fields default to empty.
 pub fn parse_export_bundle(contents: &str) -> AppResult<ExportBundle> {
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
@@ -1340,7 +1406,7 @@ pub fn parse_export_bundle(contents: &str) -> AppResult<ExportBundle> {
     }
     match serde_json::from_str::<FormatHeader>(contents)?.format_version {
         1 | 2 => Ok(upgrade_legacy_bundle(serde_json::from_str(contents)?)),
-        3 | EXPORT_FORMAT_VERSION => {
+        3 | 4 | EXPORT_FORMAT_VERSION => {
             let bundle: ExportBundle = serde_json::from_str(contents)?;
             Ok(ExportBundle {
                 format_version: EXPORT_FORMAT_VERSION,
@@ -1363,6 +1429,7 @@ fn upgrade_legacy_bundle(legacy: LegacyExportBundle) -> ExportBundle {
         plans: Vec::new(),
         workstreams: Vec::new(),
         milestones: Vec::new(),
+        inbox_items: Vec::new(),
         events: legacy
             .events
             .into_iter()
@@ -1387,6 +1454,8 @@ fn upgrade_legacy_bundle(legacy: LegacyExportBundle) -> ExportBundle {
                 owner_id: None,
                 due_date: None,
                 scheduled_day: Some(normalize_day(&task.day).unwrap_or(task.day)),
+                planned_week: None,
+                estimated_minutes: None,
                 status: if task.completed {
                     TaskStatus::Done
                 } else {
@@ -1418,6 +1487,7 @@ fn validate_export_bundle(bundle: &ExportBundle) -> AppResult<()> {
         bundle.milestones.len(),
         bundle.events.len(),
         bundle.tasks.len(),
+        bundle.inbox_items.len(),
     ]
     .into_iter()
     .any(|count| count > MAX_IMPORT_RECORDS)
@@ -1577,8 +1647,13 @@ fn validate_export_bundle(bundle: &ExportBundle) -> AppResult<()> {
             owner_id: task.owner_id.as_deref(),
             due_date: task.due_date.as_deref(),
             scheduled_day: task.scheduled_day.as_deref(),
+            planned_week: task.planned_week.as_deref(),
+            estimated_minutes: task.estimated_minutes,
         })?;
-        if days.due_date != task.due_date || days.scheduled_day != task.scheduled_day {
+        if days.due_date != task.due_date
+            || days.scheduled_day != task.scheduled_day
+            || days.planned_week != task.planned_week
+        {
             return Err(non_canonical_dates());
         }
         if task
@@ -1613,6 +1688,15 @@ fn validate_export_bundle(bundle: &ExportBundle) -> AppResult<()> {
             validate_timestamp(completed_at)?;
         }
         validate_record_metadata(task.revision, &task.created_at, &task.updated_at)?;
+    }
+    let mut inbox_ids = HashSet::new();
+    for item in &bundle.inbox_items {
+        validate_id(&item.id)?;
+        if !inbox_ids.insert(&item.id) {
+            return Err(duplicate_identifiers("inbox item"));
+        }
+        validate_inbox_text(&item.text, &item.notes)?;
+        validate_record_metadata(item.revision, &item.created_at, &item.updated_at)?;
     }
     Ok(())
 }
@@ -1735,6 +1819,8 @@ mod tests {
             owner_id: None,
             due_date: None,
             scheduled_day: None,
+            planned_week: None,
+            estimated_minutes: None,
             status: TaskStatus::Todo,
             priority: TaskPriority::Normal,
         }
@@ -2416,6 +2502,125 @@ mod tests {
             ),
             ("", 4, None)
         );
+    }
+
+    #[test]
+    fn migrates_schema_four_tasks_to_weeks_estimates_and_the_inbox() {
+        let directory = tempdir().unwrap().keep();
+        let path = directory.join("dayplan.sqlite3");
+        let connection = Connection::open(&path).unwrap();
+        connection.execute_batch(SCHEMA_TWO_TABLES).unwrap();
+        ensure_reminder_columns(&connection).unwrap();
+        ensure_planning_schema(&connection).unwrap();
+        ensure_team_schema(&connection).unwrap();
+        connection.pragma_update(None, "user_version", 4).unwrap();
+        let stamp = "2026-09-14T12:00:00.000Z";
+        connection
+            .execute(
+                "INSERT INTO tasks (id, title, scheduled_day, status, revision, created_at,
+                                    updated_at)
+                 VALUES (?1, 'Call parents', '2026-09-14', 'todo', 3, ?2, ?2)",
+                params![Uuid::new_v4().to_string(), stamp],
+            )
+            .unwrap();
+        drop(connection);
+
+        let mut migrated = PlannerDatabase::open(&path).unwrap();
+        assert_eq!(migrated.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+        assert!(migrated.list_backups().unwrap()[0]
+            .name
+            .starts_with("dayplan-v4-"));
+        for column in ["planned_week", "estimated_minutes"] {
+            assert!(column_exists(&migrated.connection, "tasks", column).unwrap());
+        }
+        let kept = migrated.tasks_for_day("2026-09-14").unwrap().remove(0);
+        assert_eq!(
+            (
+                kept.title.as_str(),
+                kept.revision,
+                kept.planned_week,
+                kept.estimated_minutes
+            ),
+            ("Call parents", 3, None, None)
+        );
+        assert!(migrated.list_inbox_items().unwrap().is_empty());
+        migrated
+            .create_inbox_item(crate::model::CreateInboxItemInput {
+                text: "Ask Sarah about Saturday".into(),
+                notes: String::new(),
+            })
+            .unwrap();
+        let overlong = migrated.connection.execute(
+            "UPDATE tasks SET estimated_minutes = 1441 WHERE id = ?1",
+            params![kept.id],
+        );
+        assert!(overlong.is_err(), "the estimate check constraint applies");
+    }
+
+    #[test]
+    fn export_round_trips_the_inbox_weeks_and_estimates_and_reads_format_four() {
+        let mut database = database();
+        database
+            .create_task(crate::model::CreateTaskInput {
+                planned_week: Some("2026-09-13".into()),
+                estimated_minutes: Some(90),
+                ..task_input("Write literature review outline")
+            })
+            .unwrap();
+        database
+            .create_inbox_item(crate::model::CreateInboxItemInput {
+                text: "Look into authentication bug".into(),
+                notes: "Only on Windows".into(),
+            })
+            .unwrap();
+
+        let bundle = database.export_bundle().unwrap();
+        assert_eq!(bundle.inbox_items.len(), 1);
+        let json = serde_json::to_value(&bundle).unwrap();
+        let parsed = parse_export_bundle(&json.to_string()).unwrap();
+        assert_eq!(parsed, bundle);
+        let preview = database.import_bundle(&parsed).unwrap();
+        assert_eq!((preview.inbox_item_count, preview.task_count), (1, 1));
+        let restored = database.export_bundle().unwrap();
+        assert_eq!(restored.tasks, bundle.tasks);
+        assert_eq!(restored.inbox_items, bundle.inbox_items);
+
+        let mut format_four = json.clone();
+        format_four["formatVersion"] = serde_json::json!(4);
+        format_four.as_object_mut().unwrap().remove("inboxItems");
+        format_four["tasks"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("estimatedMinutes");
+        format_four["tasks"][0]["scheduledDay"] = serde_json::json!("2026-09-15");
+        format_four["tasks"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("plannedWeek");
+        let upgraded = parse_export_bundle(&format_four.to_string()).unwrap();
+        assert_eq!(upgraded.format_version, EXPORT_FORMAT_VERSION);
+        assert!(upgraded.inbox_items.is_empty());
+        assert_eq!(
+            (
+                upgraded.tasks[0].planned_week.as_deref(),
+                upgraded.tasks[0].estimated_minutes
+            ),
+            (None, None)
+        );
+        PlannerDatabase::preview_import(&upgraded).unwrap();
+
+        let mut non_canonical = bundle.clone();
+        non_canonical.tasks[0].planned_week = Some("2026-9-13".into());
+        assert!(matches!(
+            PlannerDatabase::preview_import(&non_canonical),
+            Err(AppError::Validation(_))
+        ));
+        let mut duplicate = bundle;
+        duplicate.inbox_items.push(duplicate.inbox_items[0].clone());
+        assert!(matches!(
+            PlannerDatabase::preview_import(&duplicate),
+            Err(AppError::Validation(_))
+        ));
     }
 
     #[test]

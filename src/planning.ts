@@ -7,21 +7,31 @@ import {
 } from "date-fns";
 import type {
   Agenda,
+  DayChange,
   Milestone,
   MilestoneStatus,
   Plan,
   PlanColor,
   PlanDeletion,
+  PlanningBoard,
   PlanStatus,
   PlanWorkspace,
   ScheduleEvent,
   Task,
   TaskInput,
+  TaskMove,
   TaskPriority,
   TaskStatus,
   Workstream,
 } from "./api";
-import { dateTimeFields, isoDay, offsetDay, timeLabel } from "./date";
+import {
+  dateTimeFields,
+  isoDay,
+  offsetDay,
+  timeLabel,
+  weekStartDay,
+  WeekStart,
+} from "./date";
 
 export const planStatusLabels: Record<PlanStatus, string> = {
   planning: "Planning",
@@ -175,6 +185,8 @@ export function taskUpdate(task: Task): TaskInput & {
     ownerId: task.ownerId,
     dueDate: task.dueDate,
     scheduledDay: task.scheduledDay,
+    plannedWeek: task.plannedWeek,
+    estimatedMinutes: task.estimatedMinutes,
     status: task.status,
     priority: task.priority,
   };
@@ -190,18 +202,23 @@ export function newTask(fields: Pick<TaskInput, "title"> & Partial<TaskInput>) {
     ownerId: null,
     dueDate: null,
     scheduledDay: null,
+    plannedWeek: null,
+    estimatedMinutes: null,
     status: "todo",
     priority: "normal",
     ...fields,
   } satisfies TaskInput;
 }
 
-/** Mirrors the repository rule that every task must be reachable from a plan or a day. */
+/** Mirrors the repository rule that every task is reachable from a plan, week, or day. */
 export function taskHasHome(
-  task: Pick<TaskInput, "planId" | "dueDate" | "scheduledDay">,
+  task: Pick<TaskInput, "planId" | "dueDate" | "scheduledDay" | "plannedWeek">,
 ) {
   return (
-    task.planId !== null || task.dueDate !== null || task.scheduledDay !== null
+    task.planId !== null ||
+    task.dueDate !== null ||
+    task.scheduledDay !== null ||
+    task.plannedWeek !== null
   );
 }
 
@@ -474,7 +491,7 @@ export function timelineModel(
   };
 }
 
-/** Predicts `delete_plan`: tasks with no scheduled or due day go with the plan; the rest stay. */
+/** Predicts `delete_plan`: tasks with no week, scheduled day, or due day go with the plan. */
 export function planDeletionPreview(
   workspace: Pick<
     PlanWorkspace,
@@ -482,7 +499,10 @@ export function planDeletionPreview(
   >,
 ): PlanDeletion {
   const deletedTasks = workspace.tasks.filter(
-    (task) => task.scheduledDay === null && task.dueDate === null,
+    (task) =>
+      task.scheduledDay === null &&
+      task.dueDate === null &&
+      task.plannedWeek === null,
   ).length;
   return {
     deletedWorkstreams: workspace.workstreams.length,
@@ -721,4 +741,259 @@ export function groupWeek(agenda: Agenda, startDay: string): WeekDay[] {
       (milestone) => milestone.targetDate === day,
     ),
   }));
+}
+
+export const estimatePresets = [15, 30, 45, 60, 120] as const;
+
+/** "15 min", "1 h", or "1 h 30 min". */
+export function estimateLabel(minutes: number) {
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  if (!hours) return `${rest} min`;
+  return rest ? `${hours} h ${rest} min` : `${hours} h`;
+}
+
+/** Estimated minutes of the open tasks, and how many open tasks have no estimate. */
+export function workload(tasks: Task[]) {
+  let minutes = 0;
+  let unestimated = 0;
+  let open = 0;
+  for (const task of tasks) {
+    if (task.status === "done") continue;
+    open += 1;
+    if (task.estimatedMinutes === null) unestimated += 1;
+    else minutes += task.estimatedMinutes;
+  }
+  return { minutes, unestimated, open };
+}
+
+/** "2 h 15 min estimated · 3 without an estimate", or null when nothing is open. */
+export function workloadLabel(load: ReturnType<typeof workload>) {
+  if (!load.open) return null;
+  const parts = [];
+  if (load.minutes) parts.push(`${estimateLabel(load.minutes)} estimated`);
+  if (load.unestimated)
+    parts.push(
+      `${load.unestimated} without ${load.unestimated === 1 ? "an estimate" : "estimates"}`,
+    );
+  return parts.join(" · ");
+}
+
+/** Whether `day` falls in the seven days starting at `weekStart`. */
+export function inWeek(day: string | null, weekStart: string) {
+  return day !== null && day >= weekStart && day < offsetDay(weekStart, 7);
+}
+
+/** A task belongs to a week when it was chosen for it or is scheduled on one of its days. */
+export function belongsToWeek(task: Task, weekStart: string) {
+  return (
+    inWeek(task.scheduledDay, weekStart) ||
+    (task.scheduledDay === null && inWeek(task.plannedWeek, weekStart))
+  );
+}
+
+/** "This week", "Next week", "Last week", or "Week of 21 Sep", relative to `currentWeekStart`. */
+export function weekLabel(week: string, currentWeekStart: string) {
+  if (inWeek(week, currentWeekStart)) return "This week";
+  if (inWeek(week, offsetDay(currentWeekStart, 7))) return "Next week";
+  if (inWeek(week, offsetDay(currentWeekStart, -7))) return "Last week";
+  return `Week of ${shortDate(week)}`;
+}
+
+export type MoveTarget =
+  | { kind: "day"; day: string }
+  | { kind: "week"; weekStart: string }
+  | { kind: "unschedule" }
+  | { kind: "done" };
+
+const unchanged: DayChange = { action: "unchanged" };
+const cleared: DayChange = { action: "clear" };
+
+/**
+ * The move that puts `task` on a day, in a week's pool, or back in its plan. Scheduling a day
+ * also records that day's week, so returning the task to the pool keeps it in the same week.
+ */
+export function taskMove(
+  task: Pick<Task, "id" | "revision">,
+  target: MoveTarget,
+  weekStartsOn: WeekStart,
+): TaskMove {
+  const base = {
+    id: task.id,
+    revision: task.revision,
+    scheduledDay: unchanged,
+    plannedWeek: unchanged,
+  };
+  switch (target.kind) {
+    case "day":
+      return {
+        ...base,
+        scheduledDay: { action: "set", day: target.day },
+        plannedWeek: {
+          action: "set",
+          day: weekStartDay(target.day, weekStartsOn),
+        },
+      };
+    case "week":
+      return {
+        ...base,
+        scheduledDay: cleared,
+        plannedWeek: { action: "set", day: target.weekStart },
+      };
+    case "unschedule":
+      return { ...base, scheduledDay: cleared, plannedWeek: cleared };
+    case "done":
+      return { ...base, status: "done" };
+  }
+}
+
+/** A task can leave every week and day only if its plan or due date still gives it a home. */
+export function canUnschedule(task: Pick<Task, "planId" | "dueDate">) {
+  return task.planId !== null || task.dueDate !== null;
+}
+
+export type MilestoneGroup = { milestone: Milestone; tasks: Task[] };
+
+/** Hands each open task to the first section that claims it, so every task is listed once. */
+function claimer(tasks: Task[], placed: Set<string>) {
+  const open = tasks.filter((task) => task.status !== "done");
+  return (predicate: (task: Task) => boolean) => {
+    const claimed = open.filter(
+      (task) => !placed.has(task.id) && predicate(task),
+    );
+    for (const task of claimed) placed.add(task.id);
+    return claimed;
+  };
+}
+
+function byPlacement(left: Task, right: Task) {
+  return (
+    (left.scheduledDay ?? "").localeCompare(right.scheduledDay ?? "") ||
+    Number(left.status === "done") - Number(right.status === "done") ||
+    left.sortOrder - right.sortOrder
+  );
+}
+
+/**
+ * What a weekly planning session shows: the week's chosen work, then open work to choose from —
+ * work left from earlier weeks, overdue and soon-due tasks, tasks behind upcoming milestones,
+ * and each active plan's unscheduled backlog. Work already placed in a later week is left out.
+ */
+export function weekPlanning(
+  board: PlanningBoard,
+  weekStart: string,
+  today: string,
+  plans: Plan[],
+) {
+  const weekEnd = offsetDay(weekStart, 7);
+  const chosen = board.tasks
+    .filter((task) => belongsToWeek(task, weekStart))
+    .sort(byPlacement);
+  const placed = new Set(chosen.map((task) => task.id));
+  for (const task of board.tasks) {
+    const later =
+      task.scheduledDay !== null
+        ? task.scheduledDay >= weekEnd
+        : task.plannedWeek !== null && task.plannedWeek >= weekEnd;
+    if (later) placed.add(task.id);
+  }
+  const take = claimer(board.tasks, placed);
+  const carried = take((task) =>
+    task.scheduledDay !== null
+      ? task.scheduledDay < weekStart
+      : task.plannedWeek !== null && task.plannedWeek < weekStart,
+  );
+  const overdue = take((task) => task.dueDate !== null && task.dueDate < today);
+  const dueSoon = take(
+    (task) => task.dueDate !== null && task.dueDate < offsetDay(weekEnd, 7),
+  );
+  const milestones: MilestoneGroup[] = board.milestones
+    .filter(
+      (milestone) => (milestone.targetDate ?? "") < offsetDay(weekEnd, 14),
+    )
+    .map((milestone) => ({
+      milestone,
+      tasks: take((task) => task.milestoneId === milestone.id),
+    }));
+  const backlog = plans
+    .filter(
+      (plan) =>
+        !plan.archived &&
+        (plan.status === "active" || plan.status === "planning"),
+    )
+    .map((plan) => ({
+      plan,
+      tasks: take(
+        (task) =>
+          task.planId === plan.id &&
+          task.scheduledDay === null &&
+          task.plannedWeek === null,
+      ),
+    }))
+    .filter((group) => group.tasks.length > 0);
+  return { chosen, carried, overdue, dueSoon, milestones, backlog };
+}
+
+/**
+ * What a daily planning session shows: the day's plan, then open work to add — unfinished tasks
+ * from earlier days, tasks due today, this week's unscheduled choices, overdue work, and tasks
+ * behind milestones due within a week.
+ */
+export function dayPlanning(
+  board: PlanningBoard,
+  today: string,
+  weekStart: string,
+) {
+  const planned = board.tasks
+    .filter((task) => task.scheduledDay === today)
+    .sort(byPlacement);
+  const take = claimer(board.tasks, new Set(planned.map((task) => task.id)));
+  const unfinished = take(
+    (task) => task.scheduledDay !== null && task.scheduledDay < today,
+  );
+  const dueToday = take((task) => task.dueDate === today);
+  const thisWeek = take(
+    (task) => task.scheduledDay === null && inWeek(task.plannedWeek, weekStart),
+  );
+  const overdue = take((task) => task.dueDate !== null && task.dueDate < today);
+  const milestones: MilestoneGroup[] = board.milestones
+    .filter((milestone) => (milestone.targetDate ?? "") <= offsetDay(today, 7))
+    .map((milestone) => ({
+      milestone,
+      tasks: take(
+        (task) =>
+          task.milestoneId === milestone.id &&
+          (task.scheduledDay === null || task.scheduledDay > today),
+      ),
+    }))
+    .filter((group) => group.tasks.length > 0);
+  return { planned, unfinished, dueToday, thisWeek, overdue, milestones };
+}
+
+/** Open tasks whose scheduled day has passed, oldest first. */
+export function unfinishedTasks(tasks: Task[], today: string) {
+  return tasks
+    .filter(
+      (task) =>
+        task.status !== "done" &&
+        task.scheduledDay !== null &&
+        task.scheduledDay < today,
+    )
+    .sort(byPlacement);
+}
+
+export type PlanningPromptState = { week: string | null; day: string | null };
+
+/**
+ * Which session Today offers: weekly planning until this week (or a later one) is planned or
+ * dismissed, then daily planning until today is.
+ */
+export function planningPrompt(
+  state: PlanningPromptState,
+  weekStart: string,
+  today: string,
+): "week" | "day" | null {
+  if (state.week === null || state.week < weekStart) return "week";
+  if (state.day !== today) return "day";
+  return null;
 }

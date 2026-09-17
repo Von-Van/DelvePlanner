@@ -1,6 +1,7 @@
 import { FormEvent, useRef, useState } from "react";
 import {
   api,
+  InboxItem,
   LocalDateTimeResolution,
   messageFor,
   Person,
@@ -11,7 +12,9 @@ import { Glyph, Spinner } from "./Geometry";
 import { localTimeZone } from "./date";
 import {
   draftFor,
+  ensureNotificationPermission,
   EventDraft,
+  eventInputFor,
   reminderPresets,
   saveEventDraft,
 } from "./events";
@@ -22,6 +25,7 @@ import { usePlanLinks } from "./usePlanLinks";
 export function EventEditor({
   day,
   event,
+  inboxItem,
   plans,
   people,
   defaultPlanId = null,
@@ -32,6 +36,8 @@ export function EventEditor({
 }: {
   day: string;
   event?: ScheduleEvent;
+  /** Converts this inbox item: saving creates the event and removes the item together. */
+  inboxItem?: InboxItem;
   plans: Plan[];
   people: Person[];
   defaultPlanId?: string | null;
@@ -44,6 +50,7 @@ export function EventEditor({
   const [draft, setDraft] = useState(() => ({
     ...draftFor(day, event, defaultPlanId),
     ...(!event && defaultTime ? { time: defaultTime } : {}),
+    ...(inboxItem ? { title: inboxItem.text, notes: inboxItem.notes } : {}),
   }));
   const dialogRef = useRef<HTMLFormElement>(null);
   const [saving, setSaving] = useState(false);
@@ -54,7 +61,16 @@ export function EventEditor({
   const { workstreams } = usePlanLinks(draft.planId, onError);
 
   async function persist(startAtUtc: string) {
-    await saveEventDraft(draft, event, startAtUtc);
+    if (inboxItem) {
+      if (draft.reminderMinutesBefore !== null)
+        await ensureNotificationPermission();
+      await api.processInboxItem(inboxItem, {
+        kind: "event",
+        event: eventInputFor(draft, startAtUtc),
+      });
+    } else {
+      await saveEventDraft(draft, event, startAtUtc);
+    }
     await onSaved();
   }
   async function run(action: () => Promise<void>) {
@@ -97,12 +113,26 @@ export function EventEditor({
         onSubmit={submit}
         role="dialog"
         aria-modal="true"
-        aria-label={event ? "Edit event" : "New event"}
+        aria-label={
+          inboxItem ? "Make an event" : event ? "Edit event" : "New event"
+        }
       >
         <header>
           <div>
-            <p>{event ? "EDIT TIME BLOCK" : "NEW TIME BLOCK"}</p>
-            <h2>{event ? "Refine the details" : "Make room for it"}</h2>
+            <p>
+              {inboxItem
+                ? "FROM INBOX"
+                : event
+                  ? "EDIT TIME BLOCK"
+                  : "NEW TIME BLOCK"}
+            </p>
+            <h2>
+              {inboxItem
+                ? "Give it a time"
+                : event
+                  ? "Refine the details"
+                  : "Make room for it"}
+            </h2>
           </div>
           <button type="button" onClick={onClose} aria-label="Close editor">
             <Glyph>✕</Glyph>

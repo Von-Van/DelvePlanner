@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
-import type { Milestone, ScheduleEvent, Task } from "./api";
+import type { Milestone, Plan, ScheduleEvent, Task } from "./api";
 import { localeWeekStart, rangeLabel, weekStartDay } from "./date";
 import {
   attentionSignals,
+  belongsToWeek,
+  canUnschedule,
+  dayPlanning,
+  estimateLabel,
   featuredTasks,
   filterTasks,
   focusEventId,
@@ -15,13 +19,20 @@ import {
   paddedCount,
   planDeletionMessage,
   planDeletionPreview,
+  planningPrompt,
   planSchedule,
   relativeDayLabel,
   shortDate,
   taskCounts,
   taskHasHome,
+  taskMove,
   timelineModel,
+  unfinishedTasks,
   upcomingItems,
+  weekLabel,
+  weekPlanning,
+  workload,
+  workloadLabel,
 } from "./planning";
 
 const planId = "30bb9c6a-4020-45a6-806b-5eb71c7ae76f";
@@ -58,6 +69,8 @@ function task(overrides: Partial<Task>): Task {
     ownerId: null,
     dueDate: null,
     scheduledDay: null,
+    plannedWeek: null,
+    estimatedMinutes: null,
     status: "todo",
     priority: "normal",
     completedAt: null,
@@ -162,13 +175,16 @@ describe("plan signals", () => {
     ]);
   });
 
-  it("requires a plan, scheduled day, or due date", () => {
-    expect(
-      taskHasHome({ planId: null, dueDate: null, scheduledDay: null }),
-    ).toBe(false);
-    expect(
-      taskHasHome({ planId: null, dueDate: "2026-09-18", scheduledDay: null }),
-    ).toBe(true);
+  it("requires a plan, week, scheduled day, or due date", () => {
+    const homeless = {
+      planId: null,
+      dueDate: null,
+      scheduledDay: null,
+      plannedWeek: null,
+    };
+    expect(taskHasHome(homeless)).toBe(false);
+    expect(taskHasHome({ ...homeless, dueDate: "2026-09-18" })).toBe(true);
+    expect(taskHasHome({ ...homeless, plannedWeek: "2026-09-13" })).toBe(true);
   });
 
   it("filters agenda items by plan membership", () => {
@@ -319,6 +335,7 @@ describe("plan deletion preview", () => {
         task({}),
         task({ dueDate: "2026-10-13" }),
         task({ scheduledDay: "2026-10-12" }),
+        task({ plannedWeek: "2026-10-11" }),
       ],
       events: [event({})],
     });
@@ -326,12 +343,12 @@ describe("plan deletion preview", () => {
       deletedWorkstreams: 0,
       deletedMilestones: 1,
       deletedTasks: 1,
-      detachedTasks: 2,
+      detachedTasks: 3,
       detachedEvents: 1,
     });
     const message = planDeletionMessage("Showcase", preview);
     expect(message).toContain("1 milestone and 1 undated task");
-    expect(message).toContain("2 dated tasks and 1 event");
+    expect(message).toContain("3 dated tasks and 1 event");
   });
 });
 
@@ -505,5 +522,183 @@ describe("plan views", () => {
       "November 9 – 15, 2026",
     );
     expect(rangeLabel("2026-10-29", "2026-11-04")).toBe("Oct 29 – Nov 4, 2026");
+  });
+});
+
+function plan(overrides: Partial<Plan>): Plan {
+  return {
+    id: planId,
+    title: "Wedding",
+    description: "",
+    status: "active",
+    startDate: null,
+    targetDate: null,
+    color: null,
+    archived: false,
+    revision: 1,
+    createdAt: stamp,
+    updatedAt: stamp,
+    ...overrides,
+  };
+}
+
+describe("planning horizons", () => {
+  const week = "2026-09-13";
+  const today = "2026-09-15";
+
+  it("labels estimates, workloads, and weeks", () => {
+    expect(estimateLabel(15)).toBe("15 min");
+    expect(estimateLabel(60)).toBe("1 h");
+    expect(estimateLabel(90)).toBe("1 h 30 min");
+    const load = workload([
+      task({ estimatedMinutes: 45 }),
+      task({ estimatedMinutes: 90 }),
+      task({}),
+      task({ estimatedMinutes: 30, status: "done" }),
+    ]);
+    expect(load).toEqual({ minutes: 135, unestimated: 1, open: 3 });
+    expect(workloadLabel(load)).toBe(
+      "2 h 15 min estimated · 1 without an estimate",
+    );
+    expect(workloadLabel(workload([]))).toBeNull();
+    expect(weekLabel("2026-09-13", week)).toBe("This week");
+    expect(weekLabel("2026-09-14", week)).toBe("This week");
+    expect(weekLabel("2026-09-20", week)).toBe("Next week");
+    expect(weekLabel("2026-09-06", week)).toBe("Last week");
+    expect(weekLabel("2026-10-04", week)).toBe("Week of 04 Oct");
+  });
+
+  it("moves one task between day, week, and plan", () => {
+    const chosen = task({ plannedWeek: week });
+    expect(belongsToWeek(chosen, week)).toBe(true);
+    expect(belongsToWeek(task({ scheduledDay: "2026-09-19" }), week)).toBe(
+      true,
+    );
+    expect(belongsToWeek(task({ scheduledDay: "2026-09-20" }), week)).toBe(
+      false,
+    );
+    expect(
+      belongsToWeek(
+        task({ plannedWeek: week, scheduledDay: "2026-09-21" }),
+        week,
+      ),
+    ).toBe(false);
+    expect(taskMove(chosen, { kind: "day", day: "2026-09-21" }, 0)).toEqual({
+      id: chosen.id,
+      revision: 1,
+      scheduledDay: { action: "set", day: "2026-09-21" },
+      plannedWeek: { action: "set", day: "2026-09-20" },
+    });
+    expect(
+      taskMove(chosen, { kind: "week", weekStart: week }, 0),
+    ).toMatchObject({
+      scheduledDay: { action: "clear" },
+      plannedWeek: { action: "set", day: week },
+    });
+    expect(taskMove(chosen, { kind: "unschedule" }, 0)).toMatchObject({
+      scheduledDay: { action: "clear" },
+      plannedWeek: { action: "clear" },
+    });
+    expect(taskMove(chosen, { kind: "done" }, 0)).toMatchObject({
+      status: "done",
+      scheduledDay: { action: "unchanged" },
+    });
+    expect(canUnschedule(task({ planId: null, dueDate: null }))).toBe(false);
+    expect(canUnschedule(task({ planId: null, dueDate: "2026-09-30" }))).toBe(
+      true,
+    );
+  });
+
+  it("lists each open task once in a weekly session", () => {
+    const pending = milestone({
+      title: "Venue booked",
+      targetDate: "2026-09-25",
+    });
+    const board = {
+      milestones: [pending],
+      tasks: [
+        task({ title: "Chosen", plannedWeek: week }),
+        task({
+          title: "Scheduled",
+          scheduledDay: "2026-09-16",
+          status: "done",
+        }),
+        task({ title: "Carried", plannedWeek: "2026-09-06" }),
+        task({
+          title: "Late",
+          scheduledDay: "2026-09-10",
+          dueDate: "2026-09-12",
+        }),
+        task({ title: "Overdue", dueDate: "2026-09-12" }),
+        task({ title: "Due soon", dueDate: "2026-09-24" }),
+        task({ title: "For the venue", milestoneId: pending.id }),
+        task({ title: "Backlog" }),
+        task({ title: "Placed later", plannedWeek: "2026-09-20" }),
+        task({ title: "Loose", planId: null, dueDate: "2026-12-01" }),
+      ],
+    };
+    const titles = (tasks: Task[]) => tasks.map((item) => item.title);
+    const sessions = weekPlanning(board, week, today, [plan({})]);
+    expect(titles(sessions.chosen)).toEqual(["Chosen", "Scheduled"]);
+    expect(titles(sessions.carried)).toEqual(["Carried", "Late"]);
+    expect(titles(sessions.overdue)).toEqual(["Overdue"]);
+    expect(titles(sessions.dueSoon)).toEqual(["Due soon"]);
+    expect(sessions.milestones.map((group) => titles(group.tasks))).toEqual([
+      ["For the venue"],
+    ]);
+    expect(sessions.backlog.map((group) => titles(group.tasks))).toEqual([
+      ["Backlog"],
+    ]);
+    expect(
+      weekPlanning(board, week, today, [plan({ status: "on_hold" })]).backlog,
+    ).toEqual([]);
+  });
+
+  it("builds a daily session from unfinished, due, and chosen work", () => {
+    const soon = milestone({ title: "Rehearsal", targetDate: "2026-09-18" });
+    const board = {
+      milestones: [soon],
+      tasks: [
+        task({ title: "Planned", scheduledDay: today }),
+        task({ title: "Yesterday", scheduledDay: "2026-09-14" }),
+        task({
+          title: "Due today",
+          dueDate: today,
+          scheduledDay: "2026-09-17",
+        }),
+        task({ title: "This week", plannedWeek: week }),
+        task({ title: "Overdue", dueDate: "2026-09-01" }),
+        task({ title: "Rehearsal prep", milestoneId: soon.id }),
+        task({
+          title: "Done earlier",
+          scheduledDay: "2026-09-14",
+          status: "done",
+        }),
+      ],
+    };
+    const titles = (tasks: Task[]) => tasks.map((item) => item.title);
+    const session = dayPlanning(board, today, week);
+    expect(titles(session.planned)).toEqual(["Planned"]);
+    expect(titles(session.unfinished)).toEqual(["Yesterday"]);
+    expect(titles(session.dueToday)).toEqual(["Due today"]);
+    expect(titles(session.thisWeek)).toEqual(["This week"]);
+    expect(titles(session.overdue)).toEqual(["Overdue"]);
+    expect(session.milestones.map((group) => titles(group.tasks))).toEqual([
+      ["Rehearsal prep"],
+    ]);
+    expect(titles(unfinishedTasks(board.tasks, today))).toEqual(["Yesterday"]);
+  });
+
+  it("offers the week first, then the day, until each is planned", () => {
+    expect(planningPrompt({ week: null, day: null }, week, today)).toBe("week");
+    expect(
+      planningPrompt({ week: "2026-09-06", day: today }, week, today),
+    ).toBe("week");
+    expect(planningPrompt({ week, day: "2026-09-14" }, week, today)).toBe(
+      "day",
+    );
+    expect(
+      planningPrompt({ week: "2026-09-20", day: today }, week, today),
+    ).toBe(null);
   });
 });
