@@ -5,8 +5,8 @@
 use super::ics::{CalendarRead, EventTime, SyncWindow};
 use crate::error::{AppError, AppResult};
 use crate::model::{
-    Calendar, CalendarIssue, CalendarKind, CalendarProblem, ExternalEvent, PlanColor,
-    UpdateCalendarInput, MAX_CALENDARS, MAX_CALENDAR_NAME_LENGTH,
+    Calendar, CalendarAccount, CalendarIssue, CalendarKind, CalendarProblem, CalendarProvider,
+    ExternalEvent, PlanColor, UpdateCalendarInput, MAX_CALENDARS, MAX_CALENDAR_NAME_LENGTH,
 };
 use chrono::{DateTime, SecondsFormat, Utc};
 use rusqlite::types::Type;
@@ -14,10 +14,14 @@ use rusqlite::{params, Connection, OptionalExtension, Row, Transaction, Transact
 use std::fs;
 use std::path::Path;
 
-const STORE_VERSION: u32 = 1;
+const STORE_VERSION: u32 = 2;
 const CALENDAR_SELECT: &str = "SELECT id, kind, name, color, visible, source_label, problem,
-        last_synced_at, last_attempt_at, event_count, revision, created_at, updated_at
+        last_synced_at, last_attempt_at, event_count, revision, created_at, updated_at, account_id
      FROM calendars";
+const ACCOUNT_SELECT: &str = "SELECT account.id, account.provider, account.label, account.problem,
+        (SELECT COUNT(*) FROM calendars WHERE account_id = account.id), account.revision,
+        account.created_at, account.updated_at
+     FROM calendar_accounts AS account";
 
 pub struct CalendarStore {
     connection: Connection,
@@ -30,23 +34,37 @@ pub struct NewCalendar<'a> {
     pub name: &'a str,
     pub color: PlanColor,
     pub source_label: &'a str,
+    /// The connected account and the calendar's ID there, for account calendars.
+    pub account_id: Option<&'a str>,
+    pub remote_id: Option<&'a str>,
 }
 
-/// The content of a successful read and the events it produced for `window`.
+/// A connected account about to be stored.
+pub struct NewAccount<'a> {
+    pub id: &'a str,
+    pub provider: CalendarProvider,
+    pub label: &'a str,
+}
+
+/// Where a calendar's events come from, for the refresh worker.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CalendarSource {
+    pub id: String,
+    pub kind: CalendarKind,
+    pub account_id: Option<String>,
+    pub remote_id: Option<String>,
+    pub etag: Option<String>,
+    pub last_modified: Option<String>,
+}
+
+/// The content of a successful read and the events it produced for `window`. Account calendars
+/// have no document to keep, because their events are fetched already expanded.
 pub struct Snapshot<'a> {
-    pub content: &'a str,
+    pub content: Option<&'a str>,
     pub read: &'a CalendarRead,
     pub window: &'a SyncWindow,
     pub etag: Option<&'a str>,
     pub last_modified: Option<&'a str>,
-}
-
-/// What a background refresh of one link calendar needs.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RefreshTarget {
-    pub id: String,
-    pub etag: Option<String>,
-    pub last_modified: Option<String>,
 }
 
 impl CalendarStore {
@@ -86,7 +104,18 @@ impl CalendarStore {
                  window_first_day TEXT,
                  window_end_day TEXT,
                  window_zone TEXT,
+                 account_id TEXT REFERENCES calendar_accounts(id) ON DELETE CASCADE,
+                 remote_id TEXT,
                  event_count INTEGER NOT NULL DEFAULT 0,
+                 revision INTEGER NOT NULL DEFAULT 1,
+                 created_at TEXT NOT NULL,
+                 updated_at TEXT NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS calendar_accounts (
+                 id TEXT PRIMARY KEY NOT NULL,
+                 provider TEXT NOT NULL,
+                 label TEXT NOT NULL,
+                 problem TEXT,
                  revision INTEGER NOT NULL DEFAULT 1,
                  created_at TEXT NOT NULL,
                  updated_at TEXT NOT NULL
@@ -120,9 +149,29 @@ impl CalendarStore {
                  ON calendar_events(start_at_utc) WHERE all_day = 0;
              CREATE INDEX IF NOT EXISTS calendar_events_dated_idx
                  ON calendar_events(start_date) WHERE all_day = 1;
-             PRAGMA user_version = 1;
              COMMIT;",
         )?;
+        // Store 1 predates connected accounts, so its calendars table has no link to one.
+        for (column, definition) in [
+            (
+                "account_id",
+                "TEXT REFERENCES calendar_accounts(id) ON DELETE CASCADE",
+            ),
+            ("remote_id", "TEXT"),
+        ] {
+            let mut columns = connection.prepare("PRAGMA table_info(calendars)")?;
+            let existing = columns
+                .query_map([], |row| row.get::<_, String>(1))?
+                .collect::<Result<Vec<_>, _>>()?;
+            drop(columns);
+            if !existing.iter().any(|name| name == column) {
+                connection.execute(
+                    &format!("ALTER TABLE calendars ADD COLUMN {column} {definition}"),
+                    [],
+                )?;
+            }
+        }
+        connection.pragma_update(None, "user_version", STORE_VERSION)?;
         Ok(Self { connection })
     }
 
@@ -157,14 +206,17 @@ impl CalendarStore {
         }
         let now = timestamp(Utc::now());
         transaction.execute(
-            "INSERT INTO calendars (id, kind, name, color, source_label, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
+            "INSERT INTO calendars (id, kind, name, color, source_label, account_id, remote_id,
+                                    created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
             params![
                 calendar.id,
                 calendar.kind.as_str(),
                 name,
                 calendar.color.as_str(),
                 calendar.source_label,
+                calendar.account_id,
+                calendar.remote_id,
                 now
             ],
         )?;
@@ -314,41 +366,112 @@ impl CalendarStore {
         }
     }
 
-    /// Link calendars whose next refresh is due.
-    pub fn due_refreshes(&self, now: DateTime<Utc>) -> AppResult<Vec<RefreshTarget>> {
+    /// Calendars that are fetched and whose next refresh is due. Imported files never are.
+    pub fn due_refreshes(&self, now: DateTime<Utc>) -> AppResult<Vec<CalendarSource>> {
         let mut statement = self.connection.prepare(
-            "SELECT id, etag, last_modified FROM calendars
-             WHERE kind = ?1 AND (next_refresh_at IS NULL OR next_refresh_at <= ?2)
+            "SELECT id, kind, account_id, remote_id, etag, last_modified FROM calendars
+             WHERE kind <> ?1 AND (next_refresh_at IS NULL OR next_refresh_at <= ?2)
              ORDER BY next_refresh_at ASC",
         )?;
         let rows = statement.query_map(
-            params![CalendarKind::IcsLink.as_str(), timestamp(now)],
-            |row| {
-                Ok(RefreshTarget {
-                    id: row.get(0)?,
-                    etag: row.get(1)?,
-                    last_modified: row.get(2)?,
-                })
-            },
+            params![CalendarKind::IcsFile.as_str(), timestamp(now)],
+            source_from_row,
         )?;
         rows.collect::<Result<Vec<_>, _>>().map_err(AppError::from)
     }
 
-    pub fn refresh_target(&self, id: &str) -> AppResult<Option<RefreshTarget>> {
+    /// Where one calendar's events come from.
+    pub fn source(&self, id: &str) -> AppResult<Option<CalendarSource>> {
         self.connection
             .query_row(
-                "SELECT id, etag, last_modified FROM calendars WHERE id = ?1",
+                "SELECT id, kind, account_id, remote_id, etag, last_modified
+                 FROM calendars WHERE id = ?1",
                 params![id],
-                |row| {
-                    Ok(RefreshTarget {
-                        id: row.get(0)?,
-                        etag: row.get(1)?,
-                        last_modified: row.get(2)?,
-                    })
-                },
+                source_from_row,
             )
             .optional()
             .map_err(AppError::from)
+    }
+
+    pub fn list_accounts(&self) -> AppResult<Vec<CalendarAccount>> {
+        let mut statement = self
+            .connection
+            .prepare(&format!("{ACCOUNT_SELECT} ORDER BY account.created_at ASC"))?;
+        let rows = statement.query_map([], account_from_row)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(AppError::from)
+    }
+
+    pub fn account(&self, id: &str) -> AppResult<Option<CalendarAccount>> {
+        account_by_id(&self.connection, id)
+    }
+
+    pub fn create_account(&mut self, account: NewAccount<'_>) -> AppResult<CalendarAccount> {
+        let now = timestamp(Utc::now());
+        self.connection.execute(
+            "INSERT INTO calendar_accounts (id, provider, label, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?4)",
+            params![account.id, account.provider.as_str(), account.label, now],
+        )?;
+        account_by_id(&self.connection, account.id)?.ok_or(AppError::NotFound)
+    }
+
+    /// Records that an account needs attention, or that it is working again. Its calendars carry
+    /// the same problem, so every view shows it.
+    pub fn record_account_problem(
+        &mut self,
+        id: &str,
+        problem: Option<CalendarProblem>,
+    ) -> AppResult<()> {
+        let now = timestamp(Utc::now());
+        let code = problem.map(CalendarProblem::as_str);
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        transaction.execute(
+            "UPDATE calendar_accounts SET problem = ?1, updated_at = ?2 WHERE id = ?3",
+            params![code, now, id],
+        )?;
+        transaction.execute(
+            "UPDATE calendars SET problem = ?1, last_attempt_at = ?2 WHERE account_id = ?3",
+            params![code, now, id],
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    /// Points an account at the address it signed in as, after a reconnect.
+    pub fn rename_account(&mut self, id: &str, label: &str) -> AppResult<CalendarAccount> {
+        self.connection.execute(
+            "UPDATE calendar_accounts SET label = ?1, revision = revision + 1, updated_at = ?2
+             WHERE id = ?3",
+            params![label, timestamp(Utc::now()), id],
+        )?;
+        account_by_id(&self.connection, id)?.ok_or(AppError::NotFound)
+    }
+
+    /// Deletes an account, and with it every calendar and event cached from it.
+    pub fn remove_account(&mut self, id: &str, revision: i64) -> AppResult<()> {
+        let changed = self.connection.execute(
+            "DELETE FROM calendar_accounts WHERE id = ?1 AND revision = ?2",
+            params![id, revision],
+        )?;
+        if changed == 1 {
+            return Ok(());
+        }
+        Err(if account_by_id(&self.connection, id)?.is_some() {
+            AppError::Conflict
+        } else {
+            AppError::NotFound
+        })
+    }
+
+    /// The calendars already added from an account, by their ID at the provider.
+    pub fn account_remote_ids(&self, account_id: &str) -> AppResult<Vec<String>> {
+        let mut statement = self.connection.prepare(
+            "SELECT remote_id FROM calendars WHERE account_id = ?1 AND remote_id IS NOT NULL",
+        )?;
+        let rows = statement.query_map(params![account_id], |row| row.get(0))?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(AppError::from)
     }
 
     /// Calendars with stored content that was read for a different window or zone.
@@ -442,12 +565,14 @@ fn write_snapshot(
     next_refresh: Option<DateTime<Utc>>,
 ) -> AppResult<()> {
     let now = timestamp(Utc::now());
-    transaction.execute(
-        "INSERT INTO calendar_documents (calendar_id, content, stored_at) VALUES (?1, ?2, ?3)
-         ON CONFLICT(calendar_id) DO UPDATE SET content = excluded.content,
-             stored_at = excluded.stored_at",
-        params![id, snapshot.content, now],
-    )?;
+    if let Some(content) = snapshot.content {
+        transaction.execute(
+            "INSERT INTO calendar_documents (calendar_id, content, stored_at) VALUES (?1, ?2, ?3)
+             ON CONFLICT(calendar_id) DO UPDATE SET content = excluded.content,
+                 stored_at = excluded.stored_at",
+            params![id, content, now],
+        )?;
+    }
     let stored = write_events(transaction, id, snapshot.read)?;
     transaction.execute(
         "UPDATE calendars SET problem = NULL, last_synced_at = ?1, last_attempt_at = ?1,
@@ -546,6 +671,48 @@ fn stale_or_missing(connection: &Connection, id: &str) -> AppResult<AppError> {
     })
 }
 
+fn source_from_row(row: &Row<'_>) -> rusqlite::Result<CalendarSource> {
+    let kind = row.get::<_, String>(1)?;
+    Ok(CalendarSource {
+        id: row.get(0)?,
+        kind: CalendarKind::parse(&kind).ok_or_else(|| invalid(1, "calendar kind"))?,
+        account_id: row.get(2)?,
+        remote_id: row.get(3)?,
+        etag: row.get(4)?,
+        last_modified: row.get(5)?,
+    })
+}
+
+fn account_by_id(connection: &Connection, id: &str) -> AppResult<Option<CalendarAccount>> {
+    connection
+        .query_row(
+            &format!("{ACCOUNT_SELECT} WHERE account.id = ?1"),
+            params![id],
+            account_from_row,
+        )
+        .optional()
+        .map_err(AppError::from)
+}
+
+fn account_from_row(row: &Row<'_>) -> rusqlite::Result<CalendarAccount> {
+    let provider = row.get::<_, String>(1)?;
+    let problem = row.get::<_, Option<String>>(3)?;
+    Ok(CalendarAccount {
+        id: row.get(0)?,
+        provider: CalendarProvider::parse(&provider)
+            .ok_or_else(|| invalid(1, "calendar provider"))?,
+        label: row.get(2)?,
+        problem: problem
+            .as_deref()
+            .and_then(CalendarProblem::parse)
+            .map(CalendarIssue::from),
+        calendar_count: row.get(4)?,
+        revision: row.get(5)?,
+        created_at: row.get(6)?,
+        updated_at: row.get(7)?,
+    })
+}
+
 fn calendar_from_row(row: &Row<'_>) -> rusqlite::Result<Calendar> {
     let text = |index: usize| row.get::<_, String>(index);
     let kind = text(1)?;
@@ -568,6 +735,7 @@ fn calendar_from_row(row: &Row<'_>) -> rusqlite::Result<Calendar> {
         revision: row.get(10)?,
         created_at: text(11)?,
         updated_at: text(12)?,
+        account_id: row.get(13)?,
     })
 }
 
@@ -636,9 +804,11 @@ END:VCALENDAR\r
                     name: "  Team   calendar ",
                     color: PlanColor::Lake,
                     source_label: "calendar.example",
+                    account_id: None,
+                    remote_id: None,
                 },
                 &Snapshot {
-                    content: FEED,
+                    content: Some(FEED),
                     read: &read,
                     window: &window,
                     etag: Some("\"v1\""),
@@ -741,7 +911,7 @@ END:VCALENDAR\r
             .store_refresh(
                 "team",
                 &Snapshot {
-                    content: "BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n",
+                    content: Some("BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n"),
                     read: &empty,
                     window: &window,
                     etag: None,
@@ -797,7 +967,7 @@ END:VCALENDAR\r
         let window = window();
         let read = read_calendar(FEED, &window).unwrap();
         let snapshot = Snapshot {
-            content: FEED,
+            content: Some(FEED),
             read: &read,
             window: &window,
             etag: None,
@@ -809,6 +979,8 @@ END:VCALENDAR\r
             name: "One too many",
             color: PlanColor::Sage,
             source_label: "extra.ics",
+            account_id: None,
+            remote_id: None,
         };
         assert!(matches!(
             store.create(new("extra"), &snapshot, None),

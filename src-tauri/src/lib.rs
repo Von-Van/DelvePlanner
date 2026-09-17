@@ -15,12 +15,13 @@ use db::{
 };
 use error::{AppError, CommandError};
 use model::{
-    Agenda, AppliedProposal, Calendar, CalendarAgenda, Capacity, CreateEventInput,
-    CreateInboxItemInput, CreateMilestoneInput, CreatePersonInput, CreatePlanInput,
-    CreateTaskBlockInput, CreateTaskInput, CreateWorkstreamInput, DatabaseStatus, ExportBundle,
-    ImportPreview, InboxConversion, InboxItem, LocalDateTimeInput, LocalDateTimeResolution,
-    Milestone, Person, PersonSummary, Plan, PlanColor, PlanDeletion, PlanSummary, PlanWorkspace,
-    PlannerResponse, PlanningBoard, ProcessInboxItemInput, RecordVersion, ReplaceCalendarLinkInput,
+    Agenda, AppliedProposal, Calendar, CalendarAccount, CalendarAgenda, CalendarProvider, Capacity,
+    ConnectedAccount, CreateEventInput, CreateInboxItemInput, CreateMilestoneInput,
+    CreatePersonInput, CreatePlanInput, CreateTaskBlockInput, CreateTaskInput,
+    CreateWorkstreamInput, DatabaseStatus, ExportBundle, ImportPreview, InboxConversion, InboxItem,
+    LocalDateTimeInput, LocalDateTimeResolution, Milestone, Person, PersonSummary, Plan, PlanColor,
+    PlanDeletion, PlanSummary, PlanWorkspace, PlannerResponse, PlanningBoard,
+    ProcessInboxItemInput, RecordVersion, RemoteCalendar, ReplaceCalendarLinkInput,
     RescheduleEventInput, ScheduleEvent, ScheduledBlock, SubscribeCalendarInput, Task, TaskBlock,
     TaskMove, UpdateCalendarInput, UpdateEventInput, UpdateInboxItemInput, UpdateMilestoneInput,
     UpdatePersonInput, UpdatePlanInput, UpdateTaskBlockInput, UpdateTaskInput,
@@ -38,6 +39,7 @@ use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_notification::NotificationExt;
+use tauri_plugin_opener::OpenerExt;
 use uuid::Uuid;
 use zip::write::SimpleFileOptions;
 
@@ -586,6 +588,71 @@ async fn pick_calendar_file(
         file_name,
         String::from_utf8_lossy(&bytes).into_owned(),
     )))
+}
+
+/// Signs in to a calendar account in the system browser and lists the calendars it offers.
+/// DayPlan asks only for read-only access and never changes another calendar.
+#[tauri::command]
+async fn connect_calendar_account(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    provider: CalendarProvider,
+) -> Result<ConnectedAccount, CommandError> {
+    let open = move |url: &str| {
+        app.opener()
+            .open_url(url, None::<&str>)
+            .map_err(|_| AppError::Internal("DayPlan couldn't open your browser.".into()))
+    };
+    state
+        .calendars
+        .connect(provider, &open)
+        .await
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+fn list_calendar_accounts(
+    state: State<'_, AppState>,
+) -> Result<Vec<CalendarAccount>, CommandError> {
+    state.calendars.accounts().map_err(CommandError::from)
+}
+
+#[tauri::command]
+async fn list_account_calendars(
+    state: State<'_, AppState>,
+    account_id: String,
+) -> Result<Vec<RemoteCalendar>, CommandError> {
+    state
+        .calendars
+        .account_calendars(&account_id)
+        .await
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+async fn add_account_calendars(
+    state: State<'_, AppState>,
+    account_id: String,
+    remote_ids: Vec<String>,
+) -> Result<Vec<Calendar>, CommandError> {
+    state
+        .calendars
+        .add_account_calendars(&account_id, remote_ids)
+        .await
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+async fn disconnect_calendar_account(
+    state: State<'_, AppState>,
+    id: String,
+    revision: i64,
+) -> Result<(), CommandError> {
+    state
+        .calendars
+        .disconnect(&id, revision)
+        .await
+        .map_err(CommandError::from)
 }
 
 #[tauri::command]
@@ -1243,6 +1310,11 @@ pub fn run() {
             update_calendar,
             refresh_calendar,
             remove_calendar,
+            connect_calendar_account,
+            list_calendar_accounts,
+            list_account_calendars,
+            add_account_calendars,
+            disconnect_calendar_account,
             resolve_local_datetime,
             export_planner_file,
             select_planner_import,

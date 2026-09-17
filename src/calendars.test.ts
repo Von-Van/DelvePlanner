@@ -12,6 +12,7 @@ import {
 import {
   agendaItems,
   allDayEventsOn,
+  calendarSourceLabel,
   calendarsNeedingAttention,
   capacityLine,
   capacityTotals,
@@ -30,6 +31,7 @@ const stamp = "2026-09-14T12:00:00.000Z";
 const calendar: Calendar = {
   id: "7f1f8a8c-1f4e-4d0e-9d57-0f2a3b4c5d6e",
   kind: "ics_link",
+  accountId: null,
   name: "Work",
   color: "lake",
   visible: true,
@@ -213,6 +215,31 @@ describe("calendar status", () => {
         now,
       ),
     ).toBe("Imported 12 Sep");
+  });
+
+  it("names where a calendar comes from", () => {
+    expect(calendarSourceLabel(calendar)).toBe("Link · calendar.google.com");
+    expect(
+      calendarSourceLabel({
+        ...calendar,
+        kind: "google",
+        accountId: "2b1b8c1a-5f1f-4a8e-8a53-6f9d3a3b1c11",
+        sourceLabel: "me@gmail.com",
+      }),
+    ).toBe("Google · me@gmail.com");
+    expect(
+      calendarSourceLabel({
+        ...calendar,
+        kind: "microsoft",
+        sourceLabel: "sam@outlook.com",
+      }),
+    ).toBe("Outlook · sam@outlook.com");
+    expect(
+      syncLabel(
+        { ...calendar, kind: "google" },
+        new Date("2026-09-17T14:00:00.000Z"),
+      ),
+    ).toBe("Updated 5 min ago");
   });
 
   it("flags only visible calendars whose problem needs the user", () => {

@@ -177,9 +177,16 @@ const scheduledBlockSchema = z
   .object({ block: taskBlockSchema, task: taskSchema })
   .strict();
 
-export const calendarKinds = ["ics_link", "ics_file"] as const;
+export const calendarKinds = [
+  "ics_link",
+  "ics_file",
+  "google",
+  "microsoft",
+] as const;
+export const calendarProviders = ["google", "microsoft"] as const;
 export const calendarProblems = [
   "not_a_calendar",
+  "sign_in_expired",
   "too_large",
   "link_not_found",
   "link_refused",
@@ -189,22 +196,55 @@ export const calendarProblems = [
   "link_unavailable",
 ] as const;
 
+const calendarIssueSchema = z
+  .object({
+    code: z.enum(calendarProblems),
+    message: z.string(),
+    retryable: z.boolean(),
+  })
+  .strict();
+
+/** A connected account. Its tokens stay in Rust and the system keychain. */
+export const calendarAccountSchema = z
+  .object({
+    id: z.string().uuid(),
+    provider: z.enum(calendarProviders),
+    label: z.string(),
+    problem: calendarIssueSchema.nullable(),
+    calendarCount: z.number().int().nonnegative(),
+    revision: revisionSchema,
+    createdAt: timestampSchema,
+    updatedAt: timestampSchema,
+  })
+  .strict();
+
+/** A calendar an account offers, before DayPlan starts showing it. */
+export const remoteCalendarSchema = z
+  .object({
+    id: z.string().min(1),
+    name: z.string(),
+    primary: z.boolean(),
+    alreadyAdded: z.boolean(),
+  })
+  .strict();
+
+const connectedAccountSchema = z
+  .object({
+    account: calendarAccountSchema,
+    calendars: z.array(remoteCalendarSchema),
+  })
+  .strict();
+
 export const calendarSchema = z
   .object({
     id: z.string().uuid(),
     kind: z.enum(calendarKinds),
+    accountId: z.string().uuid().nullable(),
     name: z.string(),
     color: z.enum(planColors),
     visible: z.boolean(),
     sourceLabel: z.string(),
-    problem: z
-      .object({
-        code: z.enum(calendarProblems),
-        message: z.string(),
-        retryable: z.boolean(),
-      })
-      .strict()
-      .nullable(),
+    problem: calendarIssueSchema.nullable(),
     lastSyncedAt: timestampSchema.nullable(),
     lastAttemptAt: timestampSchema.nullable(),
     eventCount: z.number().int().nonnegative(),
@@ -674,6 +714,10 @@ export type Task = z.infer<typeof taskSchema>;
 export type TaskBlock = z.infer<typeof taskBlockSchema>;
 export type ScheduledBlock = z.infer<typeof scheduledBlockSchema>;
 export type Calendar = z.infer<typeof calendarSchema>;
+export type CalendarKind = Calendar["kind"];
+export type CalendarAccount = z.infer<typeof calendarAccountSchema>;
+export type CalendarProvider = CalendarAccount["provider"];
+export type RemoteCalendar = z.infer<typeof remoteCalendarSchema>;
 export type CalendarProblem = NonNullable<Calendar["problem"]>;
 export type ExternalEvent = z.infer<typeof externalEventSchema>;
 export type CalendarAgenda = z.infer<typeof calendarAgendaSchema>;
@@ -1067,6 +1111,35 @@ export const api = {
     return calendarSchema.parse(
       await invokeCommand("refresh_calendar", { id }),
     );
+  },
+  async listCalendarAccounts() {
+    return z
+      .array(calendarAccountSchema)
+      .parse(await invokeCommand("list_calendar_accounts"));
+  },
+  /** Opens the provider's sign-in page in the browser and waits for read-only access. */
+  async connectCalendarAccount(provider: CalendarProvider) {
+    return connectedAccountSchema.parse(
+      await invokeCommand("connect_calendar_account", { provider }),
+    );
+  },
+  async accountCalendars(accountId: string) {
+    return z
+      .array(remoteCalendarSchema)
+      .parse(await invokeCommand("list_account_calendars", { accountId }));
+  },
+  async addAccountCalendars(accountId: string, remoteIds: string[]) {
+    return z
+      .array(calendarSchema)
+      .parse(
+        await invokeCommand("add_account_calendars", { accountId, remoteIds }),
+      );
+  },
+  async disconnectCalendarAccount(account: CalendarAccount) {
+    await invokeCommand("disconnect_calendar_account", {
+      id: account.id,
+      revision: account.revision,
+    });
   },
   async removeCalendar(calendar: Calendar) {
     await invokeCommand("remove_calendar", {

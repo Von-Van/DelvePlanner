@@ -1,7 +1,7 @@
-//! A calendar link is a secret: anyone who has it can read the calendar. Links live in the macOS
-//! Keychain or Windows Credential Manager, one item per calendar, and never in SQLite, exports,
-//! backups, logs, or the renderer. After the first read each link is cached in memory, so a
-//! launch asks the keychain at most once per calendar.
+//! Calendar links and account tokens are secrets: either one reads somebody's calendar. They
+//! live in the macOS Keychain or Windows Credential Manager, one item per calendar or account,
+//! and never in SQLite, exports, backups, logs, or the renderer. After the first read each one is
+//! cached in memory, so a launch asks the keychain at most once for each.
 
 use crate::error::{AppError, AppResult};
 use std::collections::HashMap;
@@ -14,12 +14,12 @@ pub trait SecretVault: Send + Sync {
     fn delete(&self, account: &str) -> AppResult<()>;
 }
 
-pub struct CalendarLinks {
+pub struct CalendarSecrets {
     vault: Box<dyn SecretVault>,
     cache: Mutex<HashMap<String, String>>,
 }
 
-impl CalendarLinks {
+impl CalendarSecrets {
     pub fn new(vault: Box<dyn SecretVault>) -> Self {
         Self {
             vault,
@@ -27,38 +27,68 @@ impl CalendarLinks {
         }
     }
 
-    pub fn get(&self, calendar_id: &str) -> AppResult<Option<String>> {
-        if let Some(link) = self.cache()?.get(calendar_id) {
-            return Ok(Some(link.clone()));
-        }
-        let link = self.vault.read(&account(calendar_id))?;
-        if let Some(link) = &link {
-            self.cache()?.insert(calendar_id.into(), link.clone());
-        }
-        Ok(link)
+    /// A subscribed calendar's link.
+    pub fn link(&self, calendar_id: &str) -> AppResult<Option<String>> {
+        self.read(&link_account(calendar_id))
     }
 
-    pub fn set(&self, calendar_id: &str, link: &str) -> AppResult<()> {
-        self.vault.write(&account(calendar_id), link)?;
-        self.cache()?.insert(calendar_id.into(), link.into());
+    pub fn set_link(&self, calendar_id: &str, link: &str) -> AppResult<()> {
+        self.write(&link_account(calendar_id), link)
+    }
+
+    /// Removes a link; one that was never stored is not an error.
+    pub fn remove_link(&self, calendar_id: &str) -> AppResult<()> {
+        self.forget(&link_account(calendar_id))
+    }
+
+    /// A connected account's refresh token, which stands in for its whole sign-in.
+    pub fn refresh_token(&self, account_id: &str) -> AppResult<Option<String>> {
+        self.read(&token_account(account_id))
+    }
+
+    pub fn set_refresh_token(&self, account_id: &str, token: &str) -> AppResult<()> {
+        self.write(&token_account(account_id), token)
+    }
+
+    pub fn remove_refresh_token(&self, account_id: &str) -> AppResult<()> {
+        self.forget(&token_account(account_id))
+    }
+
+    fn read(&self, account: &str) -> AppResult<Option<String>> {
+        if let Some(secret) = self.cache()?.get(account) {
+            return Ok(Some(secret.clone()));
+        }
+        let secret = self.vault.read(account)?;
+        if let Some(secret) = &secret {
+            self.cache()?.insert(account.into(), secret.clone());
+        }
+        Ok(secret)
+    }
+
+    fn write(&self, account: &str, secret: &str) -> AppResult<()> {
+        self.vault.write(account, secret)?;
+        self.cache()?.insert(account.into(), secret.into());
         Ok(())
     }
 
-    /// Removes the link; a link that was never stored is not an error.
-    pub fn remove(&self, calendar_id: &str) -> AppResult<()> {
-        self.cache()?.remove(calendar_id);
-        self.vault.delete(&account(calendar_id))
+    fn forget(&self, account: &str) -> AppResult<()> {
+        self.cache()?.remove(account);
+        self.vault.delete(account)
     }
 
     fn cache(&self) -> AppResult<std::sync::MutexGuard<'_, HashMap<String, String>>> {
         self.cache
             .lock()
-            .map_err(|_| AppError::Internal("Calendar links are unavailable.".into()))
+            .map_err(|_| AppError::Internal("Calendar secrets are unavailable.".into()))
     }
 }
 
-fn account(calendar_id: &str) -> String {
+fn link_account(calendar_id: &str) -> String {
     format!("calendar-link:{calendar_id}")
+}
+
+fn token_account(account_id: &str) -> String {
+    format!("calendar-account:{account_id}")
 }
 
 /// The system credential store for `service`, or a vault that refuses every operation when this
@@ -189,25 +219,37 @@ mod tests {
     use std::sync::Arc;
 
     #[test]
-    fn links_are_cached_after_the_first_read_and_removed_everywhere() {
+    fn secrets_are_cached_after_the_first_read_and_removed_everywhere() {
         let vault = Arc::new(MemoryVault::default());
-        let links = CalendarLinks::new(Box::new(vault.clone()));
-        assert_eq!(links.get("a").unwrap(), None);
-        links
-            .set("a", "https://calendar.example/private.ics")
+        let secrets = CalendarSecrets::new(Box::new(vault.clone()));
+        assert_eq!(secrets.link("a").unwrap(), None);
+        secrets
+            .set_link("a", "https://calendar.example/private.ics")
             .unwrap();
-        assert_eq!(
-            vault.secrets.lock().unwrap().keys().collect::<Vec<_>>(),
-            ["calendar-link:a"]
-        );
+        secrets.set_refresh_token("account-1", "rt-1").unwrap();
+        let mut stored = vault
+            .secrets
+            .lock()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        stored.sort();
+        assert_eq!(stored, ["calendar-account:account-1", "calendar-link:a"]);
         vault.secrets.lock().unwrap().clear();
         assert_eq!(
-            links.get("a").unwrap().as_deref(),
+            secrets.link("a").unwrap().as_deref(),
             Some("https://calendar.example/private.ics"),
             "later reads come from memory"
         );
-        links.remove("a").unwrap();
-        links.remove("never-stored").unwrap();
-        assert_eq!(links.get("a").unwrap(), None);
+        assert_eq!(
+            secrets.refresh_token("account-1").unwrap().as_deref(),
+            Some("rt-1")
+        );
+        secrets.remove_link("a").unwrap();
+        secrets.remove_refresh_token("account-1").unwrap();
+        secrets.remove_link("never-stored").unwrap();
+        assert_eq!(secrets.link("a").unwrap(), None);
+        assert_eq!(secrets.refresh_token("account-1").unwrap(), None);
     }
 }

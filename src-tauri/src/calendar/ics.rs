@@ -355,7 +355,7 @@ fn other_text<'a>(component: &'a ICalendarComponent, name: &str) -> Option<&'a s
 }
 
 /// Collapses line breaks and runs of whitespace, then caps the length for display.
-fn clean_text(value: &str) -> String {
+pub(super) fn clean_text(value: &str) -> String {
     value
         .split_whitespace()
         .collect::<Vec<_>>()
@@ -373,7 +373,7 @@ fn sort_key(when: &EventTime, zone: Tz) -> DateTime<Utc> {
 }
 
 /// A short, stable identifier for one occurrence: FNV-1a over its UID and start.
-fn instance_key(uid: &str, when: &EventTime) -> String {
+pub(super) fn instance_key(uid: &str, when: &EventTime) -> String {
     let start = match when {
         EventTime::Timed { start, .. } => start.timestamp().to_string(),
         EventTime::AllDay { start, .. } => start.to_string(),

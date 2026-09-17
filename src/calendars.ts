@@ -147,14 +147,26 @@ export function calendarColor(calendar: Pick<Calendar, "color"> | undefined) {
   return planColorValues[calendar?.color ?? "stone"];
 }
 
-/** "Link · calendar.google.com" or "File · work.ics". */
+const kindLabels: Record<Calendar["kind"], string> = {
+  ics_link: "Link",
+  ics_file: "File",
+  google: "Google",
+  microsoft: "Outlook",
+};
+
+/** "Link · calendar.google.com", "File · work.ics", or "Google · me@gmail.com". */
 export function calendarSourceLabel(calendar: Calendar) {
-  return `${calendar.kind === "ics_link" ? "Link" : "File"} · ${calendar.sourceLabel}`;
+  return `${kindLabels[calendar.kind]} · ${calendar.sourceLabel}`;
+}
+
+/** What an account is called: "Google" or "Outlook". */
+export function providerLabel(provider: "google" | "microsoft") {
+  return provider === "google" ? "Google" : "Outlook";
 }
 
 /** "Updated just now", "Updated 5 min ago", "Updated 3 h ago", or "Updated 12 Sep". */
 export function syncLabel(calendar: Calendar, now: Date) {
-  const verb = calendar.kind === "ics_link" ? "Updated" : "Imported";
+  const verb = calendar.kind === "ics_file" ? "Imported" : "Updated";
   const at = calendar.lastSyncedAt ?? calendar.updatedAt;
   const minutes = Math.floor((now.getTime() - Date.parse(at)) / 60_000);
   if (minutes < 1) return `${verb} just now`;

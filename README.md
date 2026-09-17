@@ -8,20 +8,20 @@ The important engineering idea is the permission boundary, not the chat box: the
 
 ## What the app includes
 
-| Area            | What it does                                                                          | Where it runs                              |
-| --------------- | ------------------------------------------------------------------------------------- | ------------------------------------------ |
-| Today and Week  | Timed events, overlapping events, scheduled and due tasks, milestones, plan filter    | React renderer + Rust repository           |
-| Capture         | An Inbox for unorganized thoughts, converted into tasks, plans, or events later       | React renderer + Rust repository           |
-| Planning        | Weekly and daily planning sessions, estimates, and carry-forward of unfinished work   | React renderer + Rust repository           |
-| Calendars       | Read-only calendars from iCalendar links and files, refreshed while DayPlan runs      | Rust `CalendarService` + separate cache    |
-| Time & capacity | Time blocks for tasks, working hours, and planned work against available time         | React renderer + Rust repository           |
-| Plans           | Overview with attention signals, timeline, filtered tasks, schedule, run of show      | React renderer + Rust repository           |
-| Teams           | Workstreams inside a plan and people who own tasks and events                         | React renderer + Rust repository           |
-| Manual planning | Creates, edits, and deletes plans, milestones, tasks, and events with revision checks | Typed Tauri commands + Rust transactions   |
-| AI planner      | Converts natural language into a preview of permitted event, plan, and task changes   | Managed local Ollama + Rust `PlannerAgent` |
-| Reminders       | Stores one optional reminder per event and retries interrupted delivery               | SQLite outbox + native notification plugin |
-| Data safety     | Migrates, checks, backs up, exports, imports, and restores local data                 | Rust + SQLite                              |
-| Distribution    | Produces macOS and Windows installers; signed builds add user-approved updates        | GitHub Actions + Tauri updater             |
+| Area            | What it does                                                                                  | Where it runs                              |
+| --------------- | --------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| Today and Week  | Timed events, overlapping events, scheduled and due tasks, milestones, plan filter            | React renderer + Rust repository           |
+| Capture         | An Inbox for unorganized thoughts, converted into tasks, plans, or events later               | React renderer + Rust repository           |
+| Planning        | Weekly and daily planning sessions, estimates, and carry-forward of unfinished work           | React renderer + Rust repository           |
+| Calendars       | Read-only Google, Outlook, iCalendar link, and `.ics` calendars, refreshed while DayPlan runs | Rust `CalendarService` + separate cache    |
+| Time & capacity | Time blocks for tasks, working hours, and planned work against available time                 | React renderer + Rust repository           |
+| Plans           | Overview with attention signals, timeline, filtered tasks, schedule, run of show              | React renderer + Rust repository           |
+| Teams           | Workstreams inside a plan and people who own tasks and events                                 | React renderer + Rust repository           |
+| Manual planning | Creates, edits, and deletes plans, milestones, tasks, and events with revision checks         | Typed Tauri commands + Rust transactions   |
+| AI planner      | Converts natural language into a preview of permitted event, plan, and task changes           | Managed local Ollama + Rust `PlannerAgent` |
+| Reminders       | Stores one optional reminder per event and retries interrupted delivery                       | SQLite outbox + native notification plugin |
+| Data safety     | Migrates, checks, backs up, exports, imports, and restores local data                         | Rust + SQLite                              |
+| Distribution    | Produces macOS and Windows installers; signed builds add user-approved updates                | GitHub Actions + Tauri updater             |
 
 The desktop edition is single-device and requires no account, API key, hosted backend, or cloud AI. The earlier SwiftUI / SwiftData / WidgetKit app remains available on the [`ios-swiftui`](https://github.com/Von-Van/DayPlan/tree/ios-swiftui) branch; its data is intentionally separate.
 
@@ -82,7 +82,7 @@ flowchart TB
   Commands --> Files
   Commands --> CalendarSvc
   CalendarSvc --> CalendarCache
-  CalendarSvc -->|"Links only"| Keychain
+  CalendarSvc -->|"Links and refresh tokens only"| Keychain
   CalendarSvc --> CalendarServices
   Agent --> Runtime --> Ollama
   Ollama --> ModelStore
@@ -106,29 +106,29 @@ flowchart TB
 
 ### Repository map
 
-| Path                                                                   | Responsibility                                                                          |
-| ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| [`src/`](src/)                                                         | React views, interaction state, accessibility, styling, and strict frontend schemas     |
-| [`src/api.ts`](src/api.ts)                                             | Typed renderer-facing command client and Zod response boundary                          |
-| [`src/planning.ts`](src/planning.ts)                                   | Pure plan signals and planning sessions: attention, timeline, run of show, week, moves  |
-| [`src/proposals.ts`](src/proposals.ts)                                 | Readable previews of AI proposal operations                                             |
-| [`src/calendars.ts`](src/calendars.ts)                                 | Agenda items from events, time blocks, and calendars; capacity and working-hours labels |
-| [`src-tauri/src/lib.rs`](src-tauri/src/lib.rs)                         | Tauri application composition, IPC commands, native plugins, tray, and reminder worker  |
-| [`src-tauri/src/model.rs`](src-tauri/src/model.rs)                     | Domain records, AI mutation union, proposal types, and shared limits                    |
-| [`src-tauri/src/db.rs`](src-tauri/src/db.rs)                           | SQLite repository, transactions, migrations, backups, imports, and reminder outbox      |
-| [`src-tauri/src/db/planning.rs`](src-tauri/src/db/planning.rs)         | Plan, milestone, and task repository: validation, revisions, archive and delete rules   |
-| [`src-tauri/src/db/team.rs`](src-tauri/src/db/team.rs)                 | People and workstreams: link validation and detach-on-delete rules                      |
-| [`src-tauri/src/db/capture.rs`](src-tauri/src/db/capture.rs)           | The Inbox: captures and one-transaction conversion into tasks, plans, and events        |
-| [`src-tauri/src/db/horizons.rs`](src-tauri/src/db/horizons.rs)         | Weekly and daily planning data and batched moves between plan, week, and day            |
-| [`src-tauri/src/db/proposals.rs`](src-tauri/src/db/proposals.rs)       | AI candidate ranking and atomic, revision-checked proposal application                  |
-| [`src-tauri/src/db/availability.rs`](src-tauri/src/db/availability.rs) | Time blocks, working hours, and the planner facts capacity is computed from             |
-| [`src-tauri/src/calendar.rs`](src-tauri/src/calendar.rs)               | Read-only calendars: subscribing, importing, refreshing, and removing                   |
-| [`src-tauri/src/calendar/`](src-tauri/src/calendar/)                   | iCalendar reading, link fetching, keychain-held links, and the separate calendar cache  |
-| [`src-tauri/src/capacity.rs`](src-tauri/src/capacity.rs)               | Working time, busy time, free time, and planned work for a window of days               |
-| [`src-tauri/src/agent.rs`](src-tauri/src/agent.rs)                     | Planner session, pending proposals, and the local model request                         |
-| [`src-tauri/src/agent/`](src-tauri/src/agent/)                         | Prompts and output grammar, deterministic pre-checks, and reply resolution              |
-| [`src-tauri/src/runtime.rs`](src-tauri/src/runtime.rs)                 | Bundled Ollama process, private endpoint, model download, diagnostics, and lifecycle    |
-| [`eval/`](eval/)                                                       | Hand-labeled commands and machine-readable evaluation results                           |
+| Path                                                                   | Responsibility                                                                                                                       |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| [`src/`](src/)                                                         | React views, interaction state, accessibility, styling, and strict frontend schemas                                                  |
+| [`src/api.ts`](src/api.ts)                                             | Typed renderer-facing command client and Zod response boundary                                                                       |
+| [`src/planning.ts`](src/planning.ts)                                   | Pure plan signals and planning sessions: attention, timeline, run of show, week, moves                                               |
+| [`src/proposals.ts`](src/proposals.ts)                                 | Readable previews of AI proposal operations                                                                                          |
+| [`src/calendars.ts`](src/calendars.ts)                                 | Agenda items from events, time blocks, and calendars; capacity and working-hours labels                                              |
+| [`src-tauri/src/lib.rs`](src-tauri/src/lib.rs)                         | Tauri application composition, IPC commands, native plugins, tray, and reminder worker                                               |
+| [`src-tauri/src/model.rs`](src-tauri/src/model.rs)                     | Domain records, AI mutation union, proposal types, and shared limits                                                                 |
+| [`src-tauri/src/db.rs`](src-tauri/src/db.rs)                           | SQLite repository, transactions, migrations, backups, imports, and reminder outbox                                                   |
+| [`src-tauri/src/db/planning.rs`](src-tauri/src/db/planning.rs)         | Plan, milestone, and task repository: validation, revisions, archive and delete rules                                                |
+| [`src-tauri/src/db/team.rs`](src-tauri/src/db/team.rs)                 | People and workstreams: link validation and detach-on-delete rules                                                                   |
+| [`src-tauri/src/db/capture.rs`](src-tauri/src/db/capture.rs)           | The Inbox: captures and one-transaction conversion into tasks, plans, and events                                                     |
+| [`src-tauri/src/db/horizons.rs`](src-tauri/src/db/horizons.rs)         | Weekly and daily planning data and batched moves between plan, week, and day                                                         |
+| [`src-tauri/src/db/proposals.rs`](src-tauri/src/db/proposals.rs)       | AI candidate ranking and atomic, revision-checked proposal application                                                               |
+| [`src-tauri/src/db/availability.rs`](src-tauri/src/db/availability.rs) | Time blocks, working hours, and the planner facts capacity is computed from                                                          |
+| [`src-tauri/src/calendar.rs`](src-tauri/src/calendar.rs)               | Read-only calendars: connecting, subscribing, importing, refreshing, and removing                                                    |
+| [`src-tauri/src/calendar/`](src-tauri/src/calendar/)                   | iCalendar reading, link fetching, read-only OAuth and provider APIs, keychain-held links and tokens, and the separate calendar cache |
+| [`src-tauri/src/capacity.rs`](src-tauri/src/capacity.rs)               | Working time, busy time, free time, and planned work for a window of days                                                            |
+| [`src-tauri/src/agent.rs`](src-tauri/src/agent.rs)                     | Planner session, pending proposals, and the local model request                                                                      |
+| [`src-tauri/src/agent/`](src-tauri/src/agent/)                         | Prompts and output grammar, deterministic pre-checks, and reply resolution                                                           |
+| [`src-tauri/src/runtime.rs`](src-tauri/src/runtime.rs)                 | Bundled Ollama process, private endpoint, model download, diagnostics, and lifecycle                                                 |
+| [`eval/`](eval/)                                                       | Hand-labeled commands and machine-readable evaluation results                                                                        |
 
 ## Core data schema
 
@@ -275,7 +275,7 @@ The Inbox holds `InboxItem` captures that need no plan, date, or priority, from 
 
 A `TaskBlock` reserves time on the calendar for a task, apart from events. A task can have several blocks; moving or removing a block never changes the task, deleting the task deletes its blocks, and a finished task can't take a new one. When a task is finished, Today offers to release its future blocks and keeps past ones. `WorkingHours` is one revision-checked record of working days and hours (Monday–Friday, 09:00–17:00 by default). Capacity compares the estimates of open tasks scheduled on a day, plus a week's no-day choices, with the time working hours leave after DayPlan events and busy events from visible calendars; blocks narrow the free time the block dialog suggests but aren't subtracted twice. DayPlan shows "Planned 17 h, available 11 h" on Today, Week, and both planning sessions and never moves anything because of it.
 
-Calendars from other apps are read-only and live outside the planner database. Subscribing to an https or webcal link (such as Google's secret iCal address or an Outlook published calendar) fetches and checks it first, then refreshes it every 30 minutes while DayPlan runs; an imported `.ics` file changes only when a newer file replaces it. Recurring events are expanded from 6 weeks back to 400 days ahead, with moved and cancelled occurrences, Windows and vendor time-zone names, and Outlook busy status handled. Their events appear on Today and Week in a distinct style, count toward busy time unless marked free or hidden, and are never editable, exported, or seen by the planner. [CALENDAR_SYNC.md](CALENDAR_SYNC.md) describes the design, and [CALENDAR_ACCOUNTS.md](CALENDAR_ACCOUNTS.md) covers creating the Google and Microsoft OAuth clients that direct account connections will need.
+Calendars from other apps are read-only and live outside the planner database. Connecting a Google or Outlook account signs in through the system browser with PKCE and read-only scopes, then asks which of that account's calendars to show; the refresh token goes to the keychain and disconnecting revokes it. Subscribing to an https or webcal link (such as Google's secret iCal address or an Outlook published calendar) fetches and checks it first; an imported `.ics` file changes only when a newer file replaces it. Accounts and links refresh every 30 minutes while DayPlan runs. Recurring events are expanded from 6 weeks back to 400 days ahead, with moved and cancelled occurrences, Windows and vendor time-zone names, and Outlook busy status handled. Their events appear on Today and Week in a distinct style, count toward busy time unless marked free or hidden, and are never editable, exported, or seen by the planner. [CALENDAR_SYNC.md](CALENDAR_SYNC.md) describes the design, and [CALENDAR_ACCOUNTS.md](CALENDAR_ACCOUNTS.md) covers the OAuth clients behind the account connections.
 
 A `Workstream` is a named stream of work inside one plan, such as Production or Sponsors, with progress derived from its tasks. A `Person` is a local label for whoever owns a task or event—never an account. Deleting a workstream or person keeps their work and clears the link, advancing revisions. A plan's run of show lists one day's events in order with owners, locations, live/next status, gaps, and overlaps.
 
@@ -355,7 +355,7 @@ Settings offers:
 
 Rotating local logs retain five 512 KB files. DayPlan does not log commands, plan/milestone/event/task titles, names, emails, notes, descriptions, proposal contents, calendar names, links, or events, or database paths. Diagnostic bundles contain only version/health metadata (including a calendar count and problem codes) and those redacted logs.
 
-DayPlan contacts a calendar service only for calendars you add, and only from Rust; it never uploads planner data. Calendar links grant read access, so each one is stored in the macOS Keychain or Windows Credential Manager and never in SQLite, exports, backups, logs, or the renderer, which only sees the link's host. Cached calendar events, the last fetched document, and sync state live in `calendars.sqlite3`, apart from the planner database: backups, restores, and imports don't touch it, and removing a calendar deletes everything cached for it along with its link. Because macOS ties keychain access to the app's signature, unsigned builds ask again for access to each calendar's link after an update. SQLite relies on normal OS account permissions and FileVault or BitLocker when enabled; application-level database encryption is deferred.
+DayPlan contacts a calendar service only for calendars you add, and only from Rust; it never uploads planner data. Every request it makes to Google or Microsoft is a `GET`, and it asks for read-only scopes, so it can't change, create, or delete anything in your calendars. Calendar links and OAuth refresh tokens grant read access, so each one is stored in the macOS Keychain or Windows Credential Manager and never in SQLite, exports, backups, logs, or the renderer, which only sees the link's host and the connected account's name. Cached calendar events, the last fetched document, and sync state live in `calendars.sqlite3`, apart from the planner database: backups, restores, and imports don't touch it, and removing a calendar deletes everything cached for it along with its link. Because macOS ties keychain access to the app's signature, unsigned builds ask again for access to each calendar's link and each account's token after an update. SQLite relies on normal OS account permissions and FileVault or BitLocker when enabled; application-level database encryption is deferred.
 
 ## Event reminders
 
@@ -434,4 +434,4 @@ Until signing is configured—detected by an empty `TAURI_UPDATER_PUBKEY` reposi
 
 ## Deliberate scope limits
 
-Plans intentionally stay lighter than project-management suites: a closed set of statuses, no custom fields, story points, sprints, dependencies, Gantt editing, workflow automation, or permission systems. People are labels, not accounts. The AI planner does not delete or archive plans, assign owners, or change workstreams or locations; those stay manual. Other calendars are read-only: DayPlan never writes to them. Recurrence, two-way sync, accounts, cloud AI, task reminders, collaboration, iOS widgets, and application-level database encryption remain out of scope; direct Google and Microsoft account connections are planned for v0.3.0 once OAuth clients exist. DayPlan is local-first and single-device.
+Plans intentionally stay lighter than project-management suites: a closed set of statuses, no custom fields, story points, sprints, dependencies, Gantt editing, workflow automation, or permission systems. People are labels, not accounts. The AI planner does not delete or archive plans, assign owners, or change workstreams or locations; those stay manual. Other calendars are read-only: DayPlan never writes to them. Google and Outlook accounts connect read-only: DayPlan asks only for scopes that can read, and disconnecting revokes the grant. Two-way sync, recurrence, cloud AI, task reminders, collaboration, iOS widgets, and application-level database encryption remain out of scope. DayPlan is local-first and single-device.

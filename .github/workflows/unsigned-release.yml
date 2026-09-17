@@ -49,6 +49,10 @@ jobs:
         run: scripts/fetch-ollama-runtime.sh
       - name: Build ad-hoc signed universal app
         run: npm run tauri build -- --target universal-apple-darwin --bundles app --config src-tauri/tauri.unsigned.conf.json
+        env:
+          DAYPLAN_GOOGLE_CLIENT_ID: ${{ vars.DAYPLAN_GOOGLE_CLIENT_ID }}
+          DAYPLAN_GOOGLE_CLIENT_SECRET: ${{ secrets.DAYPLAN_GOOGLE_CLIENT_SECRET }}
+          DAYPLAN_MICROSOFT_CLIENT_ID: ${{ vars.DAYPLAN_MICROSOFT_CLIENT_ID }}
       - name: Package DMG
         env:
           VERSION: ${{ needs.validate-tag.outputs.version }}
@@ -94,6 +98,10 @@ jobs:
         shell: pwsh
         run: scripts/fetch-ollama-runtime.ps1
       - run: npm run tauri build -- --bundles nsis --config src-tauri/tauri.unsigned.conf.json
+        env:
+          DAYPLAN_GOOGLE_CLIENT_ID: ${{ vars.DAYPLAN_GOOGLE_CLIENT_ID }}
+          DAYPLAN_GOOGLE_CLIENT_SECRET: ${{ secrets.DAYPLAN_GOOGLE_CLIENT_SECRET }}
+          DAYPLAN_MICROSOFT_CLIENT_ID: ${{ vars.DAYPLAN_MICROSOFT_CLIENT_ID }}
       - name: Stage installer
         shell: pwsh
         run: |

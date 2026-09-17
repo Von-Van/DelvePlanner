@@ -9,9 +9,12 @@ import {
 import {
   api,
   Calendar,
+  CalendarAccount,
+  CalendarProvider,
   messageFor,
   PlanColor,
   planColors,
+  RemoteCalendar,
   WorkingHours,
 } from "./api";
 import {
@@ -19,6 +22,7 @@ import {
   calendarSourceLabel,
   minuteLabel,
   parseMinute,
+  providerLabel,
   syncLabel,
   weekdayNames,
   workingHoursLabel,
@@ -51,7 +55,13 @@ export function CalendarsView({
   onMessage: (message: string) => void;
 }) {
   const [calendars, setCalendars] = useState<Calendar[] | null>(null);
+  const [accounts, setAccounts] = useState<CalendarAccount[]>([]);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [connecting, setConnecting] = useState<CalendarProvider | null>(null);
+  const [choosing, setChoosing] = useState<{
+    account: CalendarAccount;
+    calendars: RemoteCalendar[];
+  } | null>(null);
   const [editing, setEditing] = useState<Calendar | null>(null);
   const [relinking, setRelinking] = useState<Calendar | null>(null);
   const [now, setNow] = useState(() => new Date());
@@ -59,7 +69,12 @@ export function CalendarsView({
 
   const reload = useCallback(async () => {
     try {
-      setCalendars(await api.listCalendars());
+      const [nextCalendars, nextAccounts] = await Promise.all([
+        api.listCalendars(),
+        api.listCalendarAccounts(),
+      ]);
+      setCalendars(nextCalendars);
+      setAccounts(nextAccounts);
       setNow(new Date());
     } catch (cause) {
       onMessage(messageFor(cause));
@@ -88,23 +103,91 @@ export function CalendarsView({
     }
   }
 
+  // Signing in again to an account DayPlan already has refreshes it instead of duplicating it.
+  async function connect(provider: CalendarProvider) {
+    setConnecting(provider);
+    try {
+      const connected = await api.connectCalendarAccount(provider);
+      await reload();
+      await onChanged();
+      setChoosing(connected);
+    } catch (cause) {
+      onMessage(messageFor(cause));
+    } finally {
+      setConnecting(null);
+    }
+  }
+
+  async function chooseCalendars(account: CalendarAccount) {
+    setBusyId(account.id);
+    try {
+      setChoosing({
+        account,
+        calendars: await api.accountCalendars(account.id),
+      });
+    } catch (cause) {
+      onMessage(messageFor(cause));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  function accountMenu(account: CalendarAccount): MenuItem[] {
+    return [
+      {
+        label: "Add calendars…",
+        onSelect: () => void chooseCalendars(account),
+      },
+      {
+        label: "Sign in again",
+        onSelect: () => void connect(account.provider),
+      },
+      { kind: "separator" },
+      {
+        label: "Disconnect account",
+        danger: true,
+        onSelect: () => {
+          if (
+            !window.confirm(
+              `Disconnect ${account.label}? Its ${plural(account.calendarCount, "calendar")} and their events leave DayPlan, and the sign-in is withdrawn. Your calendars aren't changed.`,
+            )
+          )
+            return;
+          void act(account.id, () => api.disconnectCalendarAccount(account));
+        },
+      },
+    ];
+  }
+
   const nextColor: PlanColor =
     planColors.find(
       (color) => !calendars?.some((calendar) => calendar.color === color),
     ) ?? planColors[(calendars?.length ?? 0) % planColors.length];
 
+  const accountFor = (calendar: Calendar) =>
+    accounts.find((account) => account.id === calendar.accountId);
+
+  // Who to sign in with again. The calendar's own kind answers it even if its account row has
+  // gone missing, so an account calendar is never offered a file or a link instead.
+  const providerFor = (calendar: Calendar): CalendarProvider | undefined =>
+    accountFor(calendar)?.provider ??
+    (calendar.kind === "google" || calendar.kind === "microsoft"
+      ? calendar.kind
+      : undefined);
+
   function menuItems(calendar: Calendar): MenuItem[] {
+    const account = accountFor(calendar);
     const items: MenuItem[] = [
-      calendar.kind === "ics_link"
+      calendar.kind === "ics_file"
         ? {
-            label: "Refresh now",
-            onSelect: () =>
-              void act(calendar.id, () => api.refreshCalendar(calendar.id)),
-          }
-        : {
             label: "Replace with a newer file…",
             onSelect: () =>
               void act(calendar.id, () => api.replaceCalendarFile(calendar)),
+          }
+        : {
+            label: "Refresh now",
+            onSelect: () =>
+              void act(calendar.id, () => api.refreshCalendar(calendar.id)),
           },
       {
         label: calendar.visible ? "Hide from Today and Week" : "Show again",
@@ -120,6 +203,12 @@ export function CalendarsView({
         label: "Paste a new link…",
         onSelect: () => setRelinking(calendar),
       });
+    const provider = providerFor(calendar);
+    if (provider)
+      items.push({
+        label: "Sign in again",
+        onSelect: () => void connect(provider),
+      });
     items.push({ kind: "separator" });
     items.push({
       label: "Remove calendar",
@@ -130,7 +219,9 @@ export function CalendarsView({
             `Remove “${calendar.name}”? Its events leave DayPlan${
               calendar.kind === "ics_link"
                 ? " and its link is deleted from your keychain"
-                : ""
+                : account
+                  ? `, and ${account.label} stays connected`
+                  : ""
             }. The calendar itself isn't changed.`,
           )
         )
@@ -167,6 +258,43 @@ export function CalendarsView({
               <span>{plural(calendars.length, "calendar")}</span>
             )}
           </div>
+          {accounts.length > 0 && (
+            <ul className="account-list">
+              {accounts.map((account) => (
+                <li
+                  key={account.id}
+                  className={`account-row ${account.problem ? "problem" : ""}`}
+                >
+                  <div className="account-main">
+                    <strong>{account.label}</strong>
+                    <small>
+                      {providerLabel(account.provider)} ·{" "}
+                      {plural(account.calendarCount, "calendar")} · read-only
+                    </small>
+                    {account.problem && (
+                      <p className="calendar-problem blocking" role="status">
+                        <Mark size={6} filled color="var(--danger-dot)" />
+                        <span>{account.problem.message}</span>
+                        <button
+                          className="text-button"
+                          onClick={() => void connect(account.provider)}
+                        >
+                          Sign in again
+                        </button>
+                      </p>
+                    )}
+                  </div>
+                  <Menu
+                    label={`Options for ${account.label}`}
+                    trigger={<Glyph>⋯</Glyph>}
+                    items={accountMenu(account)}
+                    className="task-action"
+                    disabled={busyId !== null || connecting !== null}
+                  />
+                </li>
+              ))}
+            </ul>
+          )}
           {calendars === null ? (
             <div className="loading-line">
               <Spinner size={10} />
@@ -225,7 +353,18 @@ export function CalendarsView({
                         />
                         <span>{calendar.problem.message}</span>
                         {!calendar.problem.retryable &&
-                          (calendar.kind === "ics_link" ? (
+                          (providerFor(calendar) ? (
+                            <button
+                              className="text-button"
+                              onClick={() =>
+                                void connect(
+                                  providerFor(calendar) as CalendarProvider,
+                                )
+                              }
+                            >
+                              Sign in again
+                            </button>
+                          ) : calendar.kind === "ics_link" ? (
                             <button
                               className="text-button"
                               onClick={() => setRelinking(calendar)}
@@ -260,6 +399,41 @@ export function CalendarsView({
           )}
         </section>
         <aside className="calendars-side">
+          <section className="side-card connect-card">
+            <p className="side-kicker">CONNECT AN ACCOUNT</p>
+            <h3>Google or Outlook</h3>
+            <p>
+              Sign in once in your browser, then choose which calendars DayPlan
+              shows. DayPlan asks for read-only access: it can see when you're
+              busy and never changes, creates, or deletes anything.
+            </p>
+            <div className="connect-buttons">
+              {(["google", "microsoft"] as const).map((provider) => (
+                <button
+                  key={provider}
+                  className="secondary-button"
+                  disabled={connecting !== null || busyId !== null}
+                  onClick={() => void connect(provider)}
+                >
+                  {connecting === provider ? (
+                    <>
+                      <Spinner size={7} /> Waiting for your browser
+                    </>
+                  ) : (
+                    <>
+                      <Mark size={7} /> Connect {providerLabel(provider)}
+                    </>
+                  )}
+                </button>
+              ))}
+            </div>
+            {connecting && (
+              <p className="editor-hint">
+                Finish signing in to {providerLabel(connecting)} in your
+                browser. DayPlan waits five minutes.
+              </p>
+            )}
+          </section>
           <SubscribeCard
             color={nextColor}
             busy={busyId === "new"}
@@ -299,6 +473,27 @@ export function CalendarsView({
           <WorkingHoursCard onChanged={onChanged} onMessage={onMessage} />
         </aside>
       </div>
+      {choosing && (
+        <CalendarPicker
+          account={choosing.account}
+          calendars={choosing.calendars}
+          onClose={() => setChoosing(null)}
+          onAdd={async (remoteIds) => {
+            await act(choosing.account.id, async () => {
+              const added = await api.addAccountCalendars(
+                choosing.account.id,
+                remoteIds,
+              );
+              onMessage(
+                added.length === 1
+                  ? `Added “${added[0].name}”.`
+                  : `Added ${plural(added.length, "calendar")}.`,
+              );
+            });
+            setChoosing(null);
+          }}
+        />
+      )}
       {editing && (
         <CalendarEditor
           calendar={editing}
@@ -329,6 +524,92 @@ export function CalendarsView({
         />
       )}
     </div>
+  );
+}
+
+/** Chooses which of an account's calendars DayPlan shows. */
+function CalendarPicker({
+  account,
+  calendars,
+  onClose,
+  onAdd,
+}: {
+  account: CalendarAccount;
+  calendars: RemoteCalendar[];
+  onClose: () => void;
+  onAdd: (remoteIds: string[]) => Promise<void>;
+}) {
+  const [chosen, setChosen] = useState<string[]>(() =>
+    calendars
+      .filter((calendar) => calendar.primary && !calendar.alreadyAdded)
+      .map((calendar) => calendar.id),
+  );
+  const [saving, setSaving] = useState(false);
+  const available = calendars.filter((calendar) => !calendar.alreadyAdded);
+  return (
+    <EditorShell
+      label="Choose calendars"
+      kicker={`${providerLabel(account.provider).toUpperCase()} · ${account.label}`}
+      heading="Which calendars should DayPlan show?"
+      busy={saving}
+      onClose={onClose}
+      onSubmit={(form) => {
+        form.preventDefault();
+        setSaving(true);
+        void onAdd(chosen).finally(() => setSaving(false));
+      }}
+      footer={
+        <>
+          <button type="button" className="editor-cancel" onClick={onClose}>
+            {available.length === 0 ? "Close" : "Not now"}
+          </button>
+          <button
+            className="primary-button small"
+            disabled={saving || chosen.length === 0}
+          >
+            {saving && <Spinner size={7} />}
+            Add{" "}
+            {chosen.length > 0
+              ? plural(chosen.length, "calendar")
+              : "calendars"}
+          </button>
+        </>
+      }
+    >
+      {calendars.length === 0 ? (
+        <p className="empty-tasks">This account has no calendars to show.</p>
+      ) : (
+        <ul className="calendar-choices">
+          {calendars.map((calendar) => (
+            <li key={calendar.id}>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={
+                    calendar.alreadyAdded || chosen.includes(calendar.id)
+                  }
+                  disabled={calendar.alreadyAdded}
+                  onChange={(input) =>
+                    setChosen((current) =>
+                      input.target.checked
+                        ? [...current, calendar.id]
+                        : current.filter((id) => id !== calendar.id),
+                    )
+                  }
+                />
+                <span>{calendar.name}</span>
+                {calendar.primary && <small>Main calendar</small>}
+                {calendar.alreadyAdded && <small>Already shown</small>}
+              </label>
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="editor-hint">
+        DayPlan only reads these calendars. You can hide or remove any of them
+        later.
+      </p>
+    </EditorShell>
   );
 }
 

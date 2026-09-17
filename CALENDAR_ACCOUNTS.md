@@ -1,27 +1,35 @@
 # Setting up Google and Microsoft calendar access
 
-DayPlan will read Google Calendar and Outlook directly once it has an OAuth client for each. This guide walks through creating them. Nothing in the app uses these credentials yet; until the account connections ship, [subscribe with a link](#until-then-subscribe-with-a-link) instead.
+DayPlan reads Google Calendar and Outlook through an OAuth client for each. It ships with clients already set up, so **connecting an account needs nothing from this guide** — open **Calendars** and select **Connect Google** or **Connect Outlook**. This guide is for the two people who need more: whoever maintains DayPlan's own clients, and anyone who would rather point their build at a client of their own.
 
 Checked against Google's and Microsoft's documentation on September 17, 2026. Consoles change often, so expect labels to drift.
 
-## What you'll end up with
+## What DayPlan asks for
 
-| Provider  | You create                                            | DayPlan needs at build time | Secret                                                                                                                           |
-| --------- | ----------------------------------------------------- | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| Google    | A Google Cloud project and a Desktop app OAuth client | Client ID and client secret | Google issues a secret even to desktop apps and says installed apps can't keep it private. Keep it out of the repository anyway. |
-| Microsoft | A Microsoft Entra app registration (public client)    | Application (client) ID     | None. Public clients must not use secrets.                                                                                       |
+Both connections are read-only and stay that way. DayPlan never requests a scope that could change a calendar, and every request it makes to either provider is a `GET`.
 
-When the connections are built, release builds will read these at compile time, the same way `DAYPLAN_UPDATER_PUBKEY` works today:
+| Provider  | Scopes requested                                    | What that allows                                          |
+| --------- | --------------------------------------------------- | --------------------------------------------------------- |
+| Google    | `https://www.googleapis.com/auth/calendar.readonly` | List your calendars and read events from them             |
+| Microsoft | `Calendars.Read`, `offline_access`                  | Same, plus keeping the sign-in alive without asking again |
 
-| Build setting                  | Where to store it on GitHub |
-| ------------------------------ | --------------------------- |
-| `DAYPLAN_GOOGLE_CLIENT_ID`     | Repository variable         |
-| `DAYPLAN_GOOGLE_CLIENT_SECRET` | Repository secret           |
-| `DAYPLAN_MICROSOFT_CLIENT_ID`  | Repository variable         |
+DayPlan doesn't ask for a profile scope. The account name it shows is the address on your primary calendar, which comes back with the calendar list.
 
-Builds without them won't offer the account connections. Link and file calendars work either way.
+## Using your own OAuth clients
 
-Also set up release signing before the account connections ship. macOS ties keychain access to the app's code signature, so without a stable Developer ID signature, every update asks again for access to each saved token. See [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md).
+The client IDs are in [`src-tauri/src/calendar/oauth.rs`](src-tauri/src/calendar/oauth.rs). They appear in every sign-in URL, so they aren't secrets. A build can point at different ones:
+
+| Build setting                  | Default                                | Where to store it on GitHub |
+| ------------------------------ | -------------------------------------- | --------------------------- |
+| `DAYPLAN_GOOGLE_CLIENT_ID`     | The committed Google client ID         | Repository variable         |
+| `DAYPLAN_GOOGLE_CLIENT_SECRET` | Not sent                               | Repository secret           |
+| `DAYPLAN_MICROSOFT_CLIENT_ID`  | The committed Microsoft application ID | Repository variable         |
+
+The build workflows already pass all three through, so setting the repository variable or secret is the whole job; a local build takes them from the environment instead. They're read at compile time, the same way `DAYPLAN_UPDATER_PUBKEY` is, so a rebuild is what picks up a change, and an empty value falls back to the committed client rather than shipping a client ID nothing recognizes.
+
+Google lists the client secret as optional for installed apps and DayPlan sends none; set `DAYPLAN_GOOGLE_CLIENT_SECRET` only if your own client's token exchange turns out to want one. Never commit it — Google itself says an installed app can't keep a secret private, which is exactly why DayPlan doesn't depend on one.
+
+Release signing matters here too. macOS ties keychain access to the app's code signature, so without a stable Developer ID signature, every update asks again for access to each saved token. See [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md).
 
 ## Google Calendar
 
@@ -37,20 +45,18 @@ OAuth settings live under **Google Auth Platform**, with sections for Overview, 
 1. **Branding → Get started:** enter the app name (**DayPlan**) and a support email.
 2. **Audience:** choose **External**, add a contact email, accept the user data policy, and create.
 3. **Audience → Test users:** add the Google accounts you'll test with, up to 100.
-4. **Data Access → Add or remove scopes:** add these two read-only scopes:
-   - `https://www.googleapis.com/auth/calendar.calendarlist.readonly` to list calendars
-   - `https://www.googleapis.com/auth/calendar.events.readonly` to read events from every calendar the user can see
+4. **Data Access → Add or remove scopes:** add `https://www.googleapis.com/auth/calendar.readonly`, which lists calendars and reads events from every calendar the user can see. It's a _sensitive_ scope, not a _restricted_ one.
 
-   Both are _sensitive_ scopes, not _restricted_ ones. The broader `calendar.readonly` would also work, but verification asks why a narrower scope isn't enough.
+   The narrower pair `calendar.calendarlist.readonly` and `calendar.events.readonly` covers the same ground and may be an easier sell in verification, which asks why a narrower scope isn't enough. DayPlan asks for the single scope: two scopes means two tick boxes on the consent screen, and a user who leaves one ticked and the other not gets a connection that half works.
 
 ### 3. Create the client
 
 1. **Clients → Create client**, choose **Desktop app**, name it (for example, **DayPlan desktop**), and create it.
-2. **Copy the client ID and client secret right away.** The secret is shown only once; later the console shows only its last four characters, and a lost secret has to be rotated.
-3. There's no redirect URI to register. Desktop clients accept loopback redirects (`http://127.0.0.1:<port>`) on any port.
-4. Save the ID as the `DAYPLAN_GOOGLE_CLIENT_ID` variable and the secret as the `DAYPLAN_GOOGLE_CLIENT_SECRET` secret in the repository's **Settings → Secrets and variables → Actions**. Don't commit either.
+2. **Copy the client ID.** Google also issues a secret; it's shown only once, so copy it too if you want it on hand, though DayPlan doesn't send one.
+3. There's no redirect URI to register. Desktop clients accept loopback redirects on any port, and DayPlan uses `http://127.0.0.1:<port>` — Google recommends the IP literal over `localhost`, which client firewalls sometimes get in the way of.
+4. Save the ID as the `DAYPLAN_GOOGLE_CLIENT_ID` variable in the repository's **Settings → Secrets and variables → Actions**. If you also need the secret, save it as the `DAYPLAN_GOOGLE_CLIENT_SECRET` secret there. Don't commit the secret.
 
-DayPlan will use the authorization code flow with PKCE and still send the client secret, because Google expects it from Desktop clients.
+DayPlan uses the authorization code flow with PKCE (S256), so the sign-in is bound to the one request that started it.
 
 ### 4. Testing, publishing, and verification
 
@@ -70,8 +76,7 @@ For your own use, Testing (or unverified production for a handful of people) is 
 Keep in mind:
 
 - Clients unused for 6 months are deleted automatically, with an email 30 days before.
-- Users can untick one of the two scopes on the consent screen, so DayPlan has to check which scopes were granted.
-- Desktop apps can't add scopes later, so DayPlan requests both up front.
+- Asking for one scope sidesteps Google's granular permissions: with several, a user can untick some and leave the app with a partial grant.
 
 ## Microsoft Outlook
 
@@ -86,23 +91,27 @@ A personal Microsoft account alone can no longer register apps; registration nee
 
 1. In the [Microsoft Entra admin center](https://entra.microsoft.com/), go to **Entra ID → App registrations → New registration**.
 2. Name it **DayPlan**. Under supported account types, choose **Accounts in any organizational directory (any Microsoft Entra ID tenant) and personal Microsoft accounts**. Leave the redirect URI empty and register.
-3. Go to **Authentication → Add a platform → Mobile and desktop applications**, add the custom redirect URI `http://localhost`, and save. Microsoft ignores the port when matching localhost redirects, so DayPlan's random loopback port works.
+3. Go to **Authentication → Add a platform → Mobile and desktop applications**, add the custom redirect URI `http://localhost`, and save. Microsoft ignores the port when matching a `localhost` reply URL, so DayPlan's random loopback port works — and that port-ignoring is the reason Outlook sign-in uses `localhost` where Google uses `127.0.0.1`. The portal's redirect box won't accept an `http://127.0.0.1` URL at all; adding one means editing the app manifest, and the port would then have to match exactly.
 4. Don't create a client secret. DayPlan is a public client and uses PKCE; Microsoft rejects secrets from public clients.
-5. Go to **API permissions → Add a permission → Microsoft Graph → Delegated permissions** and add:
-   - `Calendars.ReadBasic` to list calendars and read events without their bodies or attachments, which DayPlan doesn't keep. If personal accounts turn out to need more, use `Calendars.Read` instead.
+5. Go to **API permissions → Add a permission → Microsoft Graph → Delegated permissions** and add exactly two:
+   - `Calendars.Read` to list calendars and read events from them.
    - `offline_access` so DayPlan can refresh access without asking again.
-   - `User.Read`, plus `openid`, `profile`, and `email` if DayPlan shows which account is connected.
+
+   Not `User.Read`, `openid`, `profile`, or `email`: DayPlan names the connected account from the owner of its default calendar, so it never needs to read a profile. `Calendars.ReadBasic` is narrower still — it withholds event bodies, attachments, and extensions, none of which DayPlan asks Graph for — so it should be enough for a registration of your own, though DayPlan's own client uses `Calendars.Read` and that's the combination that's been tested.
+
 6. From **Overview**, copy the **Application (client) ID** and save it as the `DAYPLAN_MICROSOFT_CLIENT_ID` repository variable.
 
-### 3. Who will be able to connect
+### 3. Who can connect
 
 - **Personal accounts** (outlook.com, hotmail.com, live.com) can approve DayPlan themselves.
 - **Work and school accounts** usually can't. Most tenants' default consent policy blocks users from approving calendar permissions, and an unverified multitenant app triggers an admin-approval request. Someone with an admin role in that organization has to approve DayPlan, or the user sends them a request.
 - **Publisher verification**, which removes the "unverified" label, needs a Microsoft AI Cloud Partner Program account for a legal entity, an app registered in a work tenant (not with a personal account), and a DNS-verified domain. It isn't available to individuals.
 
-DayPlan will sign in through `https://login.microsoftonline.com/common/oauth2/v2.0/authorize` and read events from Microsoft Graph's `calendarView`, which returns recurring events already expanded. Refresh tokens last 90 days and renew each time they're used.
+DayPlan signs in through `https://login.microsoftonline.com/common/oauth2/v2.0/authorize` and reads events from Microsoft Graph's `calendarView`, which returns recurring events already expanded. Refresh tokens last 90 days, renew each time they're used, and are replaced on every refresh — DayPlan stores the new one and drops the old.
 
-## Until then: subscribe with a link
+## Or subscribe with a link
+
+A link works without any sign-in, and it's the way in for calendars DayPlan can't connect to — a work account whose tenant won't approve the app, or an Apple, Fastmail, or Proton calendar.
 
 In DayPlan, open **Calendars** (⌘6, or Ctrl+6 on Windows), paste a link under **Subscribe by link**, and DayPlan refreshes the calendar every 30 minutes. The link is stored in your system keychain.
 

@@ -107,12 +107,42 @@ stored_enum! {
 }
 
 stored_enum! {
-    /// Where a read-only calendar comes from. Google and Microsoft accounts join these later.
+    /// Where a read-only calendar comes from.
     pub enum CalendarKind {
         /// A subscription to an iCalendar link, refreshed in the background.
         IcsLink => "ics_link",
         /// An imported .ics file: a snapshot that changes only when a newer file replaces it.
         IcsFile => "ics_file",
+        /// A calendar in a connected Google account.
+        Google => "google",
+        /// A calendar in a connected Microsoft account.
+        Microsoft => "microsoft",
+    }
+}
+
+stored_enum! {
+    /// An account DayPlan can read calendars from. Both are read-only: DayPlan asks for
+    /// read-only scopes and never calls an endpoint that changes a calendar.
+    pub enum CalendarProvider {
+        Google => "google",
+        Microsoft => "microsoft",
+    }
+}
+
+impl CalendarProvider {
+    pub fn calendar_kind(self) -> CalendarKind {
+        match self {
+            Self::Google => CalendarKind::Google,
+            Self::Microsoft => CalendarKind::Microsoft,
+        }
+    }
+
+    /// What the account is called in the interface.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Google => "Google",
+            Self::Microsoft => "Outlook",
+        }
     }
 }
 
@@ -120,6 +150,7 @@ stored_enum! {
     /// Why a calendar could not be read or refreshed. Its cached events stay until it recovers.
     pub enum CalendarProblem {
         NotACalendar => "not_a_calendar",
+        SignInExpired => "sign_in_expired",
         TooLarge => "too_large",
         LinkNotFound => "link_not_found",
         LinkRefused => "link_refused",
@@ -134,6 +165,9 @@ impl CalendarProblem {
     pub fn message(self) -> &'static str {
         match self {
             Self::NotACalendar => "That isn't an iCalendar (.ics) calendar.",
+            Self::SignInExpired => {
+                "This account's sign-in expired or was revoked. Sign in again to keep it up to date."
+            }
             Self::TooLarge => "That calendar is larger than the 20 MB limit.",
             Self::LinkNotFound => {
                 "The calendar link no longer works. It may have been reset; paste the new link."
@@ -331,13 +365,50 @@ pub struct WorkingHours {
     pub updated_at: String,
 }
 
-/// A read-only calendar from another service. Its link, when it has one, stays in the system
-/// keychain and never reaches SQLite or the renderer.
+/// An account DayPlan reads calendars from. Its tokens stay in the system keychain and never
+/// reach SQLite or the renderer.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CalendarAccount {
+    pub id: String,
+    pub provider: CalendarProvider,
+    /// The signed-in address, such as someone@gmail.com.
+    pub label: String,
+    pub problem: Option<CalendarIssue>,
+    pub calendar_count: i64,
+    pub revision: i64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// A calendar offered by a connected account, for choosing which ones DayPlan shows.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteCalendar {
+    pub id: String,
+    pub name: String,
+    /// The account's main calendar, ticked by default.
+    pub primary: bool,
+    pub already_added: bool,
+}
+
+/// A freshly connected account and the calendars it offers.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectedAccount {
+    pub account: CalendarAccount,
+    pub calendars: Vec<RemoteCalendar>,
+}
+
+/// A read-only calendar from another service. Its link or account tokens, when it has them, stay
+/// in the system keychain and never reach SQLite or the renderer.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Calendar {
     pub id: String,
     pub kind: CalendarKind,
+    /// The connected account this calendar belongs to, for account calendars.
+    pub account_id: Option<String>,
     pub name: String,
     pub color: PlanColor,
     pub visible: bool,

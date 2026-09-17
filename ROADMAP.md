@@ -12,7 +12,7 @@ Every version answers to one test: can someone with several things going on open
 | ------- | -------- | ------------------------------ | ------------------------------------------------------------------------- |
 | v0.2.5  | 1        | Core planning workflow         | Inbox, estimates, weekly and daily planning, carry-forward, promotion     |
 | v0.2.9  | 2        | Calendars without accounts     | Calendar links and files, time blocks, capacity                           |
-| v0.3.0  | 2        | Calendar integration           | Google and Outlook accounts                                               |
+| v0.3.0  | 2        | Calendar integration           | Google and Outlook accounts, read-only                                    |
 | v0.3.2  | 3        | AI planning                    | Plan creation and breakdown, inbox, week, day, and replanning proposals   |
 | v0.3.5  | 4        | Personal planning intelligence | Planning profile, local observations, What DayPlan Knows                  |
 | v0.4.0  | 5        | Quality of life                | Templates, recurring tasks, checklists, duplication, dependencies, polish |
@@ -75,9 +75,7 @@ One task record moves between horizons. Nothing is copied.
 
 ## v0.3.0 — Calendar integration
 
-Priority 2. DayPlan learns when you're actually busy. External calendars stay read-only and separate from DayPlan's own events. v0.2.9 shipped everything in this section except Google and Outlook sign-in.
-
-Build order: sync design and provider architecture, iCalendar links and files, time blocks, capacity, then Google and Outlook once their OAuth clients exist. Links and files come first because they need no keys and exercise the same cache, display, and capacity code the account connections will use.
+Priority 2. DayPlan learns when you're actually busy. External calendars stay read-only and separate from DayPlan's own events. v0.2.9 shipped everything in this section except Google and Outlook sign-in, which this version adds.
 
 - **Sync design first.** [CALENDAR_SYNC.md](CALENDAR_SYNC.md) covers data ownership, caching, refresh, recurring events, and revocation, and is reviewed before provider code lands.
 - **iCalendar links and files.** Subscribing to an https or webcal link (Google's secret iCal address, an Outlook published calendar) keeps a calendar refreshed; an imported `.ics` file is a snapshot a newer file replaces. Both are read-only calendars in the same cache as the account connections.
@@ -91,7 +89,9 @@ Build order: sync design and provider architecture, iCalendar links and files, t
 
 **Done when:** a connected Google calendar appears read-only in Today and Week, a task can be blocked into free time, the week shows planned against available hours, and disconnecting removes every cached calendar record.
 
-**Shipped in v0.2.9:** the sync design, iCalendar links and files, the calendar cache and refresh worker, keychain-held links, Today and Week display, time blocks, working hours, and capacity. Google and Outlook sign-in remain for v0.3.0.
+**Shipped in v0.2.9:** the sync design, iCalendar links and files, the calendar cache and refresh worker, keychain-held links, Today and Week display, time blocks, working hours, and capacity.
+
+**Shipped in v0.3.0:** Google and Outlook sign-in with PKCE and read-only scopes, the calendar picker, keychain-held refresh tokens, per-account refresh and re-sign-in, and disconnect with revocation.
 
 **Decided:**
 
@@ -100,11 +100,11 @@ Build order: sync design and provider architecture, iCalendar links and files, t
 - Working hours are a planner-database record that exports leave out.
 - Hidden calendars don't count toward busy time, and all-day events count only when they're marked busy.
 
-**Prerequisites for you** ([CALENDAR_ACCOUNTS.md](CALENDAR_ACCOUNTS.md) walks through the first two):
+**Still on you** (the OAuth clients now exist; [CALENDAR_ACCOUNTS.md](CALENDAR_ACCOUNTS.md) covers them):
 
-- A Google Cloud OAuth client and consent screen. Calendar scopes need Google's app verification before a broad release: unverified apps show a warning and have a user cap, and apps left in Testing status get refresh tokens that expire after seven days.
-- A Microsoft Entra app registration for Outlook.
-- Release signing. macOS ties keychain access to the app's code signature, and an ad-hoc signature changes with every build, so unsigned updates would ask for keychain access again after each install.
+- Google app verification before a broad release. Calendar scopes are sensitive: unverified apps show a warning and have a lifetime cap of 100 new users, and a client left in Testing status hands out refresh tokens that expire after seven days.
+- Microsoft publisher verification, if Outlook should stop being labelled unverified. It needs a partner account for a legal entity, so a personal registration can't have it.
+- Release signing. macOS ties keychain access to the app's code signature, and an ad-hoc signature changes with every build, so unsigned updates ask for keychain access again after each install — once per calendar link and once per account token.
 
 ## v0.3.2 — AI planning
 

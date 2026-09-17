@@ -91,3 +91,6 @@ jobs:
       - run: npm run tauri build -- --bundles ${{ matrix.bundles }} --config src-tauri/tauri.ci.conf.json
         env:
           DAYPLAN_UPDATER_PUBKEY: ${{ vars.TAURI_UPDATER_PUBKEY }}
+          DAYPLAN_GOOGLE_CLIENT_ID: ${{ vars.DAYPLAN_GOOGLE_CLIENT_ID }}
+          DAYPLAN_GOOGLE_CLIENT_SECRET: ${{ secrets.DAYPLAN_GOOGLE_CLIENT_SECRET }}
+          DAYPLAN_MICROSOFT_CLIENT_ID: ${{ vars.DAYPLAN_MICROSOFT_CLIENT_ID }}

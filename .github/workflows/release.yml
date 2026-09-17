@@ -91,6 +91,9 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           DAYPLAN_UPDATER_PUBKEY: ${{ vars.TAURI_UPDATER_PUBKEY }}
+          DAYPLAN_GOOGLE_CLIENT_ID: ${{ vars.DAYPLAN_GOOGLE_CLIENT_ID }}
+          DAYPLAN_GOOGLE_CLIENT_SECRET: ${{ secrets.DAYPLAN_GOOGLE_CLIENT_SECRET }}
+          DAYPLAN_MICROSOFT_CLIENT_ID: ${{ vars.DAYPLAN_MICROSOFT_CLIENT_ID }}
       - uses: actions/upload-artifact@v4
         with:
           name: macos-${{ matrix.target }}
@@ -173,6 +176,9 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           DAYPLAN_UPDATER_PUBKEY: ${{ vars.TAURI_UPDATER_PUBKEY }}
+          DAYPLAN_GOOGLE_CLIENT_ID: ${{ vars.DAYPLAN_GOOGLE_CLIENT_ID }}
+          DAYPLAN_GOOGLE_CLIENT_SECRET: ${{ secrets.DAYPLAN_GOOGLE_CLIENT_SECRET }}
+          DAYPLAN_MICROSOFT_CLIENT_ID: ${{ vars.DAYPLAN_MICROSOFT_CLIENT_ID }}
       - name: Azure Artifact Signing
         uses: azure/artifact-signing-action@v2
         with:

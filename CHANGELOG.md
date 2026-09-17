@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.3.0
+
+Google Calendar and Outlook connect directly now. Sign in once in your browser, choose which calendars DayPlan should show, and they stay up to date beside your plans. Everything stays read-only: DayPlan asks only for permission to read, so it can't change, create, or delete anything in your calendars.
+
+### Connected accounts
+
+- **Connect Google** and **Connect Outlook** on the Calendars screen (⌘6, or Ctrl+6 on Windows) sign in through your browser. DayPlan never sees your password.
+- Connecting adds nothing by itself. DayPlan lists that account's calendars with your main one already ticked, and shows only the ones you pick. **Add calendars…** on the account reopens the list later.
+- Each calendar you add behaves like any other: rename, recolor, hide, refresh, or remove it on its own. Accounts and links both refresh every 30 minutes while DayPlan runs.
+- If a sign-in expires or is withdrawn, the account says so and keeps showing its last copy of your events until you **Sign in again**.
+- **Disconnect account** withdraws DayPlan's access where the provider supports it, then deletes the sign-in along with every calendar and event cached for that account.
+- Sign-ins live in the macOS Keychain or Windows Credential Manager, never in the planner database, exports, backups, diagnostics, or the app's own window.
+
+### Docs
+
+- [CALENDAR_ACCOUNTS.md](https://github.com/Von-Van/DayPlan/blob/v0.3.0/CALENDAR_ACCOUNTS.md) covers the OAuth clients DayPlan ships with and how to point a build at your own, and [CALENDAR_SYNC.md](https://github.com/Von-Van/DayPlan/blob/v0.3.0/CALENDAR_SYNC.md) documents how accounts are stored, refreshed, and revoked.
+
+### Known limitations
+
+- Google shows an "unverified app" warning until DayPlan finishes Google's review, and work or school Outlook accounts often need an administrator to approve it. Subscribing by link still works for any calendar an account connection can't reach.
+- These builds aren't code-signed, so after each update macOS asks once for every subscribed calendar and connected account before DayPlan can read it from the Keychain. Choose **Always Allow**.
+
 ## v0.2.9
 
 Calendars from Google, Outlook, and other apps without signing in, time blocks for tasks, and planned work against available time. Connecting Google and Microsoft accounts directly comes in v0.3.0.
