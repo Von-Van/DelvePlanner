@@ -15,6 +15,7 @@ The important engineering idea is the permission boundary, not the chat box: the
 | Planning        | Weekly and daily planning sessions, estimates, and carry-forward of unfinished work           | React renderer + Rust repository                        |
 | Calendars       | Read-only Google, Outlook, iCalendar link, and `.ics` calendars, refreshed while DayPlan runs | Rust `CalendarService` + separate cache                 |
 | Time & capacity | Time blocks for tasks, working hours, and planned work against available time                 | React renderer + Rust repository                        |
+| What it knows   | A planning profile you set, and observations DayPlan works out from local records             | Rust `profile` module + What DayPlan Knows              |
 | Plans           | Overview with attention signals, timeline, filtered tasks, schedule, run of show              | React renderer + Rust repository                        |
 | Teams           | Workstreams inside a plan and people who own tasks and events                                 | React renderer + Rust repository                        |
 | Manual planning | Creates, edits, and deletes plans, milestones, tasks, and events with revision checks         | Typed Tauri commands + Rust transactions                |
@@ -344,13 +345,23 @@ Ambiguous titles (including duplicate task, milestone, and plan names), missing 
 
 AI context is intentionally small. Requests that do not mention plans, tasks, or their titles use the original event-only prompt and see only events. Planning requests also see open plans, and only the milestones and tasks that match the request, belong to a plan the request names or the plan being viewed, were referenced earlier in the session, or fall on the selected day. Event notes, task and plan descriptions, people, and workstreams are never sent, and conversation state is not persisted.
 
+## What DayPlan knows about you
+
+One screen (⌘7, or Ctrl+7 on Windows) holds everything DayPlan has about how you plan, and nothing is kept anywhere else.
+
+**What you tell it** is a planning profile, every field optional: preferred hours inside your working hours, the most work you want planned into a day, a focus-block length and the break after one, which days you don't work, and whether demanding work suits mornings, afternoons, or evenings. A day you mark off holds no working time whatever your working hours say, and a day planned past your limit is flagged — never rearranged. The profile is a device preference, so exports leave it out.
+
+**What it noticed** is computed in Rust from records already on this device, fresh each time the screen opens and never stored: how long work really takes (estimates against the time blocked for the same finished tasks), when you usually start blocked work, what a day you block work on usually holds, and which weekday work most often moves off. Each one says what it rests on — "12 finished tasks with both an estimate and blocked time" — and none appears until at least five records support it. Any of them can be switched off, which stops it being computed at all, and switched back on later.
+
+The only history DayPlan keeps for this is a carry-forward log: when a task moves off a day it was already on, the two days and the moment are recorded, and nothing else — no title, no notes, nothing about what the work was. It starts empty in v0.3.5, so nothing was recorded before you could see it, and **Forget the history behind these** clears it.
+
 ## Storage, recovery, and privacy
 
-The current database schema is version 6. Existing databases are backed up and migrated transactionally: schema 3 adds `plans` and `milestones`, gives events a nullable `plan_id`, and moves every day-bound task into the general `tasks` table with `scheduled_day` set to its old day and a `done` or `todo` status from its completion state; schema 4 adds `people` and `workstreams`, owner and workstream links, and event locations; schema 5 adds `inbox_items` and each task's `planned_week` and `estimated_minutes`; schema 6 adds `task_blocks` and the `working_hours` record. Restoring an older backup migrates it the same way when it opens. SQLite foreign keys are enforced. Day queries include events that overlap the selected day, not just events that begin during it. Manual edits atomically update every editable field under one revision check.
+The current database schema is version 7. Existing databases are backed up and migrated transactionally: schema 3 adds `plans` and `milestones`, gives events a nullable `plan_id`, and moves every day-bound task into the general `tasks` table with `scheduled_day` set to its old day and a `done` or `todo` status from its completion state; schema 4 adds `people` and `workstreams`, owner and workstream links, and event locations; schema 5 adds `inbox_items` and each task's `planned_week` and `estimated_minutes`; schema 6 adds `task_blocks` and the `working_hours` record; schema 7 adds the `planning_profile` record and the empty `task_moves` history. Restoring an older backup migrates it the same way when it opens. SQLite foreign keys are enforced. Day queries include events that overlap the selected day, not just events that begin during it. Manual edits atomically update every editable field under one revision check.
 
 Settings offers:
 
-- strict, versioned JSON export (format 6 includes people, plans, workstreams, milestones, events, tasks, inbox items, and time blocks; formats 1–5 still import, with day tasks upgraded the same way as the migration and every cross-record link checked before anything is replaced; working hours and calendars aren't exported);
+- strict, versioned JSON export (format 6 includes people, plans, workstreams, milestones, events, tasks, inbox items, and time blocks; formats 1–5 still import, with day tasks upgraded the same way as the migration and every cross-record link checked before anything is replaced; working hours, the planning profile, its history, and calendars aren't exported);
 - import preview and explicit confirmation before replacement;
 - automatic backup before import and recovery from the five retained backups;
 - model/version diagnostics;

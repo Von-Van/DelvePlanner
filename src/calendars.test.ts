@@ -297,6 +297,7 @@ describe("working hours and capacity", () => {
   });
 
   const capacity: Capacity = capacitySchema.parse({
+    plannedLimitMinutes: null,
     workingHours: {
       days: [1, 2, 3, 4, 5],
       startMinute: 540,

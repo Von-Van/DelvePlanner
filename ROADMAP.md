@@ -151,7 +151,11 @@ Priority 4. Suggestions adapt to how the user actually plans, locally and transp
 
 **Done when:** every personalized suggestion traces back to settings or observations the user can see, change, or delete.
 
-**Decision before building:** observations about deferral need a local history of carry-forward actions. Recommended: start that history in v0.3.5 alongside its controls, so nothing is recorded before it can be inspected or turned off. The alternative is to start recording in v0.2.5 so there's more history once v0.3.5 ships.
+**Shipped in v0.3.5:** the planning profile as a schema-7 record that capacity honours (a day off holds no working time, and a daily limit is reported), four observations computed in Rust from local records with the evidence behind each and a five-record floor, per-observation off switches, and What DayPlan Knows with controls to change, switch off, or forget any of it.
+
+**Still open:** using the profile in the planner's own suggestions, which waits on the planning workflows deferred to v0.3.3, and observations about deferral beyond which weekday work slips.
+
+**Decided:** the carry-forward history starts in v0.3.5 alongside its controls, so nothing was recorded before it could be inspected or turned off. It keeps only the two days and the moment — never a title or note — and can be cleared from the same screen.
 
 ## v0.4.0 — Quality of life
 

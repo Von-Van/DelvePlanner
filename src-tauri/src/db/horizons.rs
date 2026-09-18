@@ -5,10 +5,12 @@ use super::planning::{
     milestone_from_row, replace_task, task_by_id, task_from_row, MILESTONE_ORDER, MILESTONE_SELECT,
     TASK_SELECT,
 };
-use super::{collect, normalize_day, offset_day, validate_id, validate_revision, PlannerDatabase};
+use super::{
+    collect, normalize_day, now, offset_day, validate_id, validate_revision, PlannerDatabase,
+};
 use crate::error::{AppError, AppResult};
 use crate::model::{DayChange, PlanningBoard, Task, TaskMove, UpdateTaskInput, MAX_TASK_MOVES};
-use rusqlite::{params, TransactionBehavior};
+use rusqlite::{params, Transaction, TransactionBehavior};
 use std::collections::HashSet;
 
 impl PlannerDatabase {
@@ -83,11 +85,40 @@ impl PlannerDatabase {
                 estimated_minutes: current.estimated_minutes,
                 priority: current.priority,
             };
+            // A task that leaves a day it was already on is what "carried forward" means, and it
+            // is the only thing DayPlan keeps a history of. It starts empty in v0.3.5, and What
+            // DayPlan Knows can clear it or switch the observation off.
+            let from_day = current.scheduled_day.clone();
+            let to_day = input.scheduled_day.clone();
+            if from_day.is_some() && from_day != to_day {
+                record_move(
+                    &transaction,
+                    &input.id,
+                    from_day.as_deref(),
+                    to_day.as_deref(),
+                )?;
+            }
             moved.push(replace_task(&transaction, &input)?);
         }
         transaction.commit()?;
         Ok(moved)
     }
+}
+
+/// Notes that a task moved off a day it was on. Only the days and the moment are kept: no title,
+/// no notes, nothing that says what the work was.
+fn record_move(
+    transaction: &Transaction<'_>,
+    task_id: &str,
+    from_day: Option<&str>,
+    to_day: Option<&str>,
+) -> AppResult<()> {
+    transaction.execute(
+        "INSERT INTO task_moves (task_id, from_day, to_day, kind, moved_at)
+         VALUES (?1, ?2, ?3, 'carried_forward', ?4)",
+        params![task_id, from_day, to_day, now()],
+    )?;
+    Ok(())
 }
 
 #[cfg(test)]

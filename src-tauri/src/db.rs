@@ -2,6 +2,7 @@ mod availability;
 mod capture;
 mod horizons;
 mod planning;
+mod profile;
 mod proposals;
 mod team;
 
@@ -24,6 +25,7 @@ use planning::{
     ensure_plan_exists, milestone_plan_mismatch, validate_milestone_shape, validate_plan_shape,
     validate_task_shape, TaskShape,
 };
+use profile::ensure_profile_schema;
 use rusqlite::{
     params, types::Type, Connection, OptionalExtension, Row, Transaction, TransactionBehavior,
 };
@@ -40,7 +42,7 @@ pub use availability::CapacityFacts;
 pub use proposals::{accepted_operations, validate_model_response, CandidateRequest};
 pub(crate) use proposals::{fold, planning_tokens, title_matches};
 
-pub const CURRENT_SCHEMA_VERSION: u32 = 6;
+pub const CURRENT_SCHEMA_VERSION: u32 = 7;
 pub const EXPORT_FORMAT_VERSION: u32 = 6;
 const BACKUP_RETENTION: usize = 5;
 const REMINDER_DELIVERY_GRACE_MINUTES: i64 = 15;
@@ -1070,6 +1072,7 @@ fn migrate(connection: &Connection, from_version: u32) -> AppResult<()> {
         ensure_team_schema(connection)?;
         ensure_horizon_schema(connection)?;
         ensure_availability_schema(connection)?;
+        ensure_profile_schema(connection)?;
         connection.pragma_update(None, "user_version", CURRENT_SCHEMA_VERSION)?;
         Ok::<(), AppError>(())
     })();
@@ -2670,6 +2673,33 @@ mod tests {
             PlannerDatabase::preview_import(&duplicate),
             Err(AppError::Validation(_))
         ));
+    }
+
+    #[test]
+    fn migrates_schema_six_to_the_planning_profile_and_an_empty_history() {
+        let directory = tempdir().unwrap().keep();
+        let path = directory.join("dayplan.sqlite3");
+        let connection = Connection::open(&path).unwrap();
+        connection.execute_batch(SCHEMA_TWO_TABLES).unwrap();
+        ensure_reminder_columns(&connection).unwrap();
+        ensure_planning_schema(&connection).unwrap();
+        ensure_team_schema(&connection).unwrap();
+        ensure_horizon_schema(&connection).unwrap();
+        ensure_availability_schema(&connection).unwrap();
+        connection.pragma_update(None, "user_version", 6).unwrap();
+        drop(connection);
+
+        let migrated = PlannerDatabase::open(&path).unwrap();
+
+        assert_eq!(migrated.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+        // The profile arrives empty: DayPlan assumes nothing about how anyone plans.
+        let profile = migrated.planning_profile().unwrap();
+        assert_eq!(profile.preferred_start_minute, None);
+        assert_eq!(profile.max_planned_minutes, None);
+        assert!(profile.no_work_days.is_empty());
+        assert!(profile.muted_observations.is_empty());
+        // And with no history behind it, DayPlan has noticed nothing about an existing database.
+        assert!(migrated.observations().unwrap().is_empty());
     }
 
     #[test]

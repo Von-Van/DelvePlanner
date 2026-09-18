@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.3.5
+
+A new screen holds everything DayPlan knows about how you plan — what you told it, and what it worked out from your own records — and lets you change, switch off, or forget any of it.
+
+### What you've told it
+
+- A planning profile (⌘7, or Ctrl+7 on Windows) with preferred hours, the most work you want planned into a day, a focus-block length and the break after one, days you don't work, and whether demanding work suits mornings, afternoons, or evenings. Every field is optional and starts empty.
+- A day you mark off holds no working time, whatever your working hours say. A day planned past your limit is flagged; nothing is ever rearranged for you.
+- The profile stays on this device and is left out of exports. **Forget all of this** empties it.
+
+### What it noticed
+
+- DayPlan works out how long your work really takes against your estimates, when you usually start blocked work, what a day you block work on usually holds, and which weekday work most often moves off.
+- Each observation says what it rests on, and none appears until at least five records support it. They're computed fresh from local records each time the screen opens, never stored.
+- Any observation can be switched off, which stops it being computed at all, and switched back on later.
+- The only history kept for this is when a task moves off a day it was already on: the two days and the moment, and nothing about the work itself. It starts empty in this version, and **Forget the history behind these** clears it.
+
+### Data
+
+- Database schema 7 adds the planning profile and that history. Exports are unchanged.
+
 ## v0.3.2
 
 The planner's suggestions are now reviewed one by one, it can estimate how long work takes and choose a week for it, and it says why when it picks something you didn't.

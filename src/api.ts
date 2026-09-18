@@ -302,6 +302,8 @@ const countSchema = z.number().int().nonnegative();
 export const capacitySchema = z
   .object({
     workingHours: workingHoursSchema,
+    /** The most work the user wants planned into a day, from their planning profile. */
+    plannedLimitMinutes: z.number().int().positive().nullable(),
     days: z.array(
       z
         .object({
@@ -827,6 +829,51 @@ export type PersonInput = Pick<
   "displayName" | "role" | "email" | "notes"
 >;
 export type WorkstreamInput = Pick<Workstream, "name" | "description">;
+export const dayPreferences = ["morning", "afternoon", "evening"] as const;
+export type DayPreference = (typeof dayPreferences)[number];
+
+export const observationKinds = [
+  "estimate_accuracy",
+  "usual_start",
+  "typical_daily_load",
+  "deferred_days",
+] as const;
+export type ObservationKind = (typeof observationKinds)[number];
+
+const minutesOfDaySchema = z.number().int().min(0).max(1440).nullable();
+const lengthSchema = z.number().int().min(1).max(1440).nullable();
+
+/** How the user plans, as far as they have chosen to say. Every field is optional. */
+const planningProfileSchema = z
+  .object({
+    preferredStartMinute: minutesOfDaySchema,
+    preferredEndMinute: minutesOfDaySchema,
+    maxPlannedMinutes: lengthSchema,
+    focusMinutes: lengthSchema,
+    breakMinutes: lengthSchema,
+    noWorkDays: z.array(z.number().int().min(1).max(7)),
+    energy: z.enum(dayPreferences).nullable(),
+    /** Observations the user has switched off; they are neither computed nor shown. */
+    mutedObservations: z.array(z.enum(observationKinds)),
+    revision: revisionSchema,
+    updatedAt: timestampSchema,
+  })
+  .strict();
+
+export type PlanningProfile = z.infer<typeof planningProfileSchema>;
+
+/** Something DayPlan worked out from local records, with what it rests on. */
+const observationSchema = z
+  .object({
+    kind: z.enum(observationKinds),
+    summary: z.string(),
+    evidence: z.string(),
+    sample: z.number().int().nonnegative(),
+  })
+  .strict();
+
+export type Observation = z.infer<typeof observationSchema>;
+
 export type OllamaStatus = z.infer<typeof statusSchema>;
 
 export const modelSources = ["dayplan", "system"] as const;
@@ -1193,6 +1240,37 @@ export const api = {
       id: calendar.id,
       revision: calendar.revision,
     });
+  },
+  async planningProfile() {
+    return planningProfileSchema.parse(
+      await invokeCommand("get_planning_profile"),
+    );
+  },
+  async updatePlanningProfile(
+    profile: PlanningProfile,
+    changes: Partial<
+      Omit<PlanningProfile, "revision" | "updatedAt" | "mutedObservations">
+    > & { mutedObservations?: ObservationKind[] },
+  ) {
+    const { updatedAt: _updatedAt, ...current } = profile;
+    return planningProfileSchema.parse(
+      await invokeCommand("update_planning_profile", {
+        input: { ...current, ...changes },
+      }),
+    );
+  },
+  async clearPlanningProfile() {
+    return planningProfileSchema.parse(
+      await invokeCommand("clear_planning_profile"),
+    );
+  },
+  async observations() {
+    return z
+      .array(observationSchema)
+      .parse(await invokeCommand("list_observations"));
+  },
+  async clearPlanningHistory() {
+    await invokeCommand("clear_planning_history");
   },
   async status() {
     return statusSchema.parse(await invokeCommand("current_ollama_status"));

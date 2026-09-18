@@ -19,13 +19,14 @@ use model::{
     ConnectedAccount, CreateEventInput, CreateInboxItemInput, CreateMilestoneInput,
     CreatePersonInput, CreatePlanInput, CreateTaskBlockInput, CreateTaskInput,
     CreateWorkstreamInput, DatabaseStatus, ExportBundle, ImportPreview, InboxConversion, InboxItem,
-    LocalDateTimeInput, LocalDateTimeResolution, Milestone, Person, PersonSummary, Plan, PlanColor,
-    PlanDeletion, PlanSummary, PlanWorkspace, PlannerResponse, PlanningBoard,
-    ProcessInboxItemInput, RecordVersion, RemoteCalendar, ReplaceCalendarLinkInput,
-    RescheduleEventInput, ScheduleEvent, ScheduledBlock, SubscribeCalendarInput, Task, TaskBlock,
-    TaskMove, UpdateCalendarInput, UpdateEventInput, UpdateInboxItemInput, UpdateMilestoneInput,
-    UpdatePersonInput, UpdatePlanInput, UpdateTaskBlockInput, UpdateTaskInput,
-    UpdateWorkingHoursInput, UpdateWorkstreamInput, WorkingHours, Workstream,
+    LocalDateTimeInput, LocalDateTimeResolution, Milestone, Observation, Person, PersonSummary,
+    Plan, PlanColor, PlanDeletion, PlanSummary, PlanWorkspace, PlannerResponse, PlanningBoard,
+    PlanningProfile, ProcessInboxItemInput, RecordVersion, RemoteCalendar,
+    ReplaceCalendarLinkInput, RescheduleEventInput, ScheduleEvent, ScheduledBlock,
+    SubscribeCalendarInput, Task, TaskBlock, TaskMove, UpdateCalendarInput, UpdateEventInput,
+    UpdateInboxItemInput, UpdateMilestoneInput, UpdatePersonInput, UpdatePlanInput,
+    UpdatePlanningProfileInput, UpdateTaskBlockInput, UpdateTaskInput, UpdateWorkingHoursInput,
+    UpdateWorkstreamInput, WorkingHours, Workstream,
 };
 use runtime::{InstalledModel, OllamaRuntimeManager};
 use serde::Serialize;
@@ -425,6 +426,37 @@ fn list_releasable_blocks(state: State<'_, AppState>) -> Result<Vec<ScheduledBlo
     with_database(&state, |database| database.releasable_blocks())
 }
 
+/// What DayPlan knows about how the user plans, and what it has noticed from local records.
+#[tauri::command]
+fn get_planning_profile(state: State<'_, AppState>) -> Result<PlanningProfile, CommandError> {
+    with_database(&state, |database| database.planning_profile())
+}
+
+#[tauri::command]
+fn update_planning_profile(
+    state: State<'_, AppState>,
+    input: UpdatePlanningProfileInput,
+) -> Result<PlanningProfile, CommandError> {
+    with_database(&state, |database| database.update_planning_profile(input))
+}
+
+/// Forgets the profile, leaving it as empty as it started.
+#[tauri::command]
+fn clear_planning_profile(state: State<'_, AppState>) -> Result<PlanningProfile, CommandError> {
+    with_database(&state, |database| database.clear_planning_profile())
+}
+
+#[tauri::command]
+fn list_observations(state: State<'_, AppState>) -> Result<Vec<Observation>, CommandError> {
+    with_database(&state, |database| database.observations())
+}
+
+/// Forgets the history the observations are drawn from.
+#[tauri::command]
+fn clear_planning_history(state: State<'_, AppState>) -> Result<(), CommandError> {
+    with_database(&state, |database| database.clear_planning_history())
+}
+
 #[tauri::command]
 fn get_working_hours(state: State<'_, AppState>) -> Result<WorkingHours, CommandError> {
     with_database(&state, |database| database.working_hours())
@@ -453,20 +485,21 @@ fn get_capacity(
     let zone = parse_zone(&time_zone)?;
     let first_day = NaiveDate::parse_from_str(&range.first_day, "%Y-%m-%d")
         .map_err(|_| AppError::Validation("Dates must use YYYY-MM-DD.".into()))?;
-    let facts = with_database(&state, |database| {
-        database.capacity_facts(
+    let (facts, profile) = with_database(&state, |database| {
+        let facts = database.capacity_facts(
             &range.first_day,
             &range.end_day,
             &time_zone,
             excluded_block_id.as_deref(),
-        )
+        )?;
+        Ok((facts, database.planning_profile()?))
     })?;
     let (busy, incomplete) = state
         .calendars
         .busy(&range)
         .unwrap_or_else(|_| (Vec::new(), true));
     Ok(capacity::capacity(
-        first_day, days, zone, facts, &busy, incomplete,
+        first_day, days, zone, facts, &busy, incomplete, &profile,
     ))
 }
 
@@ -1377,6 +1410,11 @@ pub fn run() {
             list_releasable_blocks,
             get_working_hours,
             update_working_hours,
+            get_planning_profile,
+            update_planning_profile,
+            clear_planning_profile,
+            list_observations,
+            clear_planning_history,
             get_capacity,
             list_calendars,
             list_calendar_events,

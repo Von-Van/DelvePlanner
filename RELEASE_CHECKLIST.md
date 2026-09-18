@@ -40,6 +40,7 @@ This checklist gates publishing an existing draft GitHub Release. Record the tes
 - [ ] Disconnecting an account removes its calendars and events, deletes its Keychain item, and the grant is gone from the provider's account settings.
 - [ ] After updating from the previous build, saved calendar links and account tokens refresh without a Keychain prompt.
 - [ ] Blocking time for a task, releasing a finished task's future blocks, and planned-versus-available capacity work, including after changing working hours.
+- [ ] What DayPlan Knows: a day marked off holds no working time, an observation can be switched off and back on, and forgetting the profile or the history empties them without touching the schedule.
 - [ ] Opening DayPlan starts no `ollama` process; asking the planner something starts one, and quitting DayPlan leaves no `ollama` or model-runner process behind (`pgrep -fl ollama`).
 - [ ] After a force quit, the next launch ends the model server the previous one left running.
 - [ ] A model installed outside DayPlan appears in the picker, plans after its format check, and survives **Remove model**.

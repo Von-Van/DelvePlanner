@@ -742,6 +742,76 @@ pub struct RecordVersion {
     pub revision: i64,
 }
 
+/// Something DayPlan worked out from what is already on this device. Every observation says what
+/// it is based on, so the user can judge it rather than take it on trust.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct Observation {
+    pub kind: ObservationKind,
+    /// The finding in one line: "Work takes about a third longer than you estimate".
+    pub summary: String,
+    /// What it was worked out from: "12 finished tasks with an estimate and blocked time".
+    pub evidence: String,
+    /// How many records it rests on, so a thin observation can say so.
+    pub sample: i64,
+}
+
+stored_enum! {
+    /// The observations DayPlan can make, each computed in Rust from local records only.
+    pub enum ObservationKind {
+        EstimateAccuracy => "estimate_accuracy",
+        UsualStart => "usual_start",
+        TypicalDailyLoad => "typical_daily_load",
+        DeferredDays => "deferred_days",
+    }
+}
+
+/// How the user plans, as far as they have chosen to say. Every field is optional: an empty
+/// profile is a valid one, and capacity and the planner simply have less to go on.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanningProfile {
+    /// The hours the user prefers to plan work into, inside their working hours.
+    pub preferred_start_minute: Option<i64>,
+    pub preferred_end_minute: Option<i64>,
+    /// The most work the user wants planned into one day.
+    pub max_planned_minutes: Option<i64>,
+    /// How long a stretch of focused work should be, and the break after it.
+    pub focus_minutes: Option<i64>,
+    pub break_minutes: Option<i64>,
+    /// ISO weekdays the user would rather not work, Monday = 1 through Sunday = 7.
+    pub no_work_days: Vec<u8>,
+    /// When in the day demanding work belongs, if the user has a preference.
+    pub energy: Option<DayPreference>,
+    /// Observations the user has switched off. They are neither computed nor shown.
+    pub muted_observations: Vec<ObservationKind>,
+    pub revision: i64,
+    pub updated_at: String,
+}
+
+stored_enum! {
+    /// When the user would rather do demanding work.
+    pub enum DayPreference {
+        Morning => "morning",
+        Afternoon => "afternoon",
+        Evening => "evening",
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct UpdatePlanningProfileInput {
+    pub revision: i64,
+    pub preferred_start_minute: Option<i64>,
+    pub preferred_end_minute: Option<i64>,
+    pub max_planned_minutes: Option<i64>,
+    pub focus_minutes: Option<i64>,
+    pub break_minutes: Option<i64>,
+    pub no_work_days: Vec<u8>,
+    pub energy: Option<DayPreference>,
+    pub muted_observations: Vec<ObservationKind>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct UpdateWorkingHoursInput {
@@ -783,6 +853,8 @@ pub struct DayCapacity {
 #[serde(rename_all = "camelCase")]
 pub struct Capacity {
     pub working_hours: WorkingHours,
+    /// The most work the user wants planned into one day, from their planning profile.
+    pub planned_limit_minutes: Option<i64>,
     pub days: Vec<DayCapacity>,
     /// Estimates of open tasks chosen for a week that starts in the window, with no day yet.
     pub pooled_minutes: i64,

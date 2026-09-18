@@ -83,12 +83,14 @@ import { SettingsModal } from "./SettingsModal";
 import { TaskEditor } from "./TaskEditor";
 import { TaskRow } from "./TaskRow";
 import { useHeadingFocus } from "./useHeadingFocus";
+import { KnowledgeView } from "./KnowledgeView";
 import { taskMoveItems, useTaskMover, weekStartsOn } from "./useTaskMover";
 import { WeekView } from "./WeekView";
 
 type View =
   | { kind: "inbox" }
   | { kind: "calendars" }
+  | { kind: "knowledge" }
   | { kind: "today" }
   | { kind: "week" }
   | { kind: "plan-week" }
@@ -192,6 +194,7 @@ export default function App() {
   const peopleHeading = useRef<HTMLHeadingElement>(null);
   const inboxHeading = useRef<HTMLHeadingElement>(null);
   const calendarsHeading = useRef<HTMLHeadingElement>(null);
+  const knowledgeHeading = useRef<HTMLHeadingElement>(null);
   const weekStart = weekStartDay(day, weekStartsOn);
   const today = todayDay();
   const currentWeekStart = weekStartDay(today, weekStartsOn);
@@ -352,6 +355,7 @@ export default function App() {
         "4": { kind: "people" },
         "5": { kind: "inbox" },
         "6": { kind: "calendars" },
+        "7": { kind: "knowledge" },
       }[event.key] as View | undefined;
       if (!target) return;
       event.preventDefault();
@@ -801,6 +805,12 @@ export default function App() {
               count: calendars.length,
             },
           )}
+          {navLink(
+            { kind: "knowledge" },
+            "What it knows",
+            { shape: "rhombus", dashed: true },
+            { active: view.kind === "knowledge", shortcut: "7" },
+          )}
           <button className="rail-link" onClick={() => setSettingsOpen(true)}>
             <Mark size={7} />
             Settings
@@ -899,6 +909,14 @@ export default function App() {
             onTab={(tab) => setViewState({ ...view, tab })}
             onBack={() => navigate({ kind: "plans", archived: false })}
             onPlansChanged={dataChanged}
+            onMessage={setError}
+          />
+        )}
+        {view.kind === "knowledge" && (
+          <KnowledgeView
+            headingRef={knowledgeHeading}
+            focusToken={focusToken}
+            onChanged={dataChanged}
             onMessage={setError}
           />
         )}

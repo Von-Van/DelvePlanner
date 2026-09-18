@@ -4363,3 +4363,132 @@ select:focus-visible,
   color: var(--muted);
   font-style: italic;
 }
+
+/* What DayPlan knows: the profile you set, and what it worked out for itself. */
+.knowledge-page {
+  padding: 0 34px 60px;
+}
+.knowledge-block {
+  margin: 26px 0 0;
+  padding: 20px 22px;
+  border: 1px solid var(--frame);
+  background: var(--paper);
+}
+.knowledge-block h2 {
+  margin: 0 0 16px;
+  color: var(--ink);
+  font: 300 22px var(--font-display);
+}
+.knowledge-empty {
+  margin: 0;
+  max-width: 62ch;
+  color: var(--muted);
+  font: 400 12px var(--font-ui);
+  line-height: 1.6;
+}
+.profile-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 18px 24px;
+}
+.profile-grid label,
+.profile-days {
+  display: grid;
+  gap: 5px;
+  align-content: start;
+}
+.profile-grid label > span,
+.profile-days > span {
+  color: var(--muted);
+  font: 500 10px var(--font-mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.profile-grid small,
+.profile-days small {
+  color: var(--muted);
+  font: 400 11px var(--font-ui);
+  line-height: 1.5;
+}
+.profile-range {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.day-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.day-toggle {
+  padding: 5px 9px;
+  border: 1px solid var(--frame);
+  background: var(--ground);
+  color: var(--strong);
+  font: 500 11px var(--font-mono);
+  letter-spacing: 0.04em;
+}
+.day-toggle.off {
+  border-color: var(--blue-frame);
+  background: var(--blue-wash);
+  color: var(--blue);
+  text-decoration: line-through;
+}
+.knowledge-actions {
+  margin: 18px 0 0;
+  display: flex;
+  gap: 8px;
+}
+.observation-list {
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+  list-style: none;
+}
+.observation-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 12px;
+  padding: 13px 14px;
+  border: 1px solid var(--blue-frame);
+  background: linear-gradient(160deg, var(--blue-wash), #fff 60%);
+}
+.observation-main {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+.observation-kind {
+  margin: 0;
+  color: var(--muted);
+  font: 500 10px var(--font-mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.observation-main strong {
+  color: var(--ink);
+  font: 600 13px var(--font-ui);
+}
+.observation-main small {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font: 400 11px var(--font-ui);
+}
+.muted-observations {
+  margin: 14px 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.muted-observations p {
+  margin: 0;
+  color: var(--muted);
+  font: 500 10px var(--font-mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}

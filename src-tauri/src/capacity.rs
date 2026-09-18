@@ -6,7 +6,8 @@ use crate::calendar::ics::local_midnight;
 use crate::calendar::store::timestamp;
 use crate::db::CapacityFacts;
 use crate::model::{
-    Capacity, DayCapacity, ExternalEvent, ScheduleEvent, Task, TaskBlock, TimeRange, WorkingHours,
+    Capacity, DayCapacity, ExternalEvent, PlanningProfile, ScheduleEvent, Task, TaskBlock,
+    TimeRange, WorkingHours,
 };
 use chrono::{DateTime, Datelike, Days, Duration, NaiveDate, TimeZone, Utc};
 use chrono_tz::Tz;
@@ -23,6 +24,7 @@ pub fn capacity(
     facts: CapacityFacts,
     external_busy: &[ExternalEvent],
     calendars_incomplete: bool,
+    profile: &PlanningProfile,
 ) -> Capacity {
     let busy_spans = merge(
         facts
@@ -48,7 +50,13 @@ pub fn capacity(
                     .iter()
                     .filter(|task| task.scheduled_day.as_deref() == Some(label.as_str())),
             );
-            let Some(window) = working_span(day, zone, &facts.working_hours) else {
+            let off = profile
+                .no_work_days
+                .contains(&(day.weekday().number_from_monday() as u8));
+            let Some(window) = (!off)
+                .then(|| working_span(day, zone, &facts.working_hours))
+                .flatten()
+            else {
                 return DayCapacity {
                     day: label,
                     working_minutes: 0,
@@ -86,6 +94,7 @@ pub fn capacity(
     let (pooled_minutes, pooled_unestimated_tasks) = estimates(facts.pooled.iter());
     Capacity {
         working_hours: facts.working_hours,
+        planned_limit_minutes: profile.max_planned_minutes,
         days,
         pooled_minutes,
         pooled_unestimated_tasks,
@@ -207,6 +216,49 @@ fn total(spans: &[Span]) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A day the user marked as no-work has no working time at all, whatever the working hours
+    /// say, and the profile's daily limit rides along for the views that flag an overloaded day.
+    #[test]
+    fn a_day_off_in_the_profile_holds_no_working_time() {
+        let facts = CapacityFacts {
+            working_hours: hours(&[1, 2, 3, 4, 5, 6, 7], 540, 1020),
+            events: Vec::new(),
+            blocks: Vec::new(),
+            scheduled: Vec::new(),
+            pooled: Vec::new(),
+        };
+        let profile = PlanningProfile {
+            // Thursday 17 September 2026 is a Thursday, so take Thursdays off.
+            no_work_days: vec![4],
+            max_planned_minutes: Some(300),
+            ..no_profile()
+        };
+
+        let report = capacity(day("2026-09-17"), 2, NEW_YORK, facts, &[], false, &profile);
+
+        assert_eq!(report.days[0].working_minutes, 0, "the day taken off");
+        assert!(report.days[0].free.is_empty());
+        assert_eq!(report.days[1].working_minutes, 480, "the day after it");
+        assert_eq!(report.planned_limit_minutes, Some(300));
+    }
+
+    /// A profile nobody has filled in, which is how capacity behaved before there was one.
+    fn no_profile() -> PlanningProfile {
+        PlanningProfile {
+            preferred_start_minute: None,
+            preferred_end_minute: None,
+            max_planned_minutes: None,
+            focus_minutes: None,
+            break_minutes: None,
+            no_work_days: Vec::new(),
+            energy: None,
+            muted_observations: Vec::new(),
+            revision: 1,
+            updated_at: "2026-09-14T12:00:00.000Z".into(),
+        }
+    }
+
     use crate::model::{ReminderStatus, TaskPriority, TaskStatus};
 
     const NEW_YORK: Tz = chrono_tz::America::New_York;
@@ -329,7 +381,15 @@ mod tests {
             ),
             timed("2026-09-17T11:00:00.000Z", "2026-09-17T12:00:00.000Z", true),
         ];
-        let report = capacity(day("2026-09-17"), 2, NEW_YORK, facts, &external, false);
+        let report = capacity(
+            day("2026-09-17"),
+            2,
+            NEW_YORK,
+            facts,
+            &external,
+            false,
+            &no_profile(),
+        );
         let thursday = &report.days[0];
         assert_eq!(
             (
@@ -373,7 +433,15 @@ mod tests {
         vacation.end_at_utc = None;
         vacation.start_date = Some("2026-09-18".into());
         vacation.end_date = Some("2026-09-19".into());
-        let report = capacity(day("2026-09-18"), 2, NEW_YORK, facts, &[vacation], true);
+        let report = capacity(
+            day("2026-09-18"),
+            2,
+            NEW_YORK,
+            facts,
+            &[vacation],
+            true,
+            &no_profile(),
+        );
         let friday = &report.days[0];
         assert_eq!(
             (
@@ -397,6 +465,7 @@ mod tests {
             facts(hours(&[7], 0, 24 * 60)),
             &[],
             false,
+            &no_profile(),
         );
         assert_eq!(
             fall.days[0].working_minutes,
@@ -410,6 +479,7 @@ mod tests {
             facts(hours(&[7], 2 * 60 + 30, 4 * 60)),
             &[],
             false,
+            &no_profile(),
         );
         assert_eq!(
             spring.days[0].working_minutes, 30,
