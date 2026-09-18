@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { Proposal } from "./api";
-import { describeProposal, proposalEnablesReminder } from "./proposals";
+import {
+  acceptedOperations,
+  describeProposal,
+  proposalEnablesReminder,
+} from "./proposals";
 
 const venueId = "f67fcad6-2827-4668-829f-1950f441d054";
 const charityId = "30bb9c6a-4020-45a6-806b-5eb71c7ae76f";
@@ -16,48 +20,80 @@ describe("proposal previews", () => {
       ],
       operations: [
         {
-          type: "update_task",
-          taskId: venueId,
-          expectedRevision: 1,
-          title: null,
-          description: null,
-          status: "done",
-          priority: null,
+          id: "op-0",
+          dependsOn: [],
+          reason: null,
+          suggested: false,
+          change: {
+            type: "update_task",
+            taskId: venueId,
+            expectedRevision: 1,
+            title: null,
+            description: null,
+            status: "done",
+            priority: null,
+            estimate: { action: "unchanged" },
+          },
         },
         {
-          type: "create_task",
-          title: "Buy flour",
-          description: "",
-          plan: { newTitle: "Bake sale" },
-          milestone: null,
-          scheduledDay: null,
-          dueDate: "2026-10-01",
-          status: "todo",
-          priority: "high",
+          id: "op-1",
+          dependsOn: [],
+          reason: null,
+          suggested: false,
+          change: {
+            type: "create_task",
+            title: "Buy flour",
+            description: "",
+            plan: { newTitle: "Bake sale" },
+            milestone: null,
+            scheduledDay: null,
+            dueDate: "2026-10-01",
+            status: "todo",
+            priority: "high",
+          },
         },
         {
-          type: "set_event_plan",
-          eventId: callId,
-          expectedRevision: 3,
-          plan: { id: charityId },
+          id: "op-2",
+          dependsOn: [],
+          reason: null,
+          suggested: false,
+          change: {
+            type: "set_event_plan",
+            eventId: callId,
+            expectedRevision: 3,
+            plan: { id: charityId },
+          },
         },
         {
-          type: "reschedule_event",
-          eventId: callId,
-          expectedRevision: 3,
-          title: null,
-          notes: "",
-          startAtUtc: "2026-09-18T19:00:00.000Z",
-          timeZone: "America/New_York",
-          durationMinutes: null,
-          reminderChange: { action: "set", minutesBefore: 15 },
+          id: "op-3",
+          dependsOn: [],
+          reason: null,
+          suggested: false,
+          change: {
+            type: "reschedule_event",
+            eventId: callId,
+            expectedRevision: 3,
+            title: null,
+            notes: "",
+            startAtUtc: "2026-09-18T19:00:00.000Z",
+            timeZone: "America/New_York",
+            durationMinutes: null,
+            reminderChange: { action: "set", minutesBefore: 15 },
+          },
         },
         {
-          type: "schedule_task",
-          taskId: venueId,
-          expectedRevision: 1,
-          scheduledDay: { action: "clear" },
-          dueDate: { action: "set", day: "2026-10-06" },
+          id: "op-4",
+          dependsOn: [],
+          reason: null,
+          suggested: false,
+          change: {
+            type: "schedule_task",
+            taskId: venueId,
+            expectedRevision: 1,
+            scheduledDay: { action: "clear" },
+            dueDate: { action: "set", day: "2026-10-06" },
+            plannedWeek: { action: "unchanged" },
+          },
         },
       ],
     };
@@ -88,5 +124,75 @@ describe("proposal previews", () => {
       "move",
     ]);
     expect(proposalEnablesReminder(proposal)).toBe(true);
+  });
+
+  it("rejecting a new plan also rejects what was going to live in it", () => {
+    const proposal: Pick<Proposal, "operations" | "references"> = {
+      references: [],
+      operations: [
+        {
+          id: "op-0",
+          dependsOn: [],
+          reason: null,
+          suggested: false,
+          change: {
+            type: "create_plan",
+            title: "Bake sale",
+            description: "",
+            status: "planning",
+            startDate: null,
+            targetDate: null,
+          },
+        },
+        {
+          id: "op-1",
+          dependsOn: ["op-0"],
+          reason: null,
+          suggested: false,
+          change: {
+            type: "create_task",
+            title: "Buy flour",
+            description: "",
+            plan: { newTitle: "Bake sale" },
+            milestone: null,
+            scheduledDay: null,
+            dueDate: "2026-10-01",
+            status: "todo",
+            priority: "normal",
+          },
+        },
+        {
+          id: "op-2",
+          dependsOn: [],
+          reason: null,
+          suggested: false,
+          change: {
+            type: "create_event",
+            title: "Sponsor call",
+            notes: "",
+            startAtUtc: "2026-09-18T19:00:00.000Z",
+            timeZone: "America/New_York",
+            durationMinutes: 30,
+            reminderMinutesBefore: null,
+            plan: null,
+          },
+        },
+      ],
+    };
+    const previews = describeProposal(proposal, "America/New_York");
+
+    expect(acceptedOperations(previews, new Set())).toEqual([
+      "op-0",
+      "op-1",
+      "op-2",
+    ]);
+    // The task can't be applied without the plan it was going to join, so it goes too.
+    expect(acceptedOperations(previews, new Set(["op-0"]))).toEqual(["op-2"]);
+    // Rejecting only the task leaves the plan, which stands on its own.
+    expect(acceptedOperations(previews, new Set(["op-1"]))).toEqual([
+      "op-0",
+      "op-2",
+    ]);
+    expect(acceptedOperations(previews, new Set(["op-0", "op-2"]))).toEqual([]);
   });
 });

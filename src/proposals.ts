@@ -1,5 +1,6 @@
 import type {
   DayChange,
+  EstimateChange,
   Proposal,
   ProposalOperation,
   ProposalReference,
@@ -11,15 +12,18 @@ import {
   dayMonthShort,
   localTimeZone,
   timeLabel,
+  weekStartDay,
 } from "./date";
 import { reminderLabel } from "./events";
 import {
+  estimateLabel,
   milestoneStatusLabels,
   planStatusLabels,
   shortDate,
   taskPriorityLabels,
   taskStatusLabels,
 } from "./planning";
+import { weekStartsOn } from "./useTaskMover";
 
 export type OperationTone = "create" | "change" | "move" | "delete";
 
@@ -31,24 +35,66 @@ export type OperationPreview = {
   details: string[];
 };
 
+/** A preview with what the user's accept or reject needs: its handle and what it depends on. */
+export type ReviewedOperation = OperationPreview & {
+  id: string;
+  /** Suggestions this one can't be applied without, such as the plan it would join. */
+  dependsOn: string[];
+  /** Why the planner chose this, when the request didn't make it obvious. */
+  reason: string | null;
+  /** Whether its day or week is the planner's own idea rather than one the request gave. */
+  suggested: boolean;
+};
+
 /** Readable previews for every operation, using the proposal's own titles for records. */
 export function describeProposal(
   proposal: Pick<Proposal, "operations" | "references">,
   timeZone = localTimeZone,
-): OperationPreview[] {
+): ReviewedOperation[] {
   const titles = new Map(
     proposal.references.map((reference: ProposalReference) => [
       reference.id,
       reference.title,
     ]),
   );
-  return proposal.operations.map((operation) =>
-    describeOperation(operation, titles, timeZone),
-  );
+  return proposal.operations.map((operation) => ({
+    id: operation.id,
+    dependsOn: operation.dependsOn,
+    reason: operation.reason,
+    suggested: operation.suggested,
+    ...describeOperation(operation.change, titles, timeZone),
+  }));
+}
+
+/**
+ * The suggestions left once `rejected` are dropped. Rejecting a plan or milestone that other
+ * suggestions are built on rejects those too, so a task is never applied without the plan it
+ * was going to live in.
+ */
+export function acceptedOperations(
+  previews: ReviewedOperation[],
+  rejected: ReadonlySet<string>,
+): string[] {
+  const dropped = new Set(rejected);
+  // A dependency chain is at most proposal-length, so one pass per suggestion settles it.
+  for (let pass = 0; pass < previews.length; pass += 1) {
+    let changed = false;
+    for (const preview of previews) {
+      if (dropped.has(preview.id)) continue;
+      if (preview.dependsOn.some((needed) => dropped.has(needed))) {
+        dropped.add(preview.id);
+        changed = true;
+      }
+    }
+    if (!changed) break;
+  }
+  return previews
+    .filter((preview) => !dropped.has(preview.id))
+    .map((preview) => preview.id);
 }
 
 export function describeOperation(
-  operation: ProposalOperation,
+  operation: ProposalOperation["change"],
   titles: Map<string, string>,
   timeZone = localTimeZone,
 ): OperationPreview {
@@ -198,6 +244,7 @@ export function describeOperation(
           operation.priority &&
             `${taskPriorityLabels[operation.priority]} priority`,
           operation.description !== null && "New description",
+          estimateChangeLabel(operation.estimate),
         ]),
       };
     case "schedule_task":
@@ -207,6 +254,7 @@ export function describeOperation(
         details: compact([
           dayChangeLabel(operation.scheduledDay, "Do on", "No scheduled day"),
           dayChangeLabel(operation.dueDate, "Due", "No due date"),
+          weekChangeLabel(operation.plannedWeek),
         ]),
       };
     case "set_task_plan":
@@ -232,12 +280,12 @@ export function describeOperation(
 export function proposalEnablesReminder(
   proposal: Pick<Proposal, "operations">,
 ) {
-  return proposal.operations.some((operation) =>
-    operation.type === "create_event"
-      ? operation.reminderMinutesBefore !== null
-      : (operation.type === "update_event" ||
-          operation.type === "reschedule_event") &&
-        operation.reminderChange.action === "set",
+  return proposal.operations.some(({ change }) =>
+    change.type === "create_event"
+      ? change.reminderMinutesBefore !== null
+      : (change.type === "update_event" ||
+          change.type === "reschedule_event") &&
+        change.reminderChange.action === "set",
   );
 }
 
@@ -265,6 +313,21 @@ function dayChangeLabel(
 ) {
   if (change.action === "set") return `${setLabel} ${shortDate(change.day)}`;
   if (change.action === "clear") return clearLabel;
+  return null;
+}
+
+/** "Takes 1 h 30 m" or "No estimate", and nothing at all when the estimate is untouched. */
+function estimateChangeLabel(change: EstimateChange) {
+  if (change.action === "set") return `Takes ${estimateLabel(change.minutes)}`;
+  if (change.action === "clear") return "No estimate";
+  return null;
+}
+
+/** A week is stored as a day inside it, so it reads as the week that day belongs to. */
+function weekChangeLabel(change: DayChange) {
+  if (change.action === "set")
+    return `Chosen for the week of ${shortDate(weekStartDay(change.day, weekStartsOn))}`;
+  if (change.action === "clear") return "Not chosen for a week";
   return null;
 }
 

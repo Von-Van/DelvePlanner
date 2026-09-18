@@ -14,7 +14,8 @@ Every version answers to one test: can someone with several things going on open
 | v0.2.9  | 2        | Calendars without accounts     | Calendar links and files, time blocks, capacity                           |
 | v0.3.0  | 2        | Calendar integration           | Google and Outlook accounts, read-only                                    |
 | v0.3.1  | 2        | Local model flexibility        | Any installed model, and a runtime that runs only while it works          |
-| v0.3.2  | 3        | AI planning                    | Plan creation and breakdown, inbox, week, day, and replanning proposals   |
+| v0.3.2  | 3        | AI planning                    | Reviewable suggestions, estimates, week choice, reasons                   |
+| v0.3.3  | 3        | AI planning, continued         | Inbox conversion, workstreams, inline edits before applying               |
 | v0.3.5  | 4        | Personal planning intelligence | Planning profile, local observations, What DayPlan Knows                  |
 | v0.4.0  | 5        | Quality of life                | Templates, recurring tasks, checklists, duplication, dependencies, polish |
 
@@ -135,6 +136,10 @@ Build order: plan creation, plan breakdown, inbox processing, weekly planning, d
 - **Docs.** The README's AI permission boundary lists what the planner can now propose.
 
 **Done when:** "I'm moving to Boston around January 15…" becomes a reviewable starter plan, and "I'm not getting any of this done today" becomes a redistribution the user can accept line by line.
+
+**Shipped in v0.3.2:** per-suggestion accept and reject with dependency-aware rejection and atomic partial apply; estimates and week choice as typed fields on the task operations; a one-line reason on the operations where the planner chooses something the request didn't state; and planner-chosen days, due dates, and weeks marked as suggestions, allowed only when the request asks the planner to choose.
+
+**Still open, moved to v0.3.3:** converting inbox items through the planner (needs inbox records in the request context), creating workstreams (worth little until tasks can be assigned to them), and editing a suggestion inline before applying it. Accept-or-reject covers the common case; anything else is edited afterwards with DayPlan's own editors.
 
 ## v0.3.5 — Personal planning intelligence
 

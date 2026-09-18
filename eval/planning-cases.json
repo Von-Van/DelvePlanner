@@ -230,7 +230,10 @@
             "title": null,
             "description": null,
             "status": "done",
-            "priority": null
+            "priority": null,
+            "estimate": {
+              "action": "unchanged"
+            }
           }
         ]
       }
@@ -250,7 +253,10 @@
             "title": null,
             "description": null,
             "status": "blocked",
-            "priority": null
+            "priority": null,
+            "estimate": {
+              "action": "unchanged"
+            }
           }
         ]
       }
@@ -270,7 +276,10 @@
             "title": null,
             "description": null,
             "status": null,
-            "priority": "high"
+            "priority": "high",
+            "estimate": {
+              "action": "unchanged"
+            }
           }
         ]
       }
@@ -292,6 +301,9 @@
               "day": "2026-09-16"
             },
             "dueDate": {
+              "action": "unchanged"
+            },
+            "plannedWeek": {
               "action": "unchanged"
             }
           }
@@ -316,6 +328,9 @@
             "dueDate": {
               "action": "set",
               "day": "2026-10-06"
+            },
+            "plannedWeek": {
+              "action": "unchanged"
             }
           }
         ]
@@ -603,7 +618,10 @@
             "title": null,
             "description": null,
             "status": "done",
-            "priority": null
+            "priority": null,
+            "estimate": {
+              "action": "unchanged"
+            }
           },
           {
             "type": "create_task",
@@ -688,7 +706,10 @@
             "title": null,
             "description": null,
             "status": "in_progress",
-            "priority": null
+            "priority": null,
+            "estimate": {
+              "action": "unchanged"
+            }
           }
         ]
       }
@@ -839,7 +860,10 @@
             "title": null,
             "description": null,
             "status": "done",
-            "priority": null
+            "priority": null,
+            "estimate": {
+              "action": "unchanged"
+            }
           }
         ]
       }
@@ -937,6 +961,175 @@
           "scheduledDay": "2026-09-15"
         }
       ],
+      "expected": {
+        "kind": "clarification"
+      }
+    },
+    {
+      "id": "estimate-task",
+      "command": "printing the flyers takes about an hour",
+      "day": "2026-09-15",
+      "timeZone": "America/New_York",
+      "uses": "charity",
+      "tasks": [
+        {
+          "title": "Print flyers",
+          "plan": "Streamer Charity Week"
+        }
+      ],
+      "expected": {
+        "kind": "proposal",
+        "operations": [
+          {
+            "type": "update_task",
+            "task": "Print flyers",
+            "title": null,
+            "description": null,
+            "status": null,
+            "priority": null,
+            "estimate": {
+              "action": "set",
+              "minutes": 60
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "choose-task-for-next-week",
+      "command": "do book venue next week",
+      "day": "2026-09-15",
+      "timeZone": "America/New_York",
+      "uses": "charity",
+      "expected": {
+        "kind": "proposal",
+        "operations": [
+          {
+            "type": "schedule_task",
+            "task": "Book venue",
+            "scheduledDay": {
+              "action": "unchanged"
+            },
+            "dueDate": {
+              "action": "unchanged"
+            },
+            "plannedWeek": {
+              "action": "set",
+              "day": "2026-09-21"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "choose-task-for-this-week",
+      "command": "put email sponsors in this week",
+      "day": "2026-09-15",
+      "timeZone": "America/New_York",
+      "uses": "charity",
+      "expected": {
+        "kind": "proposal",
+        "operations": [
+          {
+            "type": "schedule_task",
+            "task": "Email sponsors",
+            "scheduledDay": {
+              "action": "unchanged"
+            },
+            "dueDate": {
+              "action": "unchanged"
+            },
+            "plannedWeek": {
+              "action": "set",
+              "day": "2026-09-14"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "estimate-and-week-together",
+      "command": "test stream overlay takes 45 minutes, do it next week",
+      "day": "2026-09-15",
+      "timeZone": "America/New_York",
+      "uses": "charity",
+      "expected": {
+        "kind": "proposal",
+        "operations": [
+          {
+            "type": "update_task",
+            "task": "Test stream overlay",
+            "title": null,
+            "description": null,
+            "status": null,
+            "priority": null,
+            "estimate": {
+              "action": "set",
+              "minutes": 45
+            }
+          },
+          {
+            "type": "schedule_task",
+            "task": "Test stream overlay",
+            "scheduledDay": {
+              "action": "unchanged"
+            },
+            "dueDate": {
+              "action": "unchanged"
+            },
+            "plannedWeek": {
+              "action": "set",
+              "day": "2026-09-21"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "no-estimate-invented",
+      "command": "mark book venue done",
+      "day": "2026-09-15",
+      "timeZone": "America/New_York",
+      "uses": "charity",
+      "expected": {
+        "kind": "proposal",
+        "operations": [
+          {
+            "type": "update_task",
+            "task": "Book venue",
+            "title": null,
+            "description": null,
+            "status": "done",
+            "priority": null,
+            "estimate": {
+              "action": "unchanged"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "asks-planner-to-choose-a-day",
+      "command": "when should I do email sponsors?",
+      "day": "2026-09-15",
+      "timeZone": "America/New_York",
+      "uses": "charity",
+      "expected": {
+        "kind": "proposal",
+        "operations": [
+          {
+            "type": "schedule_task",
+            "task": "Email sponsors"
+          }
+        ]
+      }
+    },
+    {
+      "id": "no-invented-day-without-asking",
+      "command": "add a task to call the printer",
+      "day": "2026-09-15",
+      "timeZone": "America/New_York",
+      "uses": "charity",
       "expected": {
         "kind": "clarification"
       }

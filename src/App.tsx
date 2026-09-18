@@ -562,13 +562,20 @@ export default function App() {
     }
   }
 
-  async function applyProposal() {
+  async function applyProposal(accepted: string[]) {
     if (!agentResponse || agentResponse.kind !== "proposal") return;
     setIsApplying(true);
     try {
-      if (proposalEnablesReminder(agentResponse))
+      // Only ask for notification permission when an accepted change actually needs it.
+      const applied = {
+        ...agentResponse,
+        operations: agentResponse.operations.filter((operation) =>
+          accepted.includes(operation.id),
+        ),
+      };
+      if (proposalEnablesReminder(applied))
         await ensureNotificationPermission();
-      await api.apply(agentResponse.proposalId);
+      await api.apply(agentResponse.proposalId, accepted);
       setAgentResponse(null);
       setCommand("");
       setAppliedProposals((count) => count + 1);

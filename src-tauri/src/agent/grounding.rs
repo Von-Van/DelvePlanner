@@ -109,6 +109,49 @@ pub(super) fn names(text: &str, title: &str) -> bool {
     contains_title(&lower, title) || title_matches(title, &planning_tokens(text)) > 0
 }
 
+/// Whether the request hands the choosing to the planner: "when should I do this", "plan my
+/// week", "find time for it". Only then may a day or a week the request never gave survive, and
+/// only marked as a suggestion. Anything else keeps the old rule that invented dates are dropped.
+pub(super) fn asks_to_choose(text: &str) -> bool {
+    let words = words(text);
+    let has = |phrase: &[&str]| {
+        words
+            .windows(phrase.len())
+            .any(|window| window.iter().zip(phrase).all(|(word, part)| word == part))
+    };
+    [
+        ["when", "should"].as_slice(),
+        ["when", "can"].as_slice(),
+        ["find", "time"].as_slice(),
+        ["fit", "in"].as_slice(),
+        ["plan", "my"].as_slice(),
+        ["plan", "the"].as_slice(),
+        ["plan", "this"].as_slice(),
+        ["plan", "out"].as_slice(),
+        ["spread", "out"].as_slice(),
+        ["help", "me", "plan"].as_slice(),
+        ["work", "out", "when"].as_slice(),
+        ["you", "pick"].as_slice(),
+        ["you", "choose"].as_slice(),
+        ["you", "decide"].as_slice(),
+    ]
+    .iter()
+    .any(|phrase| has(phrase))
+}
+
+/// Whether the request itself chose a week. "week" alone isn't enough: plan titles such as
+/// "Streamer Charity Week" contain it, and a title should never ground a date.
+pub(super) fn mentions_week(text: &str) -> bool {
+    let words = words(text);
+    words.windows(2).any(|pair| {
+        pair[1] == "week"
+            && matches!(
+                pair[0].as_str(),
+                "this" | "next" | "following" | "coming" | "same" | "that" | "the" | "a"
+            )
+    }) || words.iter().any(|word| word == "weekly")
+}
+
 pub(super) fn mentions_day(text: &str) -> bool {
     let words = words(text);
     let has_digit_date = text.split_whitespace().any(|word| {

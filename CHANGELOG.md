@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.3.2
+
+The planner's suggestions are now reviewed one by one, it can estimate how long work takes and choose a week for it, and it says why when it picks something you didn't.
+
+### Accept the parts you want
+
+- A proposal's suggestions each have their own tick box. Apply the ones you keep; the rest are dropped.
+- Rejecting a new plan or milestone also rejects the suggestions that were going to live in it, so a task never arrives without the plan it belongs to.
+- The accepted set still applies in one transaction: all of it or none of it, with the same checks as before.
+
+### Estimates, weeks, and reasons
+
+- “Printing the flyers takes about an hour” sets that task's estimate, which Today and Week already count as planned work.
+- “Do this next week” chooses a task for a week without fixing a day. Any day you name inside that week means the same week.
+- A suggestion can carry a short reason — “The day before its milestone” — shown under it.
+- The planner picks a day, due date, or week itself only when you ask it to (“when should I…”, “find time for…”, “plan my week”). What it picks is labelled **suggested** so it's clear the choice was the planner's. A date you never asked for is still refused.
+
+### Fixed
+
+- A task chosen for a week with no other change was silently discarded as “nothing to change”.
+- The evaluation harness couldn't start at all after v0.3.1, and could stop the running app's model runtime. It now starts its own runtime, keeps its state out of the app's, and reads models from wherever they're installed.
+
 ## v0.3.1
 
 DayPlan now plans with whichever local model you already have, and its AI runtime only runs while it's actually working.

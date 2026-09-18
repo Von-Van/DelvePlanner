@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 pub const MAX_TITLE_LENGTH: usize = 140;
 pub const MAX_NOTES_LENGTH: usize = 800;
@@ -1105,6 +1106,28 @@ impl DayChange {
     }
 }
 
+/// A typed edit to a task's estimate, so "no change" and "no estimate" stay distinct.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
+pub enum EstimateChange {
+    #[default]
+    Unchanged,
+    Clear,
+    Set {
+        minutes: i64,
+    },
+}
+
+impl EstimateChange {
+    pub fn apply(&self, current: Option<i64>) -> Option<i64> {
+        match self {
+            Self::Unchanged => current,
+            Self::Clear => None,
+            Self::Set { minutes } => Some(*minutes),
+        }
+    }
+}
+
 /// The closed set of changes the local planner may propose. Nothing here is applied until the
 /// user approves the whole proposal, which then commits in one transaction.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -1204,12 +1227,17 @@ pub enum MutationOperation {
         description: Option<String>,
         status: Option<TaskStatus>,
         priority: Option<TaskPriority>,
+        /// How long the work is expected to take, which capacity counts as planned work.
+        estimate: EstimateChange,
     },
     ScheduleTask {
         task_id: String,
         expected_revision: i64,
         scheduled_day: DayChange,
         due_date: DayChange,
+        /// The week a task is chosen for, as any day inside it. Weekly planning picks work for a
+        /// week before it knows which day it lands on.
+        planned_week: DayChange,
     },
     /// Moves a task into a plan (and optionally one of its milestones), or out of plans.
     /// The task's workstream is cleared when its plan changes.
@@ -1246,6 +1274,107 @@ impl ModelResponse {
     }
 }
 
+impl MutationOperation {
+    /// The plans and milestones this operation needs the same proposal to create. An operation
+    /// refers to one by title until it exists, which is what makes it depend on another.
+    pub fn new_references(&self) -> Vec<(RecordKind, &str)> {
+        fn title(reference: Option<&RecordRef>) -> Option<&str> {
+            match reference {
+                Some(RecordRef::New(NewRef { new_title })) => Some(new_title.as_str()),
+                _ => None,
+            }
+        }
+        let (plan, milestone) = match self {
+            Self::CreateEvent { plan, .. } | Self::SetEventPlan { plan, .. } => {
+                (title(plan.as_ref()), None)
+            }
+            Self::CreateMilestone { plan, .. } => (title(Some(plan)), None),
+            Self::CreateTask {
+                plan, milestone, ..
+            }
+            | Self::SetTaskPlan {
+                plan, milestone, ..
+            } => (title(plan.as_ref()), title(milestone.as_ref())),
+            _ => (None, None),
+        };
+        plan.map(|title| (RecordKind::Plan, title))
+            .into_iter()
+            .chain(milestone.map(|title| (RecordKind::Milestone, title)))
+            .collect()
+    }
+}
+
+/// What the planner says about one of its own suggestions.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ReviewNote {
+    pub reason: Option<String>,
+    pub suggested: bool,
+}
+
+/// One suggestion inside a proposal, as the user reviews it: a handle their choice refers to, the
+/// other suggestions it can't be applied without, and the change itself.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProposedOperation {
+    pub id: String,
+    /// Suggestions that have to be accepted alongside this one. A task can't join a plan the same
+    /// proposal creates unless that plan is created too.
+    pub depends_on: Vec<String>,
+    /// Why the planner chose this, when the request didn't make it obvious.
+    pub reason: Option<String>,
+    /// Whether the day or week in it is the planner's own idea, asked for but never stated.
+    pub suggested: bool,
+    pub change: MutationOperation,
+}
+
+impl ProposedOperation {
+    /// The handle for the operation at `index`. Positional, because a proposal is reviewed once
+    /// and applied once: nothing outlives the pending proposal it belongs to.
+    pub fn handle(index: usize) -> String {
+        format!("op-{index}")
+    }
+
+    /// Wraps a proposal's operations for review, working out which ones depend on which. An
+    /// operation depends on another when it refers to a plan or milestone that one creates.
+    /// `notes` carries what the planner said about each, in the same order.
+    pub fn review(operations: &[MutationOperation], notes: &[ReviewNote]) -> Vec<Self> {
+        let creates: HashMap<(RecordKind, &str), String> = operations
+            .iter()
+            .enumerate()
+            .filter_map(|(index, operation)| match operation {
+                MutationOperation::CreatePlan { title, .. } => {
+                    Some(((RecordKind::Plan, title.as_str()), Self::handle(index)))
+                }
+                MutationOperation::CreateMilestone { title, .. } => {
+                    Some(((RecordKind::Milestone, title.as_str()), Self::handle(index)))
+                }
+                _ => None,
+            })
+            .collect();
+        operations
+            .iter()
+            .enumerate()
+            .map(|(index, operation)| {
+                let mut depends_on: Vec<String> = operation
+                    .new_references()
+                    .into_iter()
+                    .filter_map(|(kind, title)| creates.get(&(kind, title)).cloned())
+                    .collect();
+                depends_on.sort();
+                depends_on.dedup();
+                let note = notes.get(index).cloned().unwrap_or_default();
+                Self {
+                    id: Self::handle(index),
+                    depends_on,
+                    reason: note.reason,
+                    suggested: note.suggested,
+                    change: operation.clone(),
+                }
+            })
+            .collect()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(
     tag = "kind",
@@ -1256,7 +1385,7 @@ pub enum PlannerResponse {
     Proposal {
         proposal_id: String,
         summary: String,
-        operations: Vec<MutationOperation>,
+        operations: Vec<ProposedOperation>,
         /// Titles of the existing records the operations reference, for a readable preview.
         references: Vec<ProposalReference>,
         expires_at: String,

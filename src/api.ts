@@ -387,6 +387,17 @@ const dayChangeSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("set"), day: daySchema }).strict(),
 ]);
 
+const estimateChangeSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("unchanged") }).strict(),
+  z.object({ action: z.literal("clear") }).strict(),
+  z
+    .object({
+      action: z.literal("set"),
+      minutes: z.number().int().min(1).max(1440),
+    })
+    .strict(),
+]);
+
 const titleSchema = z.string().min(1).max(140);
 const descriptionSchema = z.string().max(2000);
 const targetSchema = {
@@ -516,6 +527,7 @@ export const operationSchema = z.discriminatedUnion("type", [
       description: descriptionSchema.nullable(),
       status: z.enum(taskStatuses).nullable(),
       priority: z.enum(taskPriorities).nullable(),
+      estimate: estimateChangeSchema,
     })
     .strict(),
   z
@@ -525,6 +537,7 @@ export const operationSchema = z.discriminatedUnion("type", [
       ...targetSchema,
       scheduledDay: dayChangeSchema,
       dueDate: dayChangeSchema,
+      plannedWeek: dayChangeSchema,
     })
     .strict(),
   z
@@ -553,13 +566,27 @@ const proposalReferenceSchema = z
   })
   .strict();
 
+/** One suggestion as the user reviews it: its handle, what it needs, and the change itself. */
+const proposedOperationSchema = z
+  .object({
+    id: z.string().min(1),
+    /** Suggestions this one can't be applied without, such as the plan it would join. */
+    dependsOn: z.array(z.string()),
+    /** Why the planner chose this, when the request didn't make it obvious. */
+    reason: z.string().max(140).nullable(),
+    /** Whether the day or week in it is the planner's own idea rather than one you gave. */
+    suggested: z.boolean(),
+    change: operationSchema,
+  })
+  .strict();
+
 export const plannerResponseSchema = z.discriminatedUnion("kind", [
   z
     .object({
       kind: z.literal("proposal"),
       proposalId: z.string().uuid(),
       summary: z.string().min(1).max(280),
-      operations: z.array(operationSchema).min(1).max(12),
+      operations: z.array(proposedOperationSchema).min(1).max(12),
       references: z.array(proposalReferenceSchema),
       expiresAt: timestampSchema,
     })
@@ -733,6 +760,7 @@ export type ProposalOperation = Proposal["operations"][number];
 export type ProposalReference = z.infer<typeof proposalReferenceSchema>;
 export type RecordReference = z.infer<typeof recordReferenceSchema>;
 export type DayChange = z.infer<typeof dayChangeSchema>;
+export type EstimateChange = z.infer<typeof estimateChangeSchema>;
 export type AppliedProposal = z.infer<typeof appliedProposalSchema>;
 export type ReminderChange = z.infer<typeof reminderChangeSchema>;
 
@@ -1215,9 +1243,10 @@ export const api = {
       }),
     );
   },
-  async apply(proposalId: string) {
+  /** Applies the accepted suggestions; leaving `accepted` out applies all of them. */
+  async apply(proposalId: string, accepted?: string[]) {
     return appliedProposalSchema.parse(
-      await invokeCommand("apply_schedule_changes", { proposalId }),
+      await invokeCommand("apply_schedule_changes", { proposalId, accepted }),
     );
   },
   async discardProposal(proposalId: string) {

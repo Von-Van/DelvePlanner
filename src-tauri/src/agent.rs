@@ -6,7 +6,7 @@ mod prompt;
 use crate::error::{AppError, AppResult};
 use crate::model::{
     AppliedProposal, ModelResponse, MutationOperation, PlannerCandidates, PlannerResponse,
-    RecordRef, MAX_COMMAND_LENGTH,
+    ProposedOperation, RecordRef, MAX_COMMAND_LENGTH,
 };
 use crate::runtime::{DownloadProgress, RuntimePhase};
 use chrono::{DateTime, Duration as ChronoDuration, NaiveDate, SecondsFormat, Utc};
@@ -596,7 +596,7 @@ impl PlannerAgent {
                 PlannerResponse::Proposal {
                     proposal_id,
                     summary: proposal.summary,
-                    operations: proposal.operations,
+                    operations: ProposedOperation::review(&proposal.operations, &proposal.notes),
                     references: proposal.references,
                     expires_at: expires_at.to_rfc3339_opts(SecondsFormat::Millis, true),
                 }
@@ -935,6 +935,7 @@ mod tests {
             summary: "Add lunch".into(),
             drafts: Vec::new(),
             references: Vec::new(),
+            notes: Vec::new(),
             operations,
         })
     }
@@ -1200,8 +1201,10 @@ mod tests {
         };
         assert!(matches!(
             operations.as_slice(),
-            [MutationOperation::CreateEvent { title, start_at_utc, .. }]
-                if title == "Lunch" && start_at_utc == "2026-08-13T16:00:00.000Z"
+            [ProposedOperation {
+                change: MutationOperation::CreateEvent { title, start_at_utc, .. },
+                ..
+            }] if title == "Lunch" && start_at_utc == "2026-08-13T16:00:00.000Z"
         ));
         assert_eq!(agent.referenced_ids(), Vec::<String>::new());
     }

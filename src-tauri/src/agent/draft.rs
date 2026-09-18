@@ -6,17 +6,18 @@
 //! cannot be applied safely become a clarifying question instead of an error.
 
 use super::grounding::{
-    is_bulk, is_follow_up, mentions_clock_time, mentions_day, mentions_duration, mentions_notes,
-    mentions_plan_word, names, user_spelling, wants_reminder_at_start, words,
+    asks_to_choose, is_bulk, is_follow_up, mentions_clock_time, mentions_day, mentions_duration,
+    mentions_notes, mentions_plan_word, mentions_week, names, user_spelling,
+    wants_reminder_at_start, words,
 };
 use crate::db::{fold, validate_model_response, PlannerDatabase};
 use crate::error::{AppError, AppResult};
 use crate::model::{
-    DayChange, LocalDateTimeInput, LocalDateTimeResolution, Milestone, MilestoneStatus,
-    ModelResponse, MutationOperation, Plan, PlanStatus, PlannerCandidates, ProposalReference,
-    RecordKind, RecordRef, ReminderChange, ScheduleEvent, Task, TaskPriority, TaskStatus,
-    MAX_DESCRIPTION_LENGTH, MAX_NOTES_LENGTH, MAX_OPERATIONS, MAX_REMINDER_MINUTES,
-    MAX_TITLE_LENGTH,
+    DayChange, EstimateChange, LocalDateTimeInput, LocalDateTimeResolution, Milestone,
+    MilestoneStatus, ModelResponse, MutationOperation, Plan, PlanStatus, PlannerCandidates,
+    ProposalReference, RecordKind, RecordRef, ReminderChange, ReviewNote, ScheduleEvent, Task,
+    TaskPriority, TaskStatus, MAX_DESCRIPTION_LENGTH, MAX_NOTES_LENGTH, MAX_OPERATIONS,
+    MAX_REMINDER_MINUTES, MAX_TITLE_LENGTH,
 };
 use chrono::{DateTime, Duration, NaiveDate, NaiveTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -24,6 +25,8 @@ use std::collections::{HashMap, HashSet};
 
 pub(super) const DEFAULT_EVENT_MINUTES: i64 = 60;
 const SUMMARY_LIMIT: usize = 280;
+/// A reason sits on one preview line, so it stays shorter than a summary.
+const MAX_REASON_LENGTH: usize = 120;
 
 /// The single JSON object the model must produce.
 #[derive(Debug, Clone, Deserialize)]
@@ -152,6 +155,8 @@ pub(super) enum DraftOperation {
         status: Option<TaskStatus>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         priority: Option<TaskPriority>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
     },
     UpdateTask {
         task_id: String,
@@ -163,6 +168,10 @@ pub(super) enum DraftOperation {
         status: Option<TaskStatus>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         priority: Option<TaskPriority>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        takes: Option<EstimateChange>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
     },
     ScheduleTask {
         task_id: String,
@@ -170,6 +179,10 @@ pub(super) enum DraftOperation {
         do_on: Option<DayChange>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         due_by: Option<DayChange>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        in_week: Option<DayChange>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
     },
     SetTaskPlan {
         task_id: String,
@@ -191,6 +204,8 @@ pub(super) enum Resolution {
 pub(super) struct ResolvedProposal {
     pub summary: String,
     pub operations: Vec<MutationOperation>,
+    /// One per operation, in the same order: what the planner says about its own choice.
+    pub notes: Vec<ReviewNote>,
     /// The checked operations in the model's own format, for follow-up turns.
     pub drafts: Vec<DraftOperation>,
     pub references: Vec<ProposalReference>,
@@ -286,6 +301,10 @@ impl Resolver<'_> {
             return ask("That would not change anything. What would you like to change?");
         }
         let mut drafts = merge_event_edits(drafts);
+        // Whether the request handed the timing to the planner, which is what makes a day or a
+        // week it picked a suggestion rather than something the user asked for.
+        let chose_the_timing =
+            asks_to_choose(self.command) && !mentions_day(stated) && !mentions_week(stated);
         self.ground(&mut drafts, stated)?;
         self.check_conflicts(&drafts)?;
         self.resolve_plan_titles(&mut drafts)?;
@@ -302,10 +321,18 @@ impl Resolver<'_> {
         let ModelResponse::Proposal { operations, .. } = response else {
             unreachable!("a proposal was just built");
         };
+        let notes = drafts
+            .iter()
+            .map(|draft| ReviewNote {
+                reason: draft.reason(),
+                suggested: chose_the_timing && draft.sets_a_day(),
+            })
+            .collect();
         Ok(Resolution::Proposal(ResolvedProposal {
             summary,
             references: self.references(&operations),
             operations,
+            notes,
             drafts,
         }))
     }
@@ -590,6 +617,7 @@ impl Resolver<'_> {
                 due_by,
                 status,
                 priority,
+                reason,
             } => {
                 self.check_plan_reference(plan.as_ref())?;
                 self.check_milestone_reference(milestone.as_ref())?;
@@ -602,6 +630,7 @@ impl Resolver<'_> {
                     due_by: due_by.map(|day| check_day(&day)).transpose()?,
                     status,
                     priority,
+                    reason: clean_reason(reason),
                 })
             }
             DraftOperation::UpdateTask {
@@ -610,37 +639,50 @@ impl Resolver<'_> {
                 description,
                 status,
                 priority,
+                takes,
+                reason,
             } => {
                 let task = self.task(&task_id)?;
                 let title = changed_title(title.map(|title| self.spelled(title)), &task.title)?;
                 let description = changed_description(description, &task.description)?;
                 let status = status.filter(|status| *status != task.status);
                 let priority = priority.filter(|priority| *priority != task.priority);
+                let takes = changed_estimate(takes, task.estimated_minutes)?;
                 let unchanged = title.is_none()
                     && description.is_none()
                     && status.is_none()
-                    && priority.is_none();
+                    && priority.is_none()
+                    && takes.is_none();
                 (!unchanged).then_some(DraftOperation::UpdateTask {
                     task_id,
                     title,
                     description,
                     status,
                     priority,
+                    takes,
+                    reason: clean_reason(reason),
                 })
             }
             DraftOperation::ScheduleTask {
                 task_id,
                 do_on,
                 due_by,
+                in_week,
+                reason,
             } => {
                 let task = self.task(&task_id)?;
                 let do_on = changed_day(do_on, task.scheduled_day.as_deref())?;
                 let due_by = changed_day(due_by, task.due_date.as_deref())?;
-                (do_on.is_some() || due_by.is_some()).then_some(DraftOperation::ScheduleTask {
-                    task_id,
-                    do_on,
-                    due_by,
-                })
+                let in_week = changed_week(in_week, task.planned_week.as_deref())?;
+                (do_on.is_some() || due_by.is_some() || in_week.is_some()).then_some(
+                    DraftOperation::ScheduleTask {
+                        task_id,
+                        do_on,
+                        due_by,
+                        in_week,
+                        reason: clean_reason(reason),
+                    },
+                )
             }
             DraftOperation::SetTaskPlan {
                 task_id,
@@ -713,7 +755,10 @@ impl Resolver<'_> {
     /// it is the plan being viewed or the plan of a named milestone. Events keep the original
     /// schedule rules, which allow bulk edits such as "push everything back 30 minutes".
     fn ground(&self, drafts: &mut Vec<DraftOperation>, stated: &str) -> Step<()> {
-        let days_stated = mentions_day(stated);
+        // A request that hands the timing over lets the planner choose a day; the review marks
+        // what it chose as a suggestion rather than passing it off as something the user said.
+        let days_stated = mentions_day(stated) || asks_to_choose(self.command);
+        let weeks_stated = mentions_week(stated) || asks_to_choose(self.command);
         let bulk = is_bulk(self.command);
         let names_a_plan = mentions_plan_word(self.command);
         let known = |id: &str| {
@@ -881,6 +926,8 @@ impl Resolver<'_> {
                     task_id,
                     do_on,
                     due_by,
+                    in_week,
+                    ..
                 } => {
                     if !task_named(task_id) && !bulk {
                         return ask("Which task do you mean?");
@@ -891,6 +938,10 @@ impl Resolver<'_> {
                                 *change = None;
                             }
                         }
+                    }
+                    // A week the request never chose is as invented as a day it never gave.
+                    if !weeks_stated && matches!(in_week, Some(DayChange::Set { .. })) {
+                        *in_week = None;
                     }
                 }
                 DraftOperation::SetTaskPlan {
@@ -1230,6 +1281,7 @@ impl Resolver<'_> {
                         task_id: id,
                         do_on,
                         due_by,
+                        ..
                     } if id == task_id => {
                         scheduled = next_has_day(do_on.as_ref(), scheduled);
                         due = next_has_day(due_by.as_ref(), due);
@@ -1377,6 +1429,7 @@ impl Resolver<'_> {
                 due_by,
                 status,
                 priority,
+                ..
             } => MutationOperation::CreateTask {
                 title,
                 description: description.unwrap_or_default(),
@@ -1393,6 +1446,8 @@ impl Resolver<'_> {
                 description,
                 status,
                 priority,
+                takes,
+                ..
             } => MutationOperation::UpdateTask {
                 expected_revision: self.task(&task_id)?.revision,
                 task_id,
@@ -1400,16 +1455,20 @@ impl Resolver<'_> {
                 description,
                 status,
                 priority,
+                estimate: takes.unwrap_or_default(),
             },
             DraftOperation::ScheduleTask {
                 task_id,
                 do_on,
                 due_by,
+                in_week,
+                ..
             } => MutationOperation::ScheduleTask {
                 expected_revision: self.task(&task_id)?.revision,
                 task_id,
                 scheduled_day: do_on.unwrap_or_default(),
                 due_date: due_by.unwrap_or_default(),
+                planned_week: in_week.unwrap_or_default(),
             },
             DraftOperation::SetTaskPlan {
                 task_id,
@@ -2009,6 +2068,7 @@ fn combine(pending: DraftOperation, new: DraftOperation) -> DraftOperation {
                 due_by,
                 status,
                 priority,
+                reason,
                 ..
             },
             Op::CreateTask {
@@ -2020,6 +2080,7 @@ fn combine(pending: DraftOperation, new: DraftOperation) -> DraftOperation {
                 due_by: new_due_by,
                 status: new_status,
                 priority: new_priority,
+                reason: new_reason,
             },
         ) => Op::CreateTask {
             title,
@@ -2030,6 +2091,7 @@ fn combine(pending: DraftOperation, new: DraftOperation) -> DraftOperation {
             due_by: new_due_by.or(due_by),
             status: new_status.or(status),
             priority: new_priority.or(priority),
+            reason: new_reason.or(reason),
         },
         (
             Op::UpdateTask {
@@ -2037,6 +2099,8 @@ fn combine(pending: DraftOperation, new: DraftOperation) -> DraftOperation {
                 description,
                 status,
                 priority,
+                takes,
+                reason,
                 ..
             },
             Op::UpdateTask {
@@ -2045,6 +2109,8 @@ fn combine(pending: DraftOperation, new: DraftOperation) -> DraftOperation {
                 description: new_description,
                 status: new_status,
                 priority: new_priority,
+                takes: new_takes,
+                reason: new_reason,
             },
         ) => Op::UpdateTask {
             task_id,
@@ -2052,18 +2118,30 @@ fn combine(pending: DraftOperation, new: DraftOperation) -> DraftOperation {
             description: new_description.or(description),
             status: new_status.or(status),
             priority: new_priority.or(priority),
+            takes: new_takes.or(takes),
+            reason: new_reason.or(reason),
         },
         (
-            Op::ScheduleTask { do_on, due_by, .. },
+            Op::ScheduleTask {
+                do_on,
+                due_by,
+                in_week,
+                reason,
+                ..
+            },
             Op::ScheduleTask {
                 task_id,
                 do_on: new_do_on,
                 due_by: new_due_by,
+                in_week: new_in_week,
+                reason: new_reason,
             },
         ) => Op::ScheduleTask {
             task_id,
             do_on: new_do_on.or(do_on),
             due_by: new_due_by.or(due_by),
+            in_week: new_in_week.or(in_week),
+            reason: new_reason.or(reason),
         },
         (
             Op::UpdatePlan {
@@ -2139,8 +2217,41 @@ fn is_empty_edit(operation: &DraftOperation) -> bool {
             status,
             ..
         } => title.is_none() && description.is_none() && target_date.is_none() && status.is_none(),
-        DraftOperation::ScheduleTask { do_on, due_by, .. } => do_on.is_none() && due_by.is_none(),
+        DraftOperation::ScheduleTask {
+            do_on,
+            due_by,
+            in_week,
+            ..
+        } => do_on.is_none() && due_by.is_none() && in_week.is_none(),
         _ => false,
+    }
+}
+
+impl DraftOperation {
+    /// Whether this operation puts a day, a due date, or a week on a task.
+    fn sets_a_day(&self) -> bool {
+        match self {
+            Self::CreateTask { do_on, due_by, .. } => do_on.is_some() || due_by.is_some(),
+            Self::ScheduleTask {
+                do_on,
+                due_by,
+                in_week,
+                ..
+            } => [do_on, due_by, in_week]
+                .iter()
+                .any(|change| matches!(change, Some(DayChange::Set { .. }))),
+            _ => false,
+        }
+    }
+
+    /// The model's own note about why it chose this, where it is allowed to give one.
+    fn reason(&self) -> Option<String> {
+        match self {
+            Self::CreateTask { reason, .. }
+            | Self::UpdateTask { reason, .. }
+            | Self::ScheduleTask { reason, .. } => reason.clone(),
+            _ => None,
+        }
     }
 }
 
@@ -2306,6 +2417,65 @@ fn changed_day(change: Option<DayChange>, current: Option<&str>) -> Step<Option<
             let day = check_day(&day)?;
             (current != Some(day.as_str())).then_some(DayChange::Set { day })
         }
+    })
+}
+
+/// A week is stored as a day inside it, so every day of one week means the same thing. The model
+/// may answer with any of them; they all become that week's Monday, which keeps what is stored
+/// comparable and makes "the same week again" a no-op.
+fn changed_week(change: Option<DayChange>, current: Option<&str>) -> Step<Option<DayChange>> {
+    Ok(match change {
+        None | Some(DayChange::Unchanged) => None,
+        Some(DayChange::Clear) => current.is_some().then_some(DayChange::Clear),
+        Some(DayChange::Set { day }) => {
+            let day = week_start(&check_day(&day)?)?;
+            let same = current
+                .map(week_start)
+                .transpose()?
+                .is_some_and(|current| current == day);
+            (!same).then_some(DayChange::Set { day })
+        }
+    })
+}
+
+/// The Monday of the week a day falls in.
+fn week_start(day: &str) -> Step<String> {
+    let Ok(parsed) = NaiveDate::parse_from_str(day, "%Y-%m-%d") else {
+        return ask("Which week do you mean?");
+    };
+    Ok(parsed
+        .week(chrono::Weekday::Mon)
+        .first_day()
+        .format("%Y-%m-%d")
+        .to_string())
+}
+
+fn changed_estimate(
+    change: Option<EstimateChange>,
+    current: Option<i64>,
+) -> Step<Option<EstimateChange>> {
+    Ok(match change {
+        None | Some(EstimateChange::Unchanged) => None,
+        Some(EstimateChange::Clear) => current.is_some().then_some(EstimateChange::Clear),
+        Some(EstimateChange::Set { minutes }) => {
+            if !(1..=1440).contains(&minutes) {
+                return ask("How long should that take, between 1 minute and 24 hours?");
+            }
+            (current != Some(minutes)).then_some(EstimateChange::Set { minutes })
+        }
+    })
+}
+
+/// A reason is one short line under the suggestion, so it is trimmed, collapsed, and capped.
+fn clean_reason(reason: Option<String>) -> Option<String> {
+    let reason = reason?;
+    let cleaned = reason.split_whitespace().collect::<Vec<_>>().join(" ");
+    if cleaned.is_empty() {
+        return None;
+    }
+    Some(match cleaned.char_indices().nth(MAX_REASON_LENGTH) {
+        Some((index, _)) => format!("{}…", cleaned[..index].trim_end()),
+        None => cleaned,
     })
 }
 
@@ -2500,6 +2670,27 @@ mod tests {
             Resolution::Clarification(question) => question,
             Resolution::Proposal(proposal) => panic!("unexpected proposal: {proposal:?}"),
         }
+    }
+
+    #[test]
+    fn choosing_a_task_for_a_week_keeps_the_week_it_names() {
+        let chosen = proposal(
+            "do pick paint colors next week",
+            json!([{ "type": "schedule_task", "taskId": TASK, "inWeek": { "action": "set", "day": "2026-09-22" } }]),
+        );
+        assert_eq!(
+            chosen.operations,
+            [MutationOperation::ScheduleTask {
+                task_id: TASK.into(),
+                expected_revision: 4,
+                scheduled_day: DayChange::Unchanged,
+                due_date: DayChange::Unchanged,
+                // Any day of that week means the same week, so all of them are stored as its Monday.
+                planned_week: DayChange::Set {
+                    day: "2026-09-21".into()
+                },
+            }]
+        );
     }
 
     #[test]
@@ -2767,6 +2958,7 @@ mod tests {
         let new_task = [DraftOperation::CreateTask {
             title: "Print flyers".into(),
             description: None,
+            reason: None,
             plan: Some(RecordRef::existing(PLAN)),
             milestone: None,
             do_on: None,
@@ -2950,6 +3142,7 @@ mod tests {
         let draft = DraftOperation::CreateTask {
             title: "Book venue".into(),
             description: None,
+            reason: None,
             plan: Some(RecordRef::existing(PLAN)),
             milestone: None,
             do_on: None,

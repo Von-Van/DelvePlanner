@@ -240,6 +240,7 @@ async fn main() {
         eprintln!("No evaluation cases matched.");
         std::process::exit(2);
     }
+    point_at_installed_models();
     let runtime = OllamaRuntimeManager::new(
         PathBuf::from(env!("CARGO_MANIFEST_DIR")),
         eval_data_directory(),
@@ -249,9 +250,11 @@ async fn main() {
         std::process::exit(2)
     });
     let agent = PlannerAgent::new(runtime.endpoint(), MODEL_NAME);
-    let status = runtime.status(&agent).await;
+    // `status` deliberately starts nothing, so the evaluation asks for the runtime it needs.
+    let status = runtime.started_status(&agent).await;
     if !status.running || !status.model_installed {
         eprintln!("Live evaluation cannot start: {}", status.detail);
+        eprintln!("The gate runs against {MODEL_NAME}; install it in DayPlan or Ollama first.");
         std::process::exit(2);
     }
     let mut runs = Vec::new();
@@ -298,19 +301,45 @@ fn prepend<T: Clone>(target: &mut Vec<T>, shared: &[T]) {
     target.extend(own);
 }
 
+/// Where the evaluation keeps its own runtime state. Never the app's own directory: DayPlan
+/// records the process ID of the server it started there, and a second runtime reading that
+/// record would stop the running app's model as a leftover.
 fn eval_data_directory() -> PathBuf {
     if let Some(path) = env::var_os("DAYPLAN_EVAL_DATA_DIR") {
         return PathBuf::from(path);
     }
+    env::temp_dir().join("dayplan-eval-data")
+}
+
+/// The evaluation reads models from wherever the machine keeps them, so it doesn't need its own
+/// copy of a five-gigabyte download. DayPlan's own folder is offered to the runtime as the
+/// machine's model folder, which it only ever reads from.
+fn point_at_installed_models() {
+    if env::var_os("OLLAMA_MODELS").is_some() {
+        return;
+    }
+    let app_models = app_data_directory().map(|directory| directory.join("ai-models"));
+    if let Some(models) = app_models.filter(|path| path.is_dir()) {
+        env::set_var("OLLAMA_MODELS", models);
+    }
+}
+
+fn app_data_directory() -> Option<PathBuf> {
     #[cfg(target_os = "macos")]
-    if let Some(home) = env::var_os("HOME") {
-        return PathBuf::from(home).join("Library/Application Support/com.vonvan.dayplan.desktop");
+    {
+        env::var_os("HOME").map(|home| {
+            PathBuf::from(home).join("Library/Application Support/com.vonvan.dayplan.desktop")
+        })
     }
     #[cfg(target_os = "windows")]
-    if let Some(app_data) = env::var_os("APPDATA") {
-        return PathBuf::from(app_data).join("com.vonvan.dayplan.desktop");
+    {
+        env::var_os("APPDATA")
+            .map(|app_data| PathBuf::from(app_data).join("com.vonvan.dayplan.desktop"))
     }
-    env::temp_dir().join("dayplan-eval-data")
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        None
+    }
 }
 
 fn eval_options() -> Result<EvalOptions, String> {
@@ -836,7 +865,7 @@ fn score(
             expected_ordered.sort_by_key(operation_key);
             let mut actual_ordered = actual
                 .iter()
-                .map(|operation| actual_operation(operation, titles))
+                .map(|operation| actual_operation(&operation.change, titles))
                 .collect::<Vec<_>>();
             actual_ordered.sort_by_key(operation_key);
             let mut exact = expected.len() == actual.len();

@@ -34,6 +34,7 @@ This checklist gates publishing an existing draft GitHub Release. Record the tes
 - [ ] JSON export/import round-trip is exact; import backup restores correctly.
 - [ ] Reminder fires while the window is closed; permission denial prevents event/proposal mutation.
 - [ ] Stale proposal is rejected atomically.
+- [ ] A planner proposal can be accepted in part: rejecting a new plan also rejects what depended on it, and only the accepted suggestions are written.
 - [ ] Subscribing to a calendar link and importing an `.ics` file both show events on Today and Week; the link is saved in the login Keychain, and removing the calendar deletes it.
 - [ ] Connecting a Google and an Outlook account signs in through the browser, the consent screen lists only read-only calendar access, the picker adds the chosen calendars, and their events appear on Today and Week.
 - [ ] Disconnecting an account removes its calendars and events, deletes its Keychain item, and the grant is gone from the provider's account settings.

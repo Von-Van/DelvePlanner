@@ -99,6 +99,15 @@ describe("planning record boundary", () => {
   });
 });
 
+/** Wraps a change the way a proposal presents it for review. */
+const review = (change: unknown, index = 0) => ({
+  id: `op-${index}`,
+  dependsOn: [] as string[],
+  reason: null,
+  suggested: false,
+  change,
+});
+
 describe("planner response boundary", () => {
   it("rejects fields outside the approved operation schema", () => {
     expect(() =>
@@ -109,12 +118,15 @@ describe("planner response boundary", () => {
         expiresAt: "2026-08-12T20:00:00.000Z",
         references: [],
         operations: [
-          {
-            type: "delete_event",
-            eventId: "30bb9c6a-4020-45a6-806b-5eb71c7ae76f",
-            expectedRevision: 1,
-            sql: "DROP TABLE schedule_events",
-          },
+          review(
+            {
+              type: "delete_event",
+              eventId: "30bb9c6a-4020-45a6-806b-5eb71c7ae76f",
+              expectedRevision: 1,
+              sql: "DROP TABLE schedule_events",
+            },
+            0,
+          ),
         ],
       }),
     ).toThrow();
@@ -141,15 +153,18 @@ describe("planner response boundary", () => {
       plannerResponseSchema.parse({
         ...base,
         operations: [
-          {
-            type: "update_event",
-            eventId: "f67fcad6-2827-4668-829f-1950f441d054",
-            expectedRevision: 1,
-            title: null,
-            notes: null,
-            durationMinutes: null,
-            reminderChange: { action: "set", minutesBefore: 15 },
-          },
+          review(
+            {
+              type: "update_event",
+              eventId: "f67fcad6-2827-4668-829f-1950f441d054",
+              expectedRevision: 1,
+              title: null,
+              notes: null,
+              durationMinutes: null,
+              reminderChange: { action: "set", minutesBefore: 15 },
+            },
+            0,
+          ),
         ],
       }).kind,
     ).toBe("proposal");
@@ -157,15 +172,18 @@ describe("planner response boundary", () => {
       plannerResponseSchema.parse({
         ...base,
         operations: [
-          {
-            type: "update_event",
-            eventId: "f67fcad6-2827-4668-829f-1950f441d054",
-            expectedRevision: 1,
-            title: null,
-            notes: null,
-            durationMinutes: null,
-            reminderChange: { action: "set", minutesBefore: 10_081 },
-          },
+          review(
+            {
+              type: "update_event",
+              eventId: "f67fcad6-2827-4668-829f-1950f441d054",
+              expectedRevision: 1,
+              title: null,
+              notes: null,
+              durationMinutes: null,
+              reminderChange: { action: "set", minutesBefore: 10_081 },
+            },
+            0,
+          ),
         ],
       }),
     ).toThrow();
@@ -185,32 +203,42 @@ describe("planner response boundary", () => {
         },
       ],
       operations: [
-        {
-          type: "create_plan",
-          title: "Bake sale",
-          description: "",
-          status: "planning",
-          startDate: null,
-          targetDate: "2026-10-03",
-        },
-        {
-          type: "create_task",
-          title: "Buy flour",
-          description: "",
-          plan: { newTitle: "Bake sale" },
-          milestone: null,
-          scheduledDay: null,
-          dueDate: "2026-10-01",
-          status: "todo",
-          priority: "normal",
-        },
-        {
-          type: "schedule_task",
-          taskId: "f67fcad6-2827-4668-829f-1950f441d054",
-          expectedRevision: 2,
-          scheduledDay: { action: "set", day: "2026-09-16" },
-          dueDate: { action: "unchanged" },
-        },
+        review(
+          {
+            type: "create_plan",
+            title: "Bake sale",
+            description: "",
+            status: "planning",
+            startDate: null,
+            targetDate: "2026-10-03",
+          },
+          0,
+        ),
+        review(
+          {
+            type: "create_task",
+            title: "Buy flour",
+            description: "",
+            plan: { newTitle: "Bake sale" },
+            milestone: null,
+            scheduledDay: null,
+            dueDate: "2026-10-01",
+            status: "todo",
+            priority: "normal",
+          },
+          1,
+        ),
+        review(
+          {
+            type: "schedule_task",
+            taskId: "f67fcad6-2827-4668-829f-1950f441d054",
+            expectedRevision: 2,
+            scheduledDay: { action: "set", day: "2026-09-16" },
+            dueDate: { action: "unchanged" },
+            plannedWeek: { action: "unchanged" },
+          },
+          2,
+        ),
       ],
     });
     expect(parsed.kind).toBe("proposal");
@@ -223,7 +251,7 @@ describe("planner response boundary", () => {
       summary: "Change it",
       expiresAt: "2026-09-15T20:00:00.000Z",
       references: [],
-      operations: [operation],
+      operations: [review(operation)],
     });
     for (const operation of [
       {

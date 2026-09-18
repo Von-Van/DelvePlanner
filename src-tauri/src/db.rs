@@ -37,8 +37,8 @@ use team::{
 use uuid::Uuid;
 
 pub use availability::CapacityFacts;
+pub use proposals::{accepted_operations, validate_model_response, CandidateRequest};
 pub(crate) use proposals::{fold, planning_tokens, title_matches};
-pub use proposals::{validate_model_response, CandidateRequest};
 
 pub const CURRENT_SCHEMA_VERSION: u32 = 6;
 pub const EXPORT_FORMAT_VERSION: u32 = 6;

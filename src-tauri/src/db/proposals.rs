@@ -17,9 +17,9 @@ use super::{
 use crate::error::{AppError, AppResult};
 use crate::model::{
     AppliedProposal, CreateEventInput, CreateMilestoneInput, CreatePlanInput, CreateTaskInput,
-    DayChange, Milestone, MilestoneStatus, ModelResponse, MutationOperation, Plan,
-    PlannerCandidates, RecordRef, ReminderChange, ScheduleEvent, Task, UpdateMilestoneInput,
-    UpdatePlanInput, UpdateTaskInput, MAX_OPERATIONS,
+    DayChange, EstimateChange, Milestone, MilestoneStatus, ModelResponse, MutationOperation, Plan,
+    PlannerCandidates, ProposedOperation, RecordRef, ReminderChange, ScheduleEvent, Task,
+    UpdateMilestoneInput, UpdatePlanInput, UpdateTaskInput, MAX_OPERATIONS,
 };
 use chrono::{DateTime, TimeZone, Utc};
 use rusqlite::{params, Transaction, TransactionBehavior};
@@ -264,6 +264,72 @@ impl PlannerDatabase {
         transaction.commit()?;
         Ok(applied)
     }
+}
+
+/// The bounds the tasks table itself enforces, checked before anything is written.
+fn validate_estimate(minutes: i64) -> AppResult<()> {
+    if !(1..=1440).contains(&minutes) {
+        return Err(AppError::Validation(
+            "An estimate must be between 1 minute and 24 hours.".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Narrows a proposal to the suggestions the user accepted, keeping their original order. The
+/// handles are the ones the review showed. An accepted suggestion always brings what it depends
+/// on: a task can't join a plan this proposal creates unless that plan is created too.
+pub fn accepted_operations(
+    proposal: &ModelResponse,
+    accepted: Option<&[String]>,
+) -> AppResult<ModelResponse> {
+    let ModelResponse::Proposal {
+        summary,
+        operations,
+    } = proposal
+    else {
+        return Err(AppError::Validation(
+            "Clarifications cannot be applied as changes.".into(),
+        ));
+    };
+    let Some(accepted) = accepted else {
+        return Ok(proposal.clone());
+    };
+    // The handles come from the same positions the review showed, so no notes are needed here.
+    let review = ProposedOperation::review(operations, &[]);
+    let chosen: HashSet<&str> = accepted.iter().map(String::as_str).collect();
+    if let Some(unknown) = chosen
+        .iter()
+        .find(|handle| !review.iter().any(|operation| operation.id == **handle))
+    {
+        return Err(AppError::Validation(format!(
+            "“{unknown}” is not one of this proposal's changes."
+        )));
+    }
+    if chosen.is_empty() {
+        return Err(AppError::Validation(
+            "Choose at least one change to apply.".into(),
+        ));
+    }
+    let kept: Vec<MutationOperation> = review
+        .iter()
+        .filter(|operation| chosen.contains(operation.id.as_str()))
+        .map(|operation| {
+            if operation
+                .depends_on
+                .iter()
+                .all(|needed| chosen.contains(needed.as_str()))
+            {
+                Ok(operation.change.clone())
+            } else {
+                Err(AppError::Validation(
+                    "That change needs the plan or milestone it belongs to, which wasn't accepted."
+                        .into(),
+                ))
+            }
+        })
+        .collect::<AppResult<_>>()?;
+    Ok(ModelResponse::proposal(summary.clone(), kept))
 }
 
 /// Sorts records by descending score, keeping the database order for ties.
@@ -576,6 +642,7 @@ impl ProposalWriter<'_, '_> {
                 description,
                 status,
                 priority,
+                estimate,
             } => {
                 self.edit_task(task_id, *expected_revision, |_, input| {
                     if let Some(title) = title {
@@ -590,6 +657,7 @@ impl ProposalWriter<'_, '_> {
                     if let Some(priority) = priority {
                         input.priority = *priority;
                     }
+                    input.estimated_minutes = estimate.apply(input.estimated_minutes.take());
                     Ok(())
                 })?;
             }
@@ -598,10 +666,12 @@ impl ProposalWriter<'_, '_> {
                 expected_revision,
                 scheduled_day,
                 due_date,
+                planned_week,
             } => {
                 self.edit_task(task_id, *expected_revision, |_, input| {
                     input.scheduled_day = scheduled_day.apply(input.scheduled_day.take());
                     input.due_date = due_date.apply(input.due_date.take());
+                    input.planned_week = planned_week.apply(input.planned_week.take());
                     Ok(())
                 })?;
             }
@@ -984,13 +1054,18 @@ fn validate_operations(operations: &[MutationOperation]) -> AppResult<()> {
                 description,
                 status,
                 priority,
+                estimate,
             } => {
                 validate_target(task_id, *expected_revision)?;
                 validate_optional_text(title.as_deref(), description.as_deref())?;
+                if let EstimateChange::Set { minutes } = estimate {
+                    validate_estimate(*minutes)?;
+                }
                 if title.is_none()
                     && description.is_none()
                     && status.is_none()
                     && priority.is_none()
+                    && estimate == &EstimateChange::Unchanged
                 {
                     return Err(nothing_to_change("A task update"));
                 }
@@ -1000,14 +1075,18 @@ fn validate_operations(operations: &[MutationOperation]) -> AppResult<()> {
                 expected_revision,
                 scheduled_day,
                 due_date,
+                planned_week,
             } => {
                 validate_target(task_id, *expected_revision)?;
-                for change in [scheduled_day, due_date] {
+                for change in [scheduled_day, due_date, planned_week] {
                     if let DayChange::Set { day } = change {
                         parse_day(day)?;
                     }
                 }
-                if scheduled_day == &DayChange::Unchanged && due_date == &DayChange::Unchanged {
+                if scheduled_day == &DayChange::Unchanged
+                    && due_date == &DayChange::Unchanged
+                    && planned_week == &DayChange::Unchanged
+                {
                     return Err(nothing_to_change("A task scheduling change"));
                 }
             }
@@ -1359,6 +1438,118 @@ mod tests {
         assert_eq!(workspace.events[0].title, "Planning call");
     }
 
+    /// A plan and the task that would live in it: accepting only the task is impossible, and
+    /// accepting only the plan leaves the task behind.
+    fn plan_and_its_task() -> ModelResponse {
+        ModelResponse::proposal(
+            "Start the bake sale",
+            vec![
+                MutationOperation::CreatePlan {
+                    title: "Bake sale".into(),
+                    description: String::new(),
+                    status: PlanStatus::Planning,
+                    start_date: None,
+                    target_date: None,
+                },
+                MutationOperation::CreateTask {
+                    title: "Buy flour".into(),
+                    description: String::new(),
+                    plan: Some(RecordRef::new_title("Bake sale")),
+                    milestone: None,
+                    scheduled_day: None,
+                    due_date: Some("2026-10-01".into()),
+                    status: TaskStatus::Todo,
+                    priority: TaskPriority::Normal,
+                },
+            ],
+        )
+    }
+
+    #[test]
+    fn a_review_marks_what_each_suggestion_depends_on() {
+        let ModelResponse::Proposal { operations, .. } = plan_and_its_task() else {
+            panic!("expected a proposal");
+        };
+        let review = ProposedOperation::review(&operations, &[]);
+        assert_eq!(review[0].id, "op-0");
+        assert!(review[0].depends_on.is_empty(), "a new plan needs nothing");
+        // The task names the plan this proposal creates, so it can't be applied without it.
+        assert_eq!(review[1].depends_on, vec!["op-0".to_string()]);
+    }
+
+    #[test]
+    fn applying_a_chosen_few_leaves_the_rest_undone() {
+        let mut database = database();
+        let proposal = plan_and_its_task();
+        let chosen = accepted_operations(&proposal, Some(&["op-0".to_string()])).unwrap();
+
+        let applied = database.apply_proposal(&chosen).unwrap();
+
+        assert_eq!(applied.plan_ids.len(), 1);
+        assert!(applied.task_ids.is_empty(), "the task was not accepted");
+        assert_eq!(database.list_plans("2026-09-15").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_suggestion_is_never_applied_without_what_it_needs() {
+        let proposal = plan_and_its_task();
+        // Keeping the task while rejecting the plan it joins is refused before anything is written.
+        let error = accepted_operations(&proposal, Some(&["op-1".to_string()])).unwrap_err();
+        assert!(matches!(error, AppError::Validation(_)), "{error:?}");
+        assert!(accepted_operations(&proposal, Some(&[])).is_err());
+        assert!(accepted_operations(&proposal, Some(&["op-9".to_string()])).is_err());
+        // Leaving the choice out applies everything, as it did before reviews existed.
+        let all = accepted_operations(&proposal, None).unwrap();
+        assert_eq!(all, proposal);
+    }
+
+    /// Accepting only part of a proposal can undo what made the rest legal, so the per-write rule
+    /// that a task keeps a plan, a week, a day, or a due date has to hold for the chosen few too.
+    #[test]
+    fn a_chosen_few_that_would_strand_a_task_is_refused() {
+        let mut database = database();
+        let launch = plan(&mut database, "Launch");
+        let notes = task(&mut database, "Draft notes", Some(&launch.id));
+        // Together these keep the task somewhere: onto a day first, then out of the plan.
+        let proposal = ModelResponse::proposal(
+            "Move it out of the plan",
+            vec![
+                MutationOperation::ScheduleTask {
+                    task_id: notes.id.clone(),
+                    expected_revision: notes.revision,
+                    scheduled_day: DayChange::Set {
+                        day: "2026-10-02".into(),
+                    },
+                    due_date: DayChange::Unchanged,
+                    planned_week: DayChange::Unchanged,
+                },
+                MutationOperation::SetTaskPlan {
+                    task_id: notes.id.clone(),
+                    expected_revision: notes.revision,
+                    plan: None,
+                    milestone: None,
+                },
+            ],
+        );
+        // Taking the task out of the plan without the day it was going to get strands it.
+        let stranding = accepted_operations(&proposal, Some(&["op-1".to_string()])).unwrap();
+        let error = database.apply_proposal(&stranding).unwrap_err();
+        assert!(matches!(error, AppError::Validation(_)), "{error:?}");
+        let kept = database.plan_workspace(&launch.id).unwrap().tasks.remove(0);
+        assert_eq!(kept.id, notes.id, "nothing was written");
+
+        // Accepting both is fine: the task leaves the plan but lands on a day.
+        database.apply_proposal(&proposal).unwrap();
+        assert!(database
+            .plan_workspace(&launch.id)
+            .unwrap()
+            .tasks
+            .is_empty());
+        let moved = database.tasks_for_day("2026-10-02").unwrap().remove(0);
+        assert_eq!(moved.id, notes.id);
+        assert_eq!(moved.plan_id, None);
+    }
+
     #[test]
     fn a_stale_planning_operation_rolls_back_the_whole_proposal() {
         let mut database = database();
@@ -1401,6 +1592,7 @@ mod tests {
                     description: None,
                     status: Some(TaskStatus::Done),
                     priority: None,
+                    estimate: EstimateChange::Unchanged,
                 },
             ],
         );
@@ -1430,6 +1622,7 @@ mod tests {
                     description: None,
                     status: Some(TaskStatus::Done),
                     priority: None,
+                    estimate: EstimateChange::Unchanged,
                 },
                 MutationOperation::ScheduleTask {
                     task_id: original.id.clone(),
@@ -1438,6 +1631,7 @@ mod tests {
                         day: "2026-09-16".into(),
                     },
                     due_date: DayChange::Unchanged,
+                    planned_week: DayChange::Unchanged,
                 },
                 MutationOperation::SetTaskPlan {
                     task_id: original.id.clone(),
@@ -1477,6 +1671,7 @@ mod tests {
                     description: None,
                     status: Some(TaskStatus::Done),
                     priority: None,
+                    estimate: EstimateChange::Unchanged,
                 },
             ],
         );
@@ -1523,6 +1718,7 @@ mod tests {
             description: None,
             status: None,
             priority: None,
+            estimate: EstimateChange::Unchanged,
         };
         let bad_day = MutationOperation::ScheduleTask {
             task_id: Uuid::new_v4().to_string(),
@@ -1531,6 +1727,7 @@ mod tests {
                 day: "2026-02-30".into(),
             },
             due_date: DayChange::Unchanged,
+            planned_week: DayChange::Unchanged,
         };
         let milestone_without_plan = MutationOperation::SetTaskPlan {
             task_id: Uuid::new_v4().to_string(),

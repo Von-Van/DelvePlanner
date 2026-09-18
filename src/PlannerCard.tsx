@@ -1,7 +1,7 @@
-import { FormEvent } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import type { OllamaStatus, PlannerResponse } from "./api";
 import { Glyph, Mark, Spinner } from "./Geometry";
-import { describeProposal } from "./proposals";
+import { acceptedOperations, describeProposal } from "./proposals";
 
 export function PlannerCard({
   status,
@@ -23,7 +23,8 @@ export function PlannerCard({
   onSubmit: (event: FormEvent) => void;
   thinking: boolean;
   response: PlannerResponse | null;
-  onApply: () => void;
+  /** Applies only the suggestions the user kept ticked. */
+  onApply: (accepted: string[]) => void;
   applying: boolean;
   onDiscard: () => void;
   onClear: () => void;
@@ -38,8 +39,23 @@ export function PlannerCard({
     status?.phase === "stopped" && ready
       ? `${status.modelName} · starts when you ask something`
       : (status?.detail ?? "Checking your local model…");
-  const previews =
-    response?.kind === "proposal" ? describeProposal(response) : [];
+  const previews = useMemo(
+    () => (response?.kind === "proposal" ? describeProposal(response) : []),
+    [response],
+  );
+  const [rejected, setRejected] = useState<ReadonlySet<string>>(new Set());
+  // Every new proposal is reviewed from scratch, with everything accepted to begin with.
+  useEffect(() => setRejected(new Set()), [response]);
+  const accepted = acceptedOperations(previews, rejected);
+  const kept = new Set(accepted);
+  function toggle(id: string) {
+    setRejected((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
   return (
     <section className="planner-card" aria-label="Local planner">
       <div className="planner-heading">
@@ -121,33 +137,64 @@ export function PlannerCard({
             <p className="proposal-kicker">REVIEW BEFORE APPLYING</p>
             <strong>{response.summary}</strong>
             <ul>
-              {previews.map((preview, index) => (
-                <li key={`${response.operations[index].type}-${index}`}>
-                  <i
-                    className={`operation-mark ${preview.tone}`}
-                    aria-hidden="true"
-                  />
-                  <span>
-                    {preview.title}
-                    {preview.details.length > 0 && (
-                      <small>{preview.details.join(" · ")}</small>
-                    )}
-                  </span>
+              {previews.map((preview) => (
+                <li
+                  key={preview.id}
+                  className={kept.has(preview.id) ? "" : "rejected"}
+                >
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={kept.has(preview.id)}
+                      onChange={() => toggle(preview.id)}
+                      aria-label={`Accept: ${preview.title}`}
+                    />
+                    <i
+                      className={`operation-mark ${preview.tone}`}
+                      aria-hidden="true"
+                    />
+                    <span>
+                      {preview.title}
+                      {preview.suggested && (
+                        <em className="suggested-mark">suggested</em>
+                      )}
+                      {preview.details.length > 0 && (
+                        <small>{preview.details.join(" · ")}</small>
+                      )}
+                      {preview.reason && (
+                        <small className="operation-reason">
+                          {preview.reason}
+                        </small>
+                      )}
+                    </span>
+                  </label>
                 </li>
               ))}
             </ul>
+            {accepted.length < previews.length && (
+              <p className="proposal-note">
+                {previews.length - accepted.length} of {previews.length}{" "}
+                rejected
+                {previews.some(
+                  (preview) =>
+                    !kept.has(preview.id) && !rejected.has(preview.id),
+                ) &&
+                  ", including changes that needed a rejected plan or milestone"}
+                .
+              </p>
+            )}
             <div className="proposal-actions">
               <button className="secondary-button" onClick={onDiscard}>
                 Discard
               </button>
               <button
                 className="primary-button small"
-                onClick={onApply}
-                disabled={applying}
+                onClick={() => onApply(accepted)}
+                disabled={applying || accepted.length === 0}
               >
                 {applying && <Spinner size={7} />}
-                Apply {response.operations.length} change
-                {response.operations.length === 1 ? "" : "s"}
+                Apply {accepted.length} change
+                {accepted.length === 1 ? "" : "s"}
               </button>
             </div>
           </div>

@@ -4321,3 +4321,45 @@ select:focus-visible,
   flex-wrap: wrap;
   gap: 8px;
 }
+
+/* Reviewing a proposal suggestion by suggestion. */
+.proposal li label {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  cursor: pointer;
+}
+.proposal li input[type="checkbox"] {
+  flex: 0 0 13px;
+  width: 13px;
+  height: 13px;
+  margin: 2px 0 0;
+  accent-color: var(--blue);
+}
+.proposal li.rejected {
+  opacity: 0.45;
+}
+.proposal li.rejected span {
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+.proposal-note {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font: 400 11px var(--font-ui);
+  line-height: 1.5;
+}
+.suggested-mark {
+  margin-left: 7px;
+  padding: 1px 5px;
+  border: 1px solid var(--blue-frame);
+  color: var(--blue);
+  font: 500 9px var(--font-mono);
+  font-style: normal;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.operation-reason {
+  color: var(--muted);
+  font-style: italic;
+}

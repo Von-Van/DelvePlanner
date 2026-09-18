@@ -69,10 +69,15 @@ delete_milestone: type, milestoneId
 create_task: type, title, [description], [plan], [milestone], [doOn], [dueBy], [status], [priority]
   doOn is the day to work on the task ("tomorrow", "on Friday"). dueBy is its deadline ("by Friday", "due October 3").
   A new task needs a plan, doOn, or dueBy. If the request gives none of them, ask where the task belongs.
-update_task: type, taskId, [title], [description], [status], [priority]
+update_task: type, taskId, [title], [description], [status], [priority], [takes]
   A statement such as "Print flyers is done" or "the caterer call is blocked" sets that task's status.
-schedule_task: type, taskId, [doOn], [dueBy]
-  Changes the day to work on a task or its deadline. Each is {"action":"set","day":"YYYY-MM-DD"} or {"action":"clear"}.
+  takes is how long the work should take: {"action":"set","minutes":90} or {"action":"clear"}. Set it when the request says how long something takes ("the flyers take about an hour"), or when it asks for estimates.
+schedule_task: type, taskId, [doOn], [dueBy], [inWeek]
+  Changes the day to work on a task, its deadline, or the week it is chosen for. Each is {"action":"set","day":"YYYY-MM-DD"} or {"action":"clear"}.
+  inWeek chooses a task for a week without fixing a day ("do this next week", "put it in this week"). Use thisWeek or nextWeek from the context; never work the date out yourself.
+
+create_task, update_task, and schedule_task also take an optional reason: one short line saying why, for a choice the request did not make for you ("Due in three days", "Its milestone is next week"). Leave it out when the request already says why.
+Only pick a day, a due date, or a week yourself when the request asks you to ("when should I…", "find time for…", "plan my week"). Otherwise use the day the request gives, or ask which day it should be.
 set_task_plan: type, taskId, plan, [milestone]
   Moves a task to another plan, or out of its plan with plan null. A milestone must belong to the new plan.
 delete_task: type, taskId
@@ -122,6 +127,16 @@ Request: flyers are done, and I'll call the caterer tomorrow
 
 Request: push the call caterer deadline to Friday
 {"kind":"proposal","summary":"Move the Call caterer deadline to Friday.","operations":[{"type":"schedule_task","taskId":"t-42","dueBy":{"action":"set","day":"2026-03-06"}}]}
+
+Request: put call caterer in this week
+{"kind":"proposal","summary":"Choose Call caterer for this week.","operations":[{"type":"schedule_task","taskId":"t-42","inWeek":{"action":"set","day":"2026-03-02"}}]}
+  Here thisWeek was 2026-03-02 and nextWeek was 2026-03-09. "This week" is thisWeek; "next week" is nextWeek.
+
+Request: when should I do print flyers?
+{"kind":"proposal","summary":"Put Print flyers on Thursday.","operations":[{"type":"schedule_task","taskId":"t-41","doOn":{"action":"set","day":"2026-03-05"},"reason":"The day before its milestone"}]}
+
+Request: printing the flyers takes about an hour, do it next week
+{"kind":"proposal","summary":"Give Print flyers an hour next week.","operations":[{"type":"update_task","taskId":"t-41","takes":{"action":"set","minutes":60}},{"type":"schedule_task","taskId":"t-41","inWeek":{"action":"set","day":"2026-03-09"}}]}
 
 Request: add pick up dry cleaning to my tasks
 {"kind":"clarification","question":"Which day should “Pick up dry cleaning” go on, or which plan does it belong to?"}
@@ -176,6 +191,10 @@ struct RequestContext<'a> {
     request: &'a str,
     today: String,
     tomorrow: String,
+    /// The Monday of the week today falls in, and of the one after it. Working these out from a
+    /// date is exactly the kind of arithmetic the model gets wrong, so Rust hands them over.
+    this_week: String,
+    next_week: String,
     time_zone: &'a str,
     upcoming_weekdays: Weekdays,
     calendar: Vec<String>,
@@ -266,6 +285,14 @@ enum ReplyContext<'a> {
 }
 
 /// The user message: the request plus everything the model may refer to, in local time.
+/// The Monday that starts a day's week, which is how a chosen week is written down.
+fn week_of(day: NaiveDate) -> String {
+    day.week(chrono::Weekday::Mon)
+        .first_day()
+        .format("%Y-%m-%d")
+        .to_string()
+}
+
 pub(super) fn request_context(input: &ContextInput<'_>) -> String {
     let planning = input.scope == Scope::Planning;
     let candidates = input.candidates;
@@ -274,6 +301,8 @@ pub(super) fn request_context(input: &ContextInput<'_>) -> String {
         request: input.command,
         today: label(input.today),
         tomorrow: label(input.today + Duration::days(1)),
+        this_week: week_of(input.today),
+        next_week: week_of(input.today + Duration::days(7)),
         time_zone: input.zone.name(),
         upcoming_weekdays: Weekdays(
             (1..=7)
@@ -479,6 +508,9 @@ fn pattern(value: &str) -> Schema {
     Schema::Object(vec![("type", text("string")), ("pattern", text(value))])
 }
 
+/// A reason is one line under a suggestion in the review.
+const MAX_REASON: u64 = 120;
+
 fn integer() -> Schema {
     Schema::Object(vec![("type", text("integer"))])
 }
@@ -674,6 +706,7 @@ pub(super) fn output_format(scope: Scope, candidates: &PlannerCandidates) -> Sch
                 ("dueBy", day()),
                 ("status", task_status()),
                 ("priority", priority()),
+                ("reason", string(MAX_REASON)),
             ],
             &["type", "title"],
         ));
@@ -687,6 +720,15 @@ pub(super) fn output_format(scope: Scope, candidates: &PlannerCandidates) -> Sch
                     object(vec![("action", constant("clear"))], &["action"]),
                 ])
             };
+            let estimate_change = || {
+                one_of(vec![
+                    object(
+                        vec![("action", constant("set")), ("minutes", integer())],
+                        &["action", "minutes"],
+                    ),
+                    object(vec![("action", constant("clear"))], &["action"]),
+                ])
+            };
             operations.push(object(
                 vec![
                     ("type", constant("update_task")),
@@ -695,6 +737,8 @@ pub(super) fn output_format(scope: Scope, candidates: &PlannerCandidates) -> Sch
                     ("description", description()),
                     ("status", task_status()),
                     ("priority", priority()),
+                    ("takes", estimate_change()),
+                    ("reason", string(MAX_REASON)),
                 ],
                 &["type", "taskId"],
             ));
@@ -704,6 +748,8 @@ pub(super) fn output_format(scope: Scope, candidates: &PlannerCandidates) -> Sch
                     ("taskId", task_ids.clone()),
                     ("doOn", day_change()),
                     ("dueBy", day_change()),
+                    ("inWeek", day_change()),
+                    ("reason", string(MAX_REASON)),
                 ],
                 &["type", "taskId"],
             ));

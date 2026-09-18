@@ -10,8 +10,8 @@ use agent::{OllamaStatus, PlannerAgent, PlannerRequest};
 use calendar::{parse_zone, CalendarService, DayRange};
 use chrono::NaiveDate;
 use db::{
-    backups_for_path, parse_export_bundle, restore_backup, CandidateRequest, DueReminder,
-    PlannerDatabase, CURRENT_SCHEMA_VERSION,
+    accepted_operations, backups_for_path, parse_export_bundle, restore_backup, CandidateRequest,
+    DueReminder, PlannerDatabase, CURRENT_SCHEMA_VERSION,
 };
 use error::{AppError, CommandError};
 use model::{
@@ -1124,12 +1124,17 @@ async fn propose_schedule_changes(
 fn apply_schedule_changes(
     state: State<'_, AppState>,
     proposal_id: String,
+    // The handles of the suggestions the user accepted; leaving it out applies all of them.
+    accepted: Option<Vec<String>>,
 ) -> Result<AppliedProposal, CommandError> {
     let proposal = state
         .agent
         .claim_pending(&proposal_id)
         .map_err(CommandError::from)?;
-    let result = with_database(&state, |database| database.apply_proposal(&proposal));
+    let result = accepted_operations(&proposal, accepted.as_deref())
+        .map_err(CommandError::from)
+        .and_then(|chosen| with_database(&state, |database| database.apply_proposal(&chosen)));
+    // The proposal is spent either way: a review the user has answered is never shown again.
     state
         .agent
         .finish_pending(&proposal_id, result.as_ref().ok())
