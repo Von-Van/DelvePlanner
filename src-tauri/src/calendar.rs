@@ -1,7 +1,7 @@
-//! Read-only calendars from other services. Every provider normalizes into one external-event
-//! shape stored in a cache kept apart from planner data. Today that provider is iCalendar: a link
-//! DayPlan refreshes in the background, or a file imported once. Google and Microsoft accounts
-//! will produce the same events through OAuth.
+//! Read-only calendars from other services. Every source normalizes into one external-event
+//! shape stored in a cache kept apart from planner data: an iCalendar link DayPlan refreshes in
+//! the background, an iCalendar file imported once, or a Google or Microsoft account read through
+//! OAuth with read-only scopes.
 
 pub mod ics;
 pub mod link;

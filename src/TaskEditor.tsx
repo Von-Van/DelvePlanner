@@ -10,7 +10,7 @@ import {
   taskPriorities,
   taskStatuses,
 } from "./api";
-import { offsetDay, todayDay, weekStartDay } from "./date";
+import { offsetDay, todayDay, weekStartDay, weekStartsOn } from "./date";
 import { Glyph, Spinner } from "./Geometry";
 import {
   OptionalDate,
@@ -32,7 +32,6 @@ import {
 } from "./planning";
 import { useModalFocus } from "./useModalFocus";
 import { usePlanLinks } from "./usePlanLinks";
-import { weekStartsOn } from "./useTaskMover";
 
 export function TaskEditor({
   task,

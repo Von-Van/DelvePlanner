@@ -127,16 +127,6 @@ export function allDayEventsOn(events: ExternalEvent[], day: string) {
   );
 }
 
-export function externalMinutes(event: ExternalEvent) {
-  if (event.allDay || !event.startAtUtc || !event.endAtUtc) return 0;
-  return Math.max(
-    0,
-    Math.round(
-      (Date.parse(event.endAtUtc) - Date.parse(event.startAtUtc)) / 60_000,
-    ),
-  );
-}
-
 /** "09:00–10:30", or one time for an event with no length. */
 export function timeRangeLabel(startAtUtc: string, endAtUtc: string) {
   const start = timeLabel(startAtUtc);

@@ -32,7 +32,7 @@ use runtime::{InstalledModel, OllamaRuntimeManager};
 use serde::Serialize;
 use std::fs::{self, File};
 use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Duration;
 use tauri::menu::{Menu, MenuItem};
@@ -1078,23 +1078,9 @@ fn write_diagnostic_zip(
         .map_err(AppError::from)
         .map_err(CommandError::from)?;
     if let Some(directory) = log_directory {
-        let mut logs = fs::read_dir(directory)
-            .ok()
-            .into_iter()
-            .flatten()
-            .filter_map(Result::ok)
-            .filter(|entry| {
-                entry.file_name().to_string_lossy().starts_with("dayplan")
-                    && entry
-                        .path()
-                        .extension()
-                        .is_some_and(|extension| extension == "log")
-            })
-            .collect::<Vec<_>>();
-        logs.sort_by_key(|entry| entry.file_name());
-        for (index, entry) in logs.into_iter().rev().take(5).enumerate() {
+        for (index, path) in newest_logs(&directory, 5).into_iter().enumerate() {
             let mut bytes = Vec::new();
-            if File::open(entry.path())
+            if File::open(path)
                 .and_then(|file| file.take(512 * 1024).read_to_end(&mut bytes))
                 .is_ok()
             {
@@ -1114,6 +1100,33 @@ fn write_diagnostic_zip(
         .finish()
         .map_err(|_| CommandError::internal("The diagnostic archive could not be finalized."))?;
     Ok(())
+}
+
+/// Whether a file in the log directory is one of DayPlan's logs. The match ignores case because a
+/// log keeps the case it was first created with: installs that ran earlier builds have
+/// `DayPlan.log`, while newer ones write `dayplan.log` and its dated rotations.
+fn is_dayplan_log(file_name: &str) -> bool {
+    let name = file_name.to_ascii_lowercase();
+    name.starts_with("dayplan") && name.ends_with(".log")
+}
+
+/// DayPlan's newest log files, newest first. Ordered by modification time rather than name: the
+/// active `dayplan.log` sorts before its dated rotations by name, so a name order would leave out
+/// the latest messages once five rotations exist.
+fn newest_logs(directory: &Path, count: usize) -> Vec<PathBuf> {
+    let mut logs = fs::read_dir(directory)
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .filter(|entry| is_dayplan_log(&entry.file_name().to_string_lossy()))
+        .map(|entry| {
+            let modified = entry.metadata().and_then(|metadata| metadata.modified());
+            (modified.ok(), entry.path())
+        })
+        .collect::<Vec<_>>();
+    logs.sort_by_key(|(modified, _)| std::cmp::Reverse(*modified));
+    logs.into_iter().take(count).map(|(_, path)| path).collect()
 }
 
 #[tauri::command]
@@ -1299,6 +1312,10 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(
             tauri_plugin_log::Builder::new()
+                // `new()` starts with stdout and a second, unfiltered log file named after the
+                // product. On case-insensitive disks that file is this one, so without clearing
+                // them every crate's messages would land here beside DayPlan's redacted ones.
+                .clear_targets()
                 .level(tauri_plugin_log::log::LevelFilter::Info)
                 .max_file_size(512 * 1024)
                 .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepSome(5))
@@ -1473,5 +1490,65 @@ async fn runtime_idle_worker(app: tauri::AppHandle) {
             return;
         };
         state.ollama.stop_if_idle().await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_dayplan_log, newest_logs};
+    use std::fs::File;
+    use std::time::{Duration, SystemTime};
+
+    #[test]
+    fn diagnostics_find_logs_whatever_their_case() {
+        for name in [
+            "dayplan.log",
+            "DayPlan.log",
+            "dayplan_2026-09-17_20-24-03.log",
+        ] {
+            assert!(is_dayplan_log(name), "{name} should be collected");
+        }
+        for name in [
+            "dayplan.sqlite3",
+            "other.log",
+            "dayplan_2026-09-17_20-24-03.log.bak",
+        ] {
+            assert!(!is_dayplan_log(name), "{name} should be skipped");
+        }
+    }
+
+    #[test]
+    fn diagnostics_take_the_active_log_before_older_rotations() {
+        let directory = tempfile::tempdir().unwrap();
+        let start = SystemTime::now() - Duration::from_secs(3600);
+        let names = [
+            "dayplan_2026-09-01_08-00-00.log",
+            "dayplan_2026-09-02_08-00-00.log",
+            "dayplan_2026-09-03_08-00-00.log",
+            "dayplan_2026-09-04_08-00-00.log",
+            "dayplan_2026-09-05_08-00-00.log",
+            "dayplan.log",
+        ];
+        for (offset, name) in names.iter().enumerate() {
+            let file = File::create(directory.path().join(name)).unwrap();
+            file.set_modified(start + Duration::from_secs(60 * offset as u64))
+                .unwrap();
+        }
+        File::create(directory.path().join("calendars.sqlite3")).unwrap();
+
+        let newest = newest_logs(directory.path(), 5)
+            .into_iter()
+            .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            newest,
+            [
+                "dayplan.log",
+                "dayplan_2026-09-05_08-00-00.log",
+                "dayplan_2026-09-04_08-00-00.log",
+                "dayplan_2026-09-03_08-00-00.log",
+                "dayplan_2026-09-02_08-00-00.log",
+            ]
+        );
     }
 }

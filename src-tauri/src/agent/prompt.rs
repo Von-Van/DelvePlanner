@@ -801,7 +801,7 @@ pub(super) fn output_format(scope: Scope, candidates: &PlannerCandidates) -> Sch
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Plan, ReminderStatus, ScheduleEvent};
+    use crate::model::{Milestone, Plan, ReminderStatus, ScheduleEvent, Task};
     use serde_json::Value;
 
     fn operation_types(schema: &Schema) -> Vec<String> {
@@ -937,5 +937,97 @@ mod tests {
         assert!(weekdays < text.find("\"Wednesday\"").unwrap());
         assert!(context.get("tasks").is_none());
         assert!(context.get("recentTurns").is_none());
+    }
+
+    /// DayPlan's privacy docs promise the model never sees notes, descriptions, locations, owners,
+    /// or workstreams. The context types simply have no such fields; this keeps it that way.
+    #[test]
+    fn context_never_carries_notes_descriptions_locations_or_people() {
+        let plan_id = "5d5a3e1c-2d67-4a7e-9d3c-6c9a1f0d8e21";
+        let owner_id = "9f1c2b3a-4d5e-4f60-8a7b-1c2d3e4f5a6b";
+        let workstream_id = "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d";
+        let candidates = PlannerCandidates {
+            events: vec![ScheduleEvent {
+                notes: "private-event-note".into(),
+                location: "private-event-location".into(),
+                plan_id: Some(plan_id.into()),
+                workstream_id: Some(workstream_id.into()),
+                owner_id: Some(owner_id.into()),
+                ..event("30bb9c6a-4020-45a6-806b-5eb71c7ae76f")
+            }],
+            plans: vec![Plan {
+                id: plan_id.into(),
+                title: "Launch".into(),
+                description: "private-plan-description".into(),
+                status: PlanStatus::Active,
+                start_date: None,
+                target_date: None,
+                color: None,
+                archived: false,
+                revision: 1,
+                created_at: String::new(),
+                updated_at: String::new(),
+            }],
+            milestones: vec![Milestone {
+                id: "0b8f2a4c-6d1e-4f3a-9b7c-5e2d1a0f9c8b".into(),
+                plan_id: plan_id.into(),
+                title: "Venue booked".into(),
+                description: "private-milestone-description".into(),
+                target_date: None,
+                status: MilestoneStatus::Pending,
+                workstream_id: Some(workstream_id.into()),
+                sort_order: 0,
+                revision: 1,
+                created_at: String::new(),
+                updated_at: String::new(),
+            }],
+            tasks: vec![Task {
+                id: "7c3e9a1b-2f4d-4e6a-8b0c-9d1e2f3a4b5c".into(),
+                title: "Book venue".into(),
+                description: "private-task-description".into(),
+                plan_id: Some(plan_id.into()),
+                milestone_id: None,
+                workstream_id: Some(workstream_id.into()),
+                owner_id: Some(owner_id.into()),
+                due_date: None,
+                scheduled_day: Some("2026-08-12".into()),
+                planned_week: None,
+                estimated_minutes: None,
+                status: TaskStatus::Todo,
+                priority: TaskPriority::Normal,
+                completed_at: None,
+                sort_order: 0,
+                revision: 1,
+                created_at: String::new(),
+                updated_at: String::new(),
+            }],
+        };
+        let text = request_context(&ContextInput {
+            command: "add a task to Launch",
+            today: NaiveDate::from_ymd_opt(2026, 8, 12).unwrap(),
+            zone: "America/New_York".parse().unwrap(),
+            scope: Scope::Planning,
+            candidates: &candidates,
+            active_plan_id: Some(plan_id),
+            session: &[],
+            pending_proposal_id: None,
+        });
+        for offered in ["Gym", "Launch", "Venue booked", "Book venue"] {
+            assert!(text.contains(offered), "{offered} is missing: {text}");
+        }
+        for private in [
+            "private-event-note",
+            "private-event-location",
+            "private-plan-description",
+            "private-milestone-description",
+            "private-task-description",
+            owner_id,
+            workstream_id,
+        ] {
+            assert!(
+                !text.contains(private),
+                "{private} reached the model: {text}"
+            );
+        }
     }
 }

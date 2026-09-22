@@ -1,12 +1,10 @@
 import { FormEvent, useState } from "react";
 import { api, messageFor, ScheduledBlock, Task } from "./api";
 import { BlockEditor } from "./BlockEditor";
-import { localeWeekStart, offsetDay, weekdayShort } from "./date";
+import { offsetDay, weekdayShort, weekStartsOn } from "./date";
 import type { MenuItem } from "./Menu";
 import { EditorShell } from "./PlanEditor";
 import { canUnschedule, inWeek, MoveTarget, taskMove } from "./planning";
-
-export const weekStartsOn = localeWeekStart();
 
 /**
  * Moves tasks between Plan, Week, and Today through one revision-checked batch, and owns the

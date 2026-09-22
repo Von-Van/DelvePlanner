@@ -20,6 +20,9 @@ export function localeWeekStart(locale = navigator.language): WeekStart {
   return 1;
 }
 
+/** The week start every view uses, read once from the locale. */
+export const weekStartsOn = localeWeekStart();
+
 export function weekStartDay(day: string, weekStartsOn: WeekStart) {
   return isoDay(startOfWeek(parseISO(day), { weekStartsOn }));
 }

@@ -28,7 +28,7 @@ Other patch numbers stay free for fixes and intermediate builds. v0.2.9 is one: 
 - The renderer never gets SQL. Rust keeps persistence, validation, transactions, native integrations, model lifecycle, and AI proposal ownership.
 - All CI gates pass: formatting, frontend tests and build, `cargo fmt`, `cargo test`, `cargo clippy`, npm audit, `cargo audit`, and `cargo deny`.
 - The eval gate runs three times on one model digest (100% schema, 100% safety, at least 85% exact, at least 95% fields) whenever planner prompts, context, operations, or task records change.
-- The README (feature table, schema paragraph, privacy notes, scope limits) and a `## vX.Y.Z` section in [CHANGELOG.md](CHANGELOG.md) are updated. The release workflow uses that section as the release notes.
+- The README's feature list, the affected pages in [`docs/`](docs/) (data model, privacy, AI, calendars), and a `## vX.Y.Z` section in [CHANGELOG.md](CHANGELOG.md) are updated. The release workflow uses that section as the release notes.
 - One commit named for the version, then an annotated tag with the same name.
 
 ## v0.2.5 — Core planning workflow
@@ -79,7 +79,7 @@ One task record moves between horizons. Nothing is copied.
 
 Priority 2. DayPlan learns when you're actually busy. External calendars stay read-only and separate from DayPlan's own events. v0.2.9 shipped everything in this section except Google and Outlook sign-in, which this version adds.
 
-- **Sync design first.** [CALENDAR_SYNC.md](CALENDAR_SYNC.md) covers data ownership, caching, refresh, recurring events, and revocation, and is reviewed before provider code lands.
+- **Sync design first.** [The calendar design](docs/calendar-integration.md) covers data ownership, caching, refresh, recurring events, and revocation, and is reviewed before provider code lands.
 - **iCalendar links and files.** Subscribing to an https or webcal link (Google's secret iCal address, an Outlook published calendar) keeps a calendar refreshed; an imported `.ics` file is a snapshot a newer file replaces. Both are read-only calendars in the same cache as the account connections.
 - **Provider architecture.** A Rust `CalendarProvider` interface normalizes every provider into one external-event shape: provider, calendar, source ID, title, start and end or all-day date, time zone, busy or free, and recurrence instance. Google and Outlook share the scheduling, display, and capacity code.
 - **Authorization.** OAuth runs in Rust with the system browser, PKCE, and a loopback redirect, using read-only scopes. Tokens live in the OS keychain and never reach SQLite, exports, backups, diagnostics, or the renderer.
@@ -102,7 +102,7 @@ Priority 2. DayPlan learns when you're actually busy. External calendars stay re
 - Working hours are a planner-database record that exports leave out.
 - Hidden calendars don't count toward busy time, and all-day events count only when they're marked busy.
 
-**Still on you** (the OAuth clients now exist; [CALENDAR_ACCOUNTS.md](CALENDAR_ACCOUNTS.md) covers them):
+**Still on you** (the OAuth clients now exist; [calendar accounts](docs/calendar-accounts.md) covers them):
 
 - Google app verification before a broad release. Calendar scopes are sensitive: unverified apps show a warning and have a lifetime cap of 100 new users, and a client left in Testing status hands out refresh tokens that expire after seven days.
 - Microsoft publisher verification, if Outlook should stop being labelled unverified. It needs a partner account for a legal entity, so a personal registration can't have it.

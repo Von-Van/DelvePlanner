@@ -6,7 +6,7 @@ Checked against Google's and Microsoft's documentation on September 17, 2026. Co
 
 ## What DayPlan asks for
 
-Both connections are read-only and stay that way. DayPlan never requests a scope that could change a calendar, and every request it makes to either provider is a `GET`.
+Both connections are read-only and stay that way. DayPlan never requests a scope that could change a calendar, and every request it makes to the Google Calendar API or Microsoft Graph is a `GET`. The only `POST`s go to the providers' OAuth endpoints: exchanging the sign-in code, refreshing an access token, and revoking a Google grant on disconnect. [Calendar integration](calendar-integration.md) covers what DayPlan does with the access.
 
 | Provider  | Scopes requested                                    | What that allows                                          |
 | --------- | --------------------------------------------------- | --------------------------------------------------------- |
@@ -17,7 +17,7 @@ DayPlan doesn't ask for a profile scope. The account name it shows is the addres
 
 ## Using your own OAuth clients
 
-The client IDs are in [`src-tauri/src/calendar/oauth.rs`](src-tauri/src/calendar/oauth.rs). They appear in every sign-in URL, so they aren't secrets. A build can point at different ones:
+The client IDs are in [`src-tauri/src/calendar/oauth.rs`](../src-tauri/src/calendar/oauth.rs). They appear in every sign-in URL, so they aren't secrets. A build can point at different ones:
 
 | Build setting                  | Default                                | Where to store it on GitHub |
 | ------------------------------ | -------------------------------------- | --------------------------- |
@@ -29,7 +29,7 @@ The build workflows already pass all three through, so setting the repository va
 
 Google lists the client secret as optional for installed apps and DayPlan sends none; set `DAYPLAN_GOOGLE_CLIENT_SECRET` only if your own client's token exchange turns out to want one. Never commit it — Google itself says an installed app can't keep a secret private, which is exactly why DayPlan doesn't depend on one.
 
-Release signing matters here too. macOS ties keychain access to the app's code signature, so without a stable Developer ID signature, every update asks again for access to each saved token. See [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md).
+Release signing matters here too. macOS ties keychain access to the app's code signature, so without a stable Developer ID signature, every update asks again for access to each saved token. See the [release checklist](release-checklist.md).
 
 ## Google Calendar
 

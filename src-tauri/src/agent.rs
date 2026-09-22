@@ -666,10 +666,6 @@ fn operation_record_ids(operation: &MutationOperation) -> Vec<String> {
     }
 }
 
-pub async fn ollama_status(client: &Client) -> OllamaStatus {
-    ollama_status_at(client, OLLAMA_BASE_URL, MODEL_NAME).await
-}
-
 async fn ollama_status_at(client: &Client, base_url: &str, model_name: &str) -> OllamaStatus {
     let response = match tokio::time::timeout(
         Duration::from_secs(3),

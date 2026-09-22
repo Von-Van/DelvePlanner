@@ -26,6 +26,7 @@ import {
   dayMonthShort,
   timeLabel,
   weekStartDay,
+  weekStartsOn,
 } from "./date";
 import { EventEditor } from "./EventEditor";
 import { reminderShortLabel } from "./events";
@@ -73,7 +74,7 @@ import type { MenuItem } from "./Menu";
 import { TaskEditor } from "./TaskEditor";
 import { TaskRow } from "./TaskRow";
 import { useHeadingFocus } from "./useHeadingFocus";
-import { taskMoveItems, useTaskMover, weekStartsOn } from "./useTaskMover";
+import { taskMoveItems, useTaskMover } from "./useTaskMover";
 
 export type PlanTab = "overview" | "timeline" | "tasks" | "schedule" | "show";
 

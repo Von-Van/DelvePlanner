@@ -18,6 +18,7 @@ import {
   rangeLabel,
   weekdayShort,
   weekStartDay,
+  weekStartsOn,
 } from "./date";
 import { Glyph, Mark, Spinner } from "./Geometry";
 import { PlanDot } from "./PlanControls";
@@ -36,7 +37,7 @@ import {
 } from "./planning";
 import { TaskRow } from "./TaskRow";
 import { useHeadingFocus } from "./useHeadingFocus";
-import { taskMoveItems, useTaskMover, weekStartsOn } from "./useTaskMover";
+import { taskMoveItems, useTaskMover } from "./useTaskMover";
 
 type SessionProps = {
   today: string;

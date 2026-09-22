@@ -53,6 +53,7 @@ import {
   todayDay,
   weekdayShort,
   weekStartDay,
+  weekStartsOn,
 } from "./date";
 import { EventEditor } from "./EventEditor";
 import { ensureNotificationPermission, reminderShortLabel } from "./events";
@@ -84,7 +85,7 @@ import { TaskEditor } from "./TaskEditor";
 import { TaskRow } from "./TaskRow";
 import { useHeadingFocus } from "./useHeadingFocus";
 import { KnowledgeView } from "./KnowledgeView";
-import { taskMoveItems, useTaskMover, weekStartsOn } from "./useTaskMover";
+import { taskMoveItems, useTaskMover } from "./useTaskMover";
 import { WeekView } from "./WeekView";
 
 type View =

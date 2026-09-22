@@ -389,9 +389,12 @@ fn graph_event(event: &GraphEvent) -> Option<EventDraft> {
         event.end.as_ref()?.date_time.as_deref()?,
     );
     let when = if event.is_all_day {
+        // The date part of `2026-09-19T00:00:00.0000000`. `get` rather than slicing, so a string
+        // that isn't plain ASCII is skipped instead of panicking the refresh.
+        let date = |value: &str| day(value.get(..10).unwrap_or(value));
         EventTime::AllDay {
-            start: day(&start[..10.min(start.len())])?,
-            end: day(&end[..10.min(end.len())])?,
+            start: date(start)?,
+            end: date(end)?,
         }
     } else {
         // Graph answers in UTC because every request asks for it.
@@ -644,6 +647,17 @@ mod tests {
         }
         assert!(requests[1].contains("prefer: outlook.timezone=\"UTC\""));
         assert!(requests[1].contains("calendarView"));
+    }
+
+    #[test]
+    fn an_unreadable_all_day_date_skips_the_event_instead_of_panicking() {
+        // Byte 10 falls inside "é", which slicing at a fixed byte offset would panic on.
+        let event: GraphEvent = serde_json::from_str(
+            r#"{"id":"e1","subject":"Offsite","isAllDay":true,
+                "start":{"dateTime":"2026-09-1é00:00:00"},"end":{"dateTime":"2026-09-20T00:00:00"}}"#,
+        )
+        .unwrap();
+        assert!(graph_event(&event).is_none());
     }
 
     #[tokio::test]

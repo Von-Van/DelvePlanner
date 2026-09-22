@@ -13,6 +13,7 @@ import {
   localTimeZone,
   timeLabel,
   weekStartDay,
+  weekStartsOn,
 } from "./date";
 import { reminderLabel } from "./events";
 import {
@@ -23,7 +24,6 @@ import {
   taskPriorityLabels,
   taskStatusLabels,
 } from "./planning";
-import { weekStartsOn } from "./useTaskMover";
 
 export type OperationTone = "create" | "change" | "move" | "delete";
 

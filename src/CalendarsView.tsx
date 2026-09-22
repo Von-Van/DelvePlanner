@@ -27,13 +27,13 @@ import {
   weekdayNames,
   workingHoursLabel,
 } from "./calendars";
+import { weekStartsOn } from "./date";
 import { Glyph, Mark, Spinner } from "./Geometry";
 import { Menu, MenuItem } from "./Menu";
 import { ColorSwatches } from "./PlanControls";
 import { EditorShell } from "./PlanEditor";
 import { plural } from "./planning";
 import { useHeadingFocus } from "./useHeadingFocus";
-import { weekStartsOn } from "./useTaskMover";
 
 /**
  * Read-only calendars from Google, Outlook, and other apps, plus the working hours capacity
