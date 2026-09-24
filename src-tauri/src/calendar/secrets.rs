@@ -92,7 +92,7 @@ fn token_account(account_id: &str) -> String {
 }
 
 /// The system credential store for `service`, or a vault that refuses every operation when this
-/// platform has none DayPlan supports.
+/// platform has none Delve Planner supports.
 pub fn system_vault(service: &str) -> Box<dyn SecretVault> {
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     match SystemKeychain::new(service) {

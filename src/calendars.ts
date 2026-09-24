@@ -10,7 +10,10 @@ import type {
 import { dateTimeFields, timeLabel } from "./date";
 import { estimateLabel, planColorValues, shortDate } from "./planning";
 
-/** A timed entry on an agenda: a DayPlan event, a time block, or an event from another calendar. */
+/**
+ * A timed entry on an agenda: a Delve Planner event, a time block, or an event from another
+ * calendar.
+ */
 export type AgendaItem =
   | { kind: "event"; key: string; start: string; event: ScheduleEvent }
   | { kind: "block"; key: string; start: string; scheduled: ScheduledBlock }
@@ -28,7 +31,7 @@ const kindOrder: Record<AgendaItem["kind"], number> = {
   external: 2,
 };
 
-/** Every timed entry in start order; at the same start, DayPlan's own events come first. */
+/** Every timed entry in start order; at the same start, Delve Planner's own events come first. */
 export function agendaItems(
   events: ScheduleEvent[],
   blocks: ScheduledBlock[],

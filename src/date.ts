@@ -20,8 +20,35 @@ export function localeWeekStart(locale = navigator.language): WeekStart {
   return 1;
 }
 
-/** The week start every view uses, read once from the locale. */
-export const weekStartsOn = localeWeekStart();
+// Like the app's other stored keys, this keeps the former name, DayPlan.
+const weekStartStorageKey = "dayplan-week-start";
+
+/** The week start chosen in Settings on this computer, or null to follow the locale. */
+export function storedWeekStart(): WeekStart | null {
+  try {
+    const stored = localStorage.getItem(weekStartStorageKey);
+    const day = stored === null ? NaN : Number(stored);
+    return Number.isInteger(day) && day >= 0 && day <= 6
+      ? (day as WeekStart)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Saves the week start (null follows the locale again); false if it couldn't be saved. */
+export function saveWeekStart(day: WeekStart | null) {
+  try {
+    if (day === null) localStorage.removeItem(weekStartStorageKey);
+    else localStorage.setItem(weekStartStorageKey, String(day));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The week start every view uses, read once at startup: the saved choice or the locale's. */
+export const weekStartsOn = storedWeekStart() ?? localeWeekStart();
 
 export function weekStartDay(day: string, weekStartsOn: WeekStart) {
   return isoDay(startOfWeek(parseISO(day), { weekStartsOn }));

@@ -2,17 +2,17 @@ import { useCallback, useEffect, useState } from "react";
 import { api, InstalledModel, messageFor, OllamaStatus } from "./api";
 import { Mark, Spinner } from "./Geometry";
 
-/** The model DayPlan's own evaluations run against, and the one it offers to download. */
+/** The model Delve Planner's own evaluations run against, and the one it offers to download. */
 export const TESTED_MODEL = "qwen3:8b";
 
-const DOWNLOAD_WARNING = `Download ${TESTED_MODEL} now? It is about 5.2 GB and DayPlan recommends roughly 10 GB of free space. It is stored with DayPlan, not in your own Ollama folder.`;
+const DOWNLOAD_WARNING = `Download ${TESTED_MODEL} now? It is about 5.2 GB and Delve Planner recommends roughly 10 GB of free space. It is stored with Delve Planner, not in your own Ollama folder.`;
 
 function sizeLabel(bytes: number) {
   return `${(bytes / 1_073_741_824).toFixed(1)} GB`;
 }
 
 /**
- * Which local model plans. DayPlan lists what it downloaded itself alongside anything already
+ * Which local model plans. Delve Planner lists what it downloaded itself alongside anything already
  * installed on the machine, and only downloads when there's nothing to use.
  */
 export function ModelPicker({
@@ -52,7 +52,7 @@ export function ModelPicker({
       return;
     }
     if (model.checked) return;
-    // A model DayPlan hasn't been evaluated against is asked one question it can't get wrong,
+    // A model Delve Planner hasn't been evaluated against is asked one question it can't get wrong,
     // so a model that can't hold the reply format says so now rather than mid-plan.
     setChecking(model.name);
     try {
@@ -98,8 +98,9 @@ export function ModelPicker({
         <p className="model-empty">Looking for installed models…</p>
       ) : models.length === 0 ? (
         <p className="model-empty">
-          No local models yet. DayPlan can download {TESTED_MODEL}, the model it
-          is tested against, or it will find any model you install with Ollama.
+          No local models yet. Delve Planner can download {TESTED_MODEL}, the
+          model it is tested against, or it will find any model you install with
+          Ollama.
         </p>
       ) : (
         <ul className="model-list">
@@ -119,8 +120,8 @@ export function ModelPicker({
                 <span className="model-main">
                   <span className="model-name">{model.name}</span>
                   <span className="model-meta">
-                    {model.source === "dayplan"
-                      ? "Downloaded by DayPlan"
+                    {model.source === "delve_planner"
+                      ? "Downloaded by Delve Planner"
                       : "Already on this machine"}
                     {" · "}
                     {sizeLabel(model.sizeBytes)}
@@ -150,8 +151,9 @@ export function ModelPicker({
       )}
       {selected && !selected.tested && !refused[selected.name] && (
         <p className="model-note">
-          DayPlan is evaluated against {TESTED_MODEL}. {selected.name} answers
-          in the right format, but its plans haven&rsquo;t been measured.
+          Delve Planner is evaluated against {TESTED_MODEL}. {selected.name}{" "}
+          answers in the right format, but its plans haven&rsquo;t been
+          measured.
         </p>
       )}
       {!hasTested && (

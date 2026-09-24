@@ -3,6 +3,7 @@ import { api, InboxItem, messageFor } from "./api";
 import { dateTimeFields } from "./date";
 import { Glyph, Mark, Spinner } from "./Geometry";
 import { EditorShell } from "./PlanEditor";
+import { commandShortcutText } from "./shortcuts";
 import { shortDate } from "./planning";
 
 export type InboxConversionKind = "task" | "plan" | "event";
@@ -63,7 +64,7 @@ export function InboxView({
           </h1>
         </div>
         <p className="topbar-note">
-          {captureShortcut} captures from anywhere in DayPlan
+          {captureShortcut} captures from anywhere in Delve Planner
         </p>
       </header>
       <p className="page-intro">
@@ -87,6 +88,10 @@ export function InboxView({
         <div className="empty-agenda inbox-empty">
           <i className="empty-mark" aria-hidden="true" />
           <p>The Inbox is clear.</p>
+          <small className="empty-note">
+            {commandShortcutText("I")} captures from anywhere in Delve Planner.
+            A shortcut in Settings captures from any app.
+          </small>
         </div>
       ) : (
         <ul className="inbox-list" aria-label="Captured items">

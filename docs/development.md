@@ -1,6 +1,6 @@
 # Development
 
-How to build, run, test, and release DayPlan, and how a change moves through the codebase. For the design, start with [architecture](architecture.md).
+How to build, run, test, and release Delve Planner, and how a change moves through the codebase. For the design, start with [architecture](architecture.md).
 
 ## Prerequisites
 
@@ -15,21 +15,21 @@ Supported targets are macOS 13+ (universal) and Windows 10 22H2/11 x64. CI also 
 ## Run it
 
 ```bash
-git clone https://github.com/Von-Van/DayPlan.git
-cd DayPlan
+git clone https://github.com/Von-Van/DelvePlanner.git
+cd DelvePlanner
 npm ci
 npm run tauri dev
 ```
 
 `npm run tauri dev` starts Vite on port 1420 and a debug build of the Rust app with hot reload for the frontend. `npm run dev` alone serves the UI in a browser, but without Tauri every command fails, so it's only useful for styling.
 
-DayPlan's log lines go to a file, not the terminal. On macOS, follow them with `tail -f ~/Library/Logs/com.vonvan.dayplan.desktop/dayplan.log`. Rust panics, the bundled Ollama's output, and `DAYPLAN_DEBUG_PLANNER` still print to the terminal in debug builds.
+Delve Planner's log lines go to a file, not the terminal. On macOS, follow them with `tail -f ~/Library/Logs/com.vonvan.dayplan.desktop/dayplan.log`. Rust panics, the bundled Ollama's output, and `DELVE_PLANNER_DEBUG_PLANNER` still print to the terminal in debug builds.
 
-> **Development builds share data with an installed DayPlan.** They use the same bundle identifier (`com.vonvan.dayplan.desktop`), so they open the same planner database, calendars, and keychain items. Export a copy from Settings before experimenting, or keep a separate macOS user for development.
+> **Development builds share data with an installed Delve Planner.** They use the same bundle identifier (`com.vonvan.dayplan.desktop`), so they open the same planner database, calendars, and keychain items. Export a copy from Settings before experimenting, or keep a separate macOS user for development.
 
 ### The AI runtime in development
 
-The Ollama binary isn't in Git. Without it, DayPlan runs normally and the planner reports that its runtime is missing. To use the planner, fetch the pinned, checksum-verified release from the repository root:
+The Ollama binary isn't in Git. Without it, Delve Planner runs normally and the planner reports that its runtime is missing. To use the planner, fetch the pinned, checksum-verified release from the repository root:
 
 ```bash
 bash scripts/fetch-ollama-runtime.sh
@@ -37,7 +37,7 @@ bash scripts/fetch-ollama-runtime.sh
 
 That script is for macOS (it extracts the universal binary into `src-tauri/resources/ollama/macos-universal/`, about 460 MB). On Windows, `scripts/fetch-ollama-runtime.ps1` does the same into `windows-x86_64/`; it downloads into the GitHub Actions `RUNNER_TEMP` folder, so set `$env:RUNNER_TEMP = $env:TEMP` before running it locally.
 
-Alternatively, point `DAYPLAN_OLLAMA_RUNTIME` at an existing `ollama` executable. It must be version 0.32.0: DayPlan refuses a runtime whose version doesn't match `BUNDLED_OLLAMA_VERSION` in [`runtime.rs`](../src-tauri/src/runtime.rs).
+Alternatively, point `DELVE_PLANNER_OLLAMA_RUNTIME` at an existing `ollama` executable. It must be version 0.32.0: Delve Planner refuses a runtime whose version doesn't match `BUNDLED_OLLAMA_VERSION` in [`runtime.rs`](../src-tauri/src/runtime.rs).
 
 The planner then needs a model: choose one already installed with Ollama, or let onboarding download `qwen3:8b` (about 5.2 GB).
 
@@ -70,16 +70,16 @@ Run the same commands locally before opening a pull request.
 
 ## Tests
 
-- **Rust** — about 150 tests beside the code (`#[cfg(test)] mod tests` in each module). They cover migrations from every older schema, revision conflicts, daylight saving edge cases, export and import validation, iCalendar parsing and recurrence, OAuth and provider APIs against a local fake server (asserting read-only scopes and `GET`-only calendar requests), keychain handling through an in-memory vault, AI reply validation and proposal application, the model context's privacy guarantees, and runtime process cleanup. They use temporary databases and never contact real services or need a model.
-- **Frontend** — Vitest tests for the pure modules: response schemas in `api.ts`, planning rules in `planning.ts`, agenda and capacity helpers in `calendars.ts`, and proposal previews in `proposals.ts`. React components have no automated tests.
+- **Rust** — about 190 tests beside the code (`#[cfg(test)] mod tests` in each module). They cover migrations from every older schema, revision conflicts, daylight saving edge cases, repeating tasks and waits, export and import validation, iCalendar parsing and recurrence, OAuth and provider APIs against a local fake server (asserting read-only scopes and `GET`-only calendar requests), keychain handling through an in-memory vault, AI reply validation and proposal application, the model context's privacy guarantees, and runtime process cleanup. They use temporary databases and never contact real services or need a model.
+- **Frontend** — Vitest tests for the pure modules: response schemas in `api.ts`, planning rules in `planning.ts`, agenda and capacity helpers in `calendars.ts`, proposal previews and edits in `proposals.ts`, and shortcut recording and display in `shortcuts.ts`. React components have no automated tests.
 - **Manual** — native behavior that automated tests can't reach (installers, signing, keychain prompts, notifications with the window closed, tray lifecycle, updates, process cleanup) is covered by the [release checklist](release-checklist.md).
 
 ## Evaluating the AI planner
 
-The evaluation gate runs the production planner against 118 hand-labeled requests ([`eval/`](../eval/)) three times on one model digest and writes [`eval/results/latest.json`](../eval/results/latest.json). [The AI planner](ai.md#evaluation) describes the cases and pass criteria.
+The evaluation gate runs the production planner against 126 hand-labeled requests ([`eval/`](../eval/)) three times on one model digest and writes [`eval/results/latest.json`](../eval/results/latest.json). [The AI planner](ai.md#evaluation) describes the cases and pass criteria.
 
 - **When:** whenever planner prompts, context, operations, or task records change.
-- **Needs:** the fetched runtime (above) and `qwen3:8b` installed, either through DayPlan or with Ollama itself. The harness keeps its own runtime state in `DAYPLAN_EVAL_DATA_DIR` (default: a `dayplan-eval-data` folder in the system temp directory), so it never disturbs a running DayPlan.
+- **Needs:** the fetched runtime (above) and `qwen3:8b` installed, either through Delve Planner or with Ollama itself. The harness keeps its own runtime state in `DELVE_PLANNER_EVAL_DATA_DIR` (default: a `delve-planner-eval-data` folder in the system temp directory), so it never disturbs a running Delve Planner.
 - **Cost:** a full gate holds the model in memory (about 5 GB) for roughly 40 minutes on a recent laptop — about 13 minutes per run.
 - **Iterating:** run one pass, or only some cases:
 
@@ -89,23 +89,23 @@ The evaluation gate runs the production planner against 118 hand-labeled request
     --runs 1 --only case-id,another-case-id
   ```
 
-  Leave out `--json-output` so the committed results stay untouched. In debug builds, `DAYPLAN_DEBUG_PLANNER=1` prints each raw model reply to stderr.
+  Leave out `--json-output` so the committed results stay untouched. In debug builds, `DELVE_PLANNER_DEBUG_PLANNER=1` prints each raw model reply to stderr.
 
 - **If a gate is interrupted,** `npm run eval` will already have overwritten `latest.json` with a partial, failing report. Restore it with `git checkout -- eval/results/latest.json`, and stop any leftover harness with `pkill -f "example eval_agent"`.
 
 ## Environment variables
 
-| Variable                                                  | Read    | Purpose                                                                                                                 |
-| --------------------------------------------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `DAYPLAN_OLLAMA_RUNTIME`                                  | Runtime | Use this `ollama` executable instead of the bundled one                                                                 |
-| `OLLAMA_MODELS`                                           | Runtime | The machine's Ollama model folder, read-only (default `~/.ollama/models`)                                               |
-| `DAYPLAN_DEBUG_PLANNER`                                   | Runtime | Debug builds only: print raw model replies to stderr                                                                    |
-| `DAYPLAN_EVAL_DATA_DIR`                                   | Eval    | Where the evaluation harness keeps its runtime state                                                                    |
-| `DAYPLAN_GOOGLE_CLIENT_ID`, `DAYPLAN_MICROSOFT_CLIENT_ID` | Build   | Point a build at your own OAuth clients; empty means the committed defaults ([calendar accounts](calendar-accounts.md)) |
-| `DAYPLAN_GOOGLE_CLIENT_SECRET`                            | Build   | Only if your own Google client insists on one; never commit it                                                          |
-| `DAYPLAN_UPDATER_PUBKEY`                                  | Build   | The updater's signing public key; without it, in-app updates can't install                                              |
+| Variable                                                              | Read    | Purpose                                                                                                                 |
+| --------------------------------------------------------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `DELVE_PLANNER_OLLAMA_RUNTIME`                                        | Runtime | Use this `ollama` executable instead of the bundled one                                                                 |
+| `OLLAMA_MODELS`                                                       | Runtime | The machine's Ollama model folder, read-only (default `~/.ollama/models`)                                               |
+| `DELVE_PLANNER_DEBUG_PLANNER`                                         | Runtime | Debug builds only: print raw model replies to stderr                                                                    |
+| `DELVE_PLANNER_EVAL_DATA_DIR`                                         | Eval    | Where the evaluation harness keeps its runtime state                                                                    |
+| `DELVE_PLANNER_GOOGLE_CLIENT_ID`, `DELVE_PLANNER_MICROSOFT_CLIENT_ID` | Build   | Point a build at your own OAuth clients; empty means the committed defaults ([calendar accounts](calendar-accounts.md)) |
+| `DELVE_PLANNER_GOOGLE_CLIENT_SECRET`                                  | Build   | Only if your own Google client insists on one; never commit it                                                          |
+| `DELVE_PLANNER_UPDATER_PUBKEY`                                        | Build   | The updater's signing public key; without it, in-app updates can't install                                              |
 
-Build-time variables are read with `option_env!`, so changing one needs a rebuild. DayPlan has no `.env` configuration: Vite would pass only `VITE_`-prefixed variables to the frontend, and the frontend reads none.
+Build-time variables are read with `option_env!`, so changing one needs a rebuild. Delve Planner has no `.env` configuration: Vite would pass only `VITE_`-prefixed variables to the frontend, and the frontend reads none.
 
 ## Adding a feature
 

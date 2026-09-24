@@ -24,6 +24,9 @@ import {
   shortDate,
   taskCounts,
   taskHasHome,
+  checklistProgress,
+  openWaits,
+  recurrenceLabel,
   taskMove,
   timelineModel,
   unfinishedTasks,
@@ -73,6 +76,9 @@ function task(overrides: Partial<Task>): Task {
     status: "todo",
     priority: "normal",
     completedAt: null,
+    recurrence: null,
+    checklist: [],
+    waitingOn: [],
     sortOrder: 0,
     revision: 1,
     createdAt: stamp,
@@ -245,6 +251,64 @@ describe("display labels", () => {
         "2026-09-14",
       ),
     ).toBe(1);
+  });
+});
+
+describe("task details", () => {
+  it("names repeat rules the way a person would", () => {
+    const rule = (overrides: Partial<Task["recurrence"] & object>) => ({
+      frequency: "daily" as const,
+      interval: 1,
+      weekdays: [],
+      monthDay: null,
+      ...overrides,
+    });
+    expect(recurrenceLabel(rule({}))).toBe("Every day");
+    expect(recurrenceLabel(rule({ interval: 3 }))).toBe("Every 3 days");
+    expect(recurrenceLabel(rule({ frequency: "weekdays" }))).toBe(
+      "Every weekday",
+    );
+    expect(
+      recurrenceLabel(
+        rule({ frequency: "weekly", interval: 2, weekdays: [1, 4] }),
+      ),
+    ).toBe("Every 2 weeks on Mon, Thu");
+    expect(recurrenceLabel(rule({ frequency: "monthly", monthDay: 31 }))).toBe(
+      "Every month on the 31st",
+    );
+    expect(recurrenceLabel(rule({ frequency: "monthly", monthDay: 12 }))).toBe(
+      "Every month on the 12th",
+    );
+    expect(recurrenceLabel(rule({ frequency: "monthly", monthDay: 22 }))).toBe(
+      "Every month on the 22nd",
+    );
+  });
+
+  it("counts checklist progress and ignores tasks without one", () => {
+    expect(checklistProgress(task({}))).toBeNull();
+    expect(
+      checklistProgress(
+        task({
+          checklist: [
+            { text: "Pack", done: true },
+            { text: "Label", done: false },
+          ],
+        }),
+      ),
+    ).toEqual({ done: 1, total: 2 });
+  });
+
+  it("only waits on tasks that are still open", () => {
+    const open = {
+      id: "open-task",
+      title: "Book venue",
+      planId: null,
+      scheduledDay: null,
+      dueDate: null,
+    };
+    const waiting = task({ waitingOn: ["open-task", "finished-task"] });
+    expect(openWaits(waiting, new Map([[open.id, open]]))).toEqual([open]);
+    expect(openWaits(waiting, new Map())).toEqual([]);
   });
 });
 
@@ -513,6 +577,7 @@ function plan(overrides: Partial<Plan>): Plan {
     targetDate: null,
     color: null,
     archived: false,
+    links: [],
     revision: 1,
     createdAt: stamp,
     updatedAt: stamp,

@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "DayPlan",
-  "version": "0.3.5",
+  "productName": "Delve Planner",
+  "version": "0.4.0",
   "identifier": "com.vonvan.dayplan.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "DayPlan",
+        "title": "Delve Planner",
         "width": 1240,
         "height": 820,
         "minWidth": 940,
@@ -41,7 +41,7 @@
   },
   "plugins": {
     "updater": {
-      "endpoints": ["https://github.com/Von-Van/DayPlan/releases/latest/download/latest.json"],
+      "endpoints": ["https://github.com/Von-Van/DelvePlanner/releases/latest/download/latest.json"],
       "pubkey": "",
       "windows": { "installMode": "basicUi" }
     }

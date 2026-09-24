@@ -1,6 +1,6 @@
-//! Capacity: planned work against the time left in working hours once DayPlan events and busy
-//! calendar events are placed. DayPlan reports these numbers and never moves anything because of
-//! them.
+//! Capacity: planned work against the time left in working hours once Delve Planner events and busy
+//! calendar events are placed. Delve Planner reports these numbers and never moves anything because
+//! of them.
 
 use crate::calendar::ics::local_midnight;
 use crate::calendar::store::timestamp;
@@ -326,6 +326,9 @@ mod tests {
             revision: 1,
             created_at: "2026-09-01T00:00:00.000Z".into(),
             updated_at: "2026-09-01T00:00:00.000Z".into(),
+            checklist: Vec::new(),
+            recurrence: None,
+            waiting_on: Vec::new(),
         }
     }
 

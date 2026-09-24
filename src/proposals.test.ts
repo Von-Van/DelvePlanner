@@ -4,6 +4,7 @@ import {
   acceptedOperations,
   describeProposal,
   proposalEnablesReminder,
+  withEdits,
 } from "./proposals";
 
 const venueId = "f67fcad6-2827-4668-829f-1950f441d054";
@@ -50,6 +51,8 @@ describe("proposal previews", () => {
             dueDate: "2026-10-01",
             status: "todo",
             priority: "high",
+            workstream: null,
+            fromInbox: null,
           },
         },
         {
@@ -142,6 +145,7 @@ describe("proposal previews", () => {
             status: "planning",
             startDate: null,
             targetDate: null,
+            fromInbox: null,
           },
         },
         {
@@ -159,6 +163,8 @@ describe("proposal previews", () => {
             dueDate: "2026-10-01",
             status: "todo",
             priority: "normal",
+            workstream: null,
+            fromInbox: null,
           },
         },
         {
@@ -175,6 +181,7 @@ describe("proposal previews", () => {
             durationMinutes: 30,
             reminderMinutesBefore: null,
             plan: null,
+            fromInbox: null,
           },
         },
       ],
@@ -194,5 +201,144 @@ describe("proposal previews", () => {
       "op-2",
     ]);
     expect(acceptedOperations(previews, new Set(["op-0", "op-2"]))).toEqual([]);
+  });
+
+  it("describes workstreams and work that comes from the inbox", () => {
+    const streamId = "7c3e9a1b-2f4d-4e6a-8b0c-9d1e2f3a4b5c";
+    const itemId = "0b8f2a4c-6d1e-4f3a-9b7c-5e2d1a0f9c8b";
+    const previews = describeProposal(
+      {
+        references: [
+          { id: charityId, kind: "plan", title: "Streamer Charity Week" },
+          { id: venueId, kind: "task", title: "Book venue" },
+          { id: streamId, kind: "workstream", title: "Logistics" },
+          { id: itemId, kind: "inbox_item", title: "Print posters" },
+        ],
+        operations: [
+          {
+            id: "op-0",
+            dependsOn: [],
+            reason: null,
+            suggested: false,
+            change: {
+              type: "create_workstream",
+              plan: { id: charityId },
+              name: "Promotion",
+            },
+          },
+          {
+            id: "op-1",
+            dependsOn: [],
+            reason: null,
+            suggested: false,
+            change: {
+              type: "set_task_workstream",
+              taskId: venueId,
+              expectedRevision: 2,
+              workstream: { id: streamId },
+            },
+          },
+          {
+            id: "op-2",
+            dependsOn: ["op-0"],
+            reason: null,
+            suggested: false,
+            change: {
+              type: "create_task",
+              title: "Print posters",
+              description: "",
+              plan: { id: charityId },
+              milestone: null,
+              scheduledDay: null,
+              dueDate: null,
+              status: "todo",
+              priority: "normal",
+              workstream: { newTitle: "Promotion" },
+              fromInbox: { itemId, expectedRevision: 1 },
+            },
+          },
+        ],
+      },
+      "America/New_York",
+    );
+    expect(previews.map((preview) => preview.title)).toEqual([
+      "Add workstream “Promotion”",
+      "Put “Book venue” in “Logistics”",
+      "Add task “Print posters”",
+    ]);
+    expect(previews[0].details).toEqual(["In “Streamer Charity Week”"]);
+    expect(previews[2].details).toEqual([
+      "In “Streamer Charity Week”",
+      "Workstream “Promotion” (new)",
+      "From your inbox",
+    ]);
+  });
+
+  it("applies edits and carries a renamed new plan to what goes in it", () => {
+    const proposal: Pick<Proposal, "operations"> = {
+      operations: [
+        {
+          id: "op-0",
+          dependsOn: [],
+          reason: null,
+          suggested: false,
+          change: {
+            type: "create_plan",
+            title: "Bake sale",
+            description: "",
+            status: "planning",
+            startDate: null,
+            targetDate: null,
+            fromInbox: null,
+          },
+        },
+        {
+          id: "op-1",
+          dependsOn: ["op-0"],
+          reason: null,
+          suggested: false,
+          change: {
+            type: "create_task",
+            title: "Buy flour",
+            description: "",
+            plan: { newTitle: "bake  SALE" },
+            milestone: null,
+            scheduledDay: null,
+            dueDate: "2026-10-01",
+            status: "todo",
+            priority: "normal",
+            workstream: null,
+            fromInbox: null,
+          },
+        },
+      ],
+    };
+    expect(withEdits(proposal, new Map())).toBe(proposal);
+    const renamed = withEdits(
+      proposal,
+      new Map([
+        [
+          "op-0",
+          {
+            type: "create_plan" as const,
+            title: "School fair",
+            description: "",
+            status: "planning" as const,
+            startDate: null,
+            targetDate: null,
+            fromInbox: null,
+          },
+        ],
+      ]),
+    );
+    const task = renamed.operations[1].change;
+    expect(task.type === "create_task" && task.plan).toEqual({
+      newTitle: "School fair",
+    });
+    // The original stays as the planner proposed it.
+    const original = proposal.operations[1].change;
+    expect(original.type === "create_task" && original.plan).toEqual({
+      newTitle: "bake  SALE",
+    });
   });
 });

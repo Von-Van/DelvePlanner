@@ -1,37 +1,51 @@
 //! Plans, milestones, and general tasks: the planning hierarchy above the day agenda.
 
-use super::team::validate_links;
+use super::task_details::{
+    from_json, recurrence_json, replace_dependencies, to_json, validate_checklist,
+    validate_plan_links, validate_waiting_on,
+};
+use super::team::{insert_workstream, validate_links, workstreams_in_plan};
 use super::{
     collect, event_from_row, normalize_day, now, validate_id, validate_revision, validate_title,
     PlannerDatabase, SqlConnection, EVENT_SELECT,
 };
 use crate::error::{AppError, AppResult};
 use crate::model::{
-    CreateMilestoneInput, CreatePlanInput, CreateTaskInput, Milestone, MilestoneStatus, Plan,
-    PlanColor, PlanDeletion, PlanStatus, PlanSummary, PlanWorkspace, Task, TaskPriority,
+    ChecklistItem, CreateMilestoneInput, CreatePlanInput, CreateTaskInput, CreateWorkstreamInput,
+    DuplicatePlanInput, Milestone, MilestoneStatus, Plan, PlanColor, PlanDeletion, PlanStatus,
+    PlanSummary, PlanTemplate, PlanWorkspace, Recurrence, Task, TaskPriority, TaskReference,
     TaskStatus, UpdateMilestoneInput, UpdatePlanInput, UpdateTaskInput, MAX_DESCRIPTION_LENGTH,
     MAX_ESTIMATE_MINUTES,
 };
+use crate::recurrence;
 use rusqlite::{params, types::Type, OptionalExtension, Row, TransactionBehavior};
 use std::collections::HashMap;
 use uuid::Uuid;
 
 const PLAN_SELECT: &str = "SELECT id, title, description, status, start_date, target_date, color,
-        archived, revision, created_at, updated_at
+        archived, revision, created_at, updated_at, links
      FROM plans";
 pub(super) const MILESTONE_SELECT: &str =
     "SELECT id, plan_id, title, description, target_date, status,
         workstream_id, sort_order, revision, created_at, updated_at
      FROM milestones";
+/// The last three columns are the task's repeat rule, its checklist, and the IDs of the tasks it
+/// waits on as a JSON array, in the order they were chosen.
 pub(super) const TASK_SELECT: &str = "SELECT id, title, description, plan_id, milestone_id,
         workstream_id, owner_id, due_date, scheduled_day, status, priority, completed_at,
-        sort_order, revision, created_at, updated_at, planned_week, estimated_minutes
+        sort_order, revision, created_at, updated_at, planned_week, estimated_minutes,
+        recurrence, checklist,
+        (SELECT json_group_array(depends_on_task_id) FROM (
+             SELECT depends_on_task_id FROM task_dependencies
+             WHERE task_id = tasks.id ORDER BY position ASC, created_at ASC))
      FROM tasks";
 const PLAN_ORDER: &str =
     "ORDER BY archived ASC, target_date IS NULL, target_date ASC, created_at ASC";
 pub(super) const MILESTONE_ORDER: &str =
     "ORDER BY target_date IS NULL, target_date ASC, sort_order ASC, created_at ASC";
 const TASK_ORDER: &str = "ORDER BY status = 'done', sort_order ASC, created_at ASC";
+/// How far a duplicated plan's dates can move: ten years either way.
+const MAX_DUPLICATE_SHIFT_DAYS: i64 = 3_660;
 
 impl PlannerDatabase {
     /// Every plan with its progress, milestone count, open tasks overdue as of `today` (a local
@@ -128,6 +142,179 @@ impl PlannerDatabase {
         replace_plan(&self.connection, &input)
     }
 
+    /// Creates a plan with a template's starting workstreams, all in one transaction.
+    pub fn create_plan_from_template(
+        &mut self,
+        input: CreatePlanInput,
+        template: PlanTemplate,
+    ) -> AppResult<Plan> {
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let plan = insert_plan(&transaction, &input)?;
+        for name in template.workstreams() {
+            insert_workstream(
+                &transaction,
+                &CreateWorkstreamInput {
+                    plan_id: plan.id.clone(),
+                    name: (*name).into(),
+                    description: String::new(),
+                },
+            )?;
+        }
+        transaction.commit()?;
+        Ok(plan)
+    }
+
+    /// Copies a plan's workstreams, milestones, and open tasks into a new plan, moving every date
+    /// by `shift_days`. The copy starts fresh: planning status, pending milestones, tasks to do
+    /// with unticked checklists. Waits between copied tasks are kept; events, time blocks, and
+    /// finished work stay with the original.
+    pub fn duplicate_plan(&mut self, input: DuplicatePlanInput) -> AppResult<Plan> {
+        validate_id(&input.id)?;
+        if input.shift_days.abs() > MAX_DUPLICATE_SHIFT_DAYS {
+            return Err(AppError::Validation(
+                "Dates can move by up to ten years.".into(),
+            ));
+        }
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let source = plan_by_id(&transaction, &input.id)?.ok_or(AppError::NotFound)?;
+        let shift = |day: &Option<String>| -> AppResult<Option<String>> {
+            day.as_deref()
+                .map(|day| super::offset_day(day, input.shift_days))
+                .transpose()
+        };
+        let plan = insert_plan(
+            &transaction,
+            &CreatePlanInput {
+                title: input.title.clone(),
+                description: source.description.clone(),
+                status: PlanStatus::Planning,
+                start_date: shift(&source.start_date)?,
+                target_date: shift(&source.target_date)?,
+                color: source.color,
+                links: source.links.clone(),
+            },
+        )?;
+        let mut workstreams = HashMap::new();
+        for workstream in workstreams_in_plan(&transaction, &source.id)? {
+            let copy = insert_workstream(
+                &transaction,
+                &CreateWorkstreamInput {
+                    plan_id: plan.id.clone(),
+                    name: workstream.name,
+                    description: workstream.description,
+                },
+            )?;
+            workstreams.insert(workstream.id, copy.id);
+        }
+        let mapped = |map: &HashMap<String, String>, id: &Option<String>| {
+            id.as_ref().and_then(|id| map.get(id)).cloned()
+        };
+        let mut milestones = HashMap::new();
+        let mut statement = transaction.prepare(&format!(
+            "{MILESTONE_SELECT} WHERE plan_id = ?1 ORDER BY sort_order ASC, created_at ASC"
+        ))?;
+        let source_milestones =
+            collect(statement.query_map(params![source.id], milestone_from_row)?)?;
+        drop(statement);
+        for milestone in source_milestones {
+            let copy = insert_milestone(
+                &transaction,
+                &CreateMilestoneInput {
+                    plan_id: plan.id.clone(),
+                    title: milestone.title,
+                    description: milestone.description,
+                    target_date: shift(&milestone.target_date)?,
+                    status: MilestoneStatus::Pending,
+                    workstream_id: mapped(&workstreams, &milestone.workstream_id),
+                },
+            )?;
+            milestones.insert(milestone.id, copy.id);
+        }
+        let mut statement = transaction.prepare(&format!(
+            "{TASK_SELECT} WHERE plan_id = ?1 AND status <> 'done'
+             ORDER BY sort_order ASC, created_at ASC"
+        ))?;
+        let source_tasks = collect(statement.query_map(params![source.id], task_from_row)?)?;
+        drop(statement);
+        let mut tasks = HashMap::new();
+        for task in &source_tasks {
+            let copy = insert_task(
+                &transaction,
+                &CreateTaskInput {
+                    title: task.title.clone(),
+                    description: task.description.clone(),
+                    plan_id: Some(plan.id.clone()),
+                    milestone_id: mapped(&milestones, &task.milestone_id),
+                    workstream_id: mapped(&workstreams, &task.workstream_id),
+                    owner_id: task.owner_id.clone(),
+                    due_date: shift(&task.due_date)?,
+                    scheduled_day: shift(&task.scheduled_day)?,
+                    planned_week: shift(&task.planned_week)?,
+                    estimated_minutes: task.estimated_minutes,
+                    status: TaskStatus::Todo,
+                    priority: task.priority,
+                    recurrence: task.recurrence.clone(),
+                    checklist: task
+                        .checklist
+                        .iter()
+                        .map(|item| ChecklistItem {
+                            text: item.text.clone(),
+                            done: false,
+                        })
+                        .collect(),
+                    waiting_on: Vec::new(),
+                },
+            )?;
+            tasks.insert(task.id.clone(), copy.id);
+        }
+        for task in &source_tasks {
+            let waiting_on = task
+                .waiting_on
+                .iter()
+                .filter_map(|id| tasks.get(id).cloned())
+                .collect::<Vec<_>>();
+            if !waiting_on.is_empty() {
+                replace_dependencies(&transaction, &tasks[&task.id], &waiting_on)?;
+            }
+        }
+        transaction.commit()?;
+        Ok(plan)
+    }
+
+    /// The address of one of a plan's saved links, checked again before anything opens it. The
+    /// interface names a link by plan and position rather than passing an address, so it can only
+    /// ever open what the user saved.
+    pub fn plan_link(&self, plan_id: &str, index: usize) -> AppResult<String> {
+        validate_id(plan_id)?;
+        let plan = plan_by_id(&self.connection, plan_id)?.ok_or(AppError::NotFound)?;
+        let link = plan.links.get(index).ok_or(AppError::NotFound)?;
+        super::task_details::web_address(&link.url)
+    }
+
+    /// Every open task in a word, for choosing what a task waits on. A task that isn't listed is
+    /// finished, so nothing waits on it any more.
+    pub fn open_task_references(&self) -> AppResult<Vec<TaskReference>> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, title, plan_id, scheduled_day, due_date FROM tasks
+             WHERE status <> 'done'
+             ORDER BY plan_id IS NULL, plan_id, sort_order ASC, created_at ASC",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok(TaskReference {
+                id: row.get(0)?,
+                title: row.get(1)?,
+                plan_id: row.get(2)?,
+                scheduled_day: row.get(3)?,
+                due_date: row.get(4)?,
+            })
+        })?;
+        collect(rows)
+    }
+
     /// Permanently deletes an archived plan in one transaction. Its workstreams, milestones, and
     /// the tasks that exist only inside it are removed; tasks with a week, scheduled day, or due
     /// day and all events are kept without a plan or workstream, with their revisions advanced so
@@ -201,11 +388,57 @@ impl PlannerDatabase {
     }
 
     pub fn create_task(&mut self, input: CreateTaskInput) -> AppResult<Task> {
-        insert_task(&self.connection, &input)
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let task = insert_task(&transaction, &input)?;
+        transaction.commit()?;
+        Ok(task)
     }
 
+    /// Saves a task's fields. Finishing a repeating task creates its next occurrence in the same
+    /// transaction.
     pub fn update_task(&mut self, input: UpdateTaskInput) -> AppResult<Task> {
-        replace_task(&self.connection, &input)
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let task = replace_task(&transaction, &input)?;
+        transaction.commit()?;
+        Ok(task)
+    }
+
+    /// Moves a repeating task's open occurrence to the rule's next date after both its day and
+    /// today, which is how a missed occurrence is skipped rather than done.
+    pub fn skip_occurrence(&mut self, id: &str, revision: i64) -> AppResult<Task> {
+        validate_id(id)?;
+        validate_revision(revision)?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let task = task_by_id(&transaction, id)?.ok_or(AppError::NotFound)?;
+        if task.revision != revision {
+            return Err(AppError::Conflict);
+        }
+        let (Some(rule), Some(day)) = (task.recurrence.as_ref(), task.scheduled_day.as_deref())
+        else {
+            return Err(AppError::Validation(
+                "Only a repeating task can skip to its next date.".into(),
+            ));
+        };
+        let from = super::parse_day(day)?;
+        let next = recurrence::next_occurrence(rule, from, super::local_today());
+        let shift = next.signed_duration_since(from).num_days();
+        let mut input = UpdateTaskInput::keeping(&task);
+        input.scheduled_day = Some(next.format("%Y-%m-%d").to_string());
+        input.due_date = task
+            .due_date
+            .as_deref()
+            .map(|due| super::offset_day(due, shift))
+            .transpose()?;
+        input.planned_week = None;
+        let skipped = replace_task(&transaction, &input)?;
+        transaction.commit()?;
+        Ok(skipped)
     }
 
     pub fn delete_task(&mut self, id: &str, revision: i64) -> AppResult<()> {
@@ -295,13 +528,14 @@ pub(super) fn insert_plan<C: SqlConnection>(
         input.start_date.as_deref(),
         input.target_date.as_deref(),
     )?;
+    let links = validate_plan_links(&input.links)?;
     let id = Uuid::new_v4().to_string();
     let timestamp = now();
     connection.connection().execute(
         "INSERT INTO plans
-         (id, title, description, status, start_date, target_date, color, archived,
+         (id, title, description, status, start_date, target_date, color, archived, links,
           revision, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, 1, ?8, ?8)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, ?8, 1, ?9, ?9)",
         params![
             id,
             input.title.trim(),
@@ -310,6 +544,7 @@ pub(super) fn insert_plan<C: SqlConnection>(
             start_date,
             target_date,
             input.color.map(PlanColor::as_str),
+            to_json(&links)?,
             timestamp
         ],
     )?;
@@ -329,11 +564,12 @@ pub(super) fn replace_plan<C: SqlConnection>(
         input.start_date.as_deref(),
         input.target_date.as_deref(),
     )?;
+    let links = validate_plan_links(&input.links)?;
     let changed = connection.connection().execute(
         "UPDATE plans
          SET title = ?1, description = ?2, status = ?3, start_date = ?4, target_date = ?5,
-             color = ?6, archived = ?7, revision = revision + 1, updated_at = ?8
-         WHERE id = ?9 AND revision = ?10",
+             color = ?6, archived = ?7, links = ?8, revision = revision + 1, updated_at = ?9
+         WHERE id = ?10 AND revision = ?11",
         params![
             input.title.trim(),
             input.description.trim(),
@@ -342,6 +578,7 @@ pub(super) fn replace_plan<C: SqlConnection>(
             target_date,
             input.color.map(PlanColor::as_str),
             input.archived as i64,
+            to_json(&links)?,
             now(),
             input.id,
             input.revision
@@ -499,21 +736,30 @@ pub(super) fn insert_task<C: SqlConnection>(
     };
     let days = validate_task_shape(&shape)?;
     validate_task_references(connection, &shape)?;
-    let connection = connection.connection();
+    let details = validate_task_details(
+        input.recurrence.as_ref(),
+        &input.checklist,
+        &input.waiting_on,
+        &days,
+    )?;
+    if input.status == TaskStatus::Done && details.recurrence.is_some() {
+        return Err(finished_task_repeats());
+    }
     let id = Uuid::new_v4().to_string();
     let timestamp = now();
     let completed_at = (input.status == TaskStatus::Done).then(|| timestamp.clone());
-    let next_order: i64 = connection.query_row(
+    let next_order: i64 = connection.connection().query_row(
         "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM tasks",
         [],
         |row| row.get(0),
     )?;
-    connection.execute(
+    connection.connection().execute(
         "INSERT INTO tasks
          (id, title, description, plan_id, milestone_id, workstream_id, owner_id, due_date,
           scheduled_day, planned_week, estimated_minutes, status, priority, completed_at,
-          sort_order, revision, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, 1, ?16, ?16)",
+          recurrence, checklist, sort_order, revision, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, 1,
+                 ?18, ?18)",
         params![
             id,
             input.title.trim(),
@@ -529,14 +775,19 @@ pub(super) fn insert_task<C: SqlConnection>(
             input.status.as_str(),
             input.priority.as_str(),
             completed_at,
+            recurrence_json(details.recurrence.as_ref())?,
+            to_json(&details.checklist)?,
             next_order,
             timestamp
         ],
     )?;
+    replace_dependencies(connection, &id, &details.waiting_on)?;
     task_by_id(connection, &id)?.ok_or(AppError::NotFound)
 }
 
-/// Replaces a task's editable fields when its revision still matches.
+/// Replaces a task's editable fields when its revision still matches. Finishing a repeating task
+/// also creates its next occurrence, which takes the rule over: the finished one keeps its history
+/// without a rule, so finishing it again can never make a second copy.
 pub(super) fn replace_task<C: SqlConnection>(
     connection: &C,
     input: &UpdateTaskInput,
@@ -561,6 +812,18 @@ pub(super) fn replace_task<C: SqlConnection>(
     };
     let days = validate_task_shape(&shape)?;
     validate_task_references(connection, &shape)?;
+    let details = validate_task_details(
+        input.recurrence.as_ref(),
+        &input.checklist,
+        &input.waiting_on,
+        &days,
+    )?;
+    let finishing = input.status == TaskStatus::Done && existing.status != TaskStatus::Done;
+    let (kept_rule, next_rule) = match details.recurrence.clone() {
+        Some(rule) if finishing => (None, Some(rule)),
+        Some(_) if input.status == TaskStatus::Done => return Err(finished_task_repeats()),
+        rule => (rule, None),
+    };
     let completed_at = match input.status {
         TaskStatus::Done if existing.status == TaskStatus::Done => {
             existing.completed_at.or_else(|| Some(now()))
@@ -573,8 +836,8 @@ pub(super) fn replace_task<C: SqlConnection>(
          SET title = ?1, description = ?2, plan_id = ?3, milestone_id = ?4, workstream_id = ?5,
              owner_id = ?6, due_date = ?7, scheduled_day = ?8, planned_week = ?9,
              estimated_minutes = ?10, status = ?11, priority = ?12, completed_at = ?13,
-             revision = revision + 1, updated_at = ?14
-         WHERE id = ?15 AND revision = ?16",
+             recurrence = ?14, checklist = ?15, revision = revision + 1, updated_at = ?16
+         WHERE id = ?17 AND revision = ?18",
         params![
             input.title.trim(),
             input.description.trim(),
@@ -589,6 +852,8 @@ pub(super) fn replace_task<C: SqlConnection>(
             input.status.as_str(),
             input.priority.as_str(),
             completed_at,
+            recurrence_json(kept_rule.as_ref())?,
+            to_json(&details.checklist)?,
             now(),
             input.id,
             input.revision
@@ -597,7 +862,101 @@ pub(super) fn replace_task<C: SqlConnection>(
     if changed != 1 {
         return Err(stale_write_error(connection, "tasks", &input.id)?);
     }
+    if details.waiting_on != existing.waiting_on {
+        replace_dependencies(connection, &input.id, &details.waiting_on)?;
+    }
+    if let Some(rule) = next_rule {
+        insert_next_occurrence(connection, input, &days, rule, &details.checklist)?;
+    }
     task_by_id(connection, &input.id)?.ok_or(AppError::NotFound)
+}
+
+/// Creates the occurrence after a finished one: the same work on the rule's next date after both
+/// the finished day and today, with a due date moved by the same number of days, an unticked
+/// checklist, and nothing to wait on yet.
+fn insert_next_occurrence<C: SqlConnection>(
+    connection: &C,
+    finished: &UpdateTaskInput,
+    days: &TaskDays,
+    rule: Recurrence,
+    checklist: &[ChecklistItem],
+) -> AppResult<Task> {
+    let day = days
+        .scheduled_day
+        .as_deref()
+        .ok_or_else(repeat_needs_a_day)
+        .and_then(super::parse_day)?;
+    let next = recurrence::next_occurrence(&rule, day, super::local_today());
+    let shift = next.signed_duration_since(day).num_days();
+    let due_date = days
+        .due_date
+        .as_deref()
+        .map(|due| super::offset_day(due, shift))
+        .transpose()?;
+    insert_task(
+        connection,
+        &CreateTaskInput {
+            title: finished.title.clone(),
+            description: finished.description.clone(),
+            plan_id: finished.plan_id.clone(),
+            milestone_id: finished.milestone_id.clone(),
+            workstream_id: finished.workstream_id.clone(),
+            owner_id: finished.owner_id.clone(),
+            due_date,
+            scheduled_day: Some(next.format("%Y-%m-%d").to_string()),
+            planned_week: None,
+            estimated_minutes: finished.estimated_minutes,
+            status: TaskStatus::Todo,
+            priority: finished.priority,
+            recurrence: Some(rule),
+            checklist: checklist
+                .iter()
+                .map(|item| ChecklistItem {
+                    text: item.text.clone(),
+                    done: false,
+                })
+                .collect(),
+            waiting_on: Vec::new(),
+        },
+    )
+}
+
+/// A task's checklist, repeat rule, and "waits on" list after validation.
+struct TaskDetails {
+    recurrence: Option<Recurrence>,
+    checklist: Vec<ChecklistItem>,
+    waiting_on: Vec<String>,
+}
+
+fn validate_task_details(
+    recurrence: Option<&Recurrence>,
+    checklist: &[ChecklistItem],
+    waiting_on: &[String],
+    days: &TaskDays,
+) -> AppResult<TaskDetails> {
+    let recurrence = recurrence
+        .map(|rule| {
+            let day = days
+                .scheduled_day
+                .as_deref()
+                .ok_or_else(repeat_needs_a_day)
+                .and_then(super::parse_day)?;
+            recurrence::normalized(rule, day)
+        })
+        .transpose()?;
+    Ok(TaskDetails {
+        recurrence,
+        checklist: validate_checklist(checklist)?,
+        waiting_on: validate_waiting_on(waiting_on)?,
+    })
+}
+
+fn repeat_needs_a_day() -> AppError {
+    AppError::Validation("A repeating task needs a day to repeat from.".into())
+}
+
+fn finished_task_repeats() -> AppError {
+    AppError::Validation("A finished task can't repeat. Reopen it first.".into())
 }
 
 /// The user-editable parts of a task, validated without touching the database.
@@ -819,6 +1178,7 @@ fn plan_from_row(row: &Row<'_>) -> rusqlite::Result<Plan> {
         revision: row.get(8)?,
         created_at: row.get(9)?,
         updated_at: row.get(10)?,
+        links: from_json(&row.get::<_, String>(11)?, 11)?,
     })
 }
 
@@ -858,6 +1218,12 @@ pub(super) fn task_from_row(row: &Row<'_>) -> rusqlite::Result<Task> {
         updated_at: row.get(15)?,
         planned_week: row.get(16)?,
         estimated_minutes: row.get(17)?,
+        recurrence: row
+            .get::<_, Option<String>>(18)?
+            .map(|value| from_json(&value, 18))
+            .transpose()?,
+        checklist: from_json(&row.get::<_, String>(19)?, 19)?,
+        waiting_on: from_json(&row.get::<_, String>(20)?, 20)?,
     })
 }
 
@@ -900,6 +1266,7 @@ mod tests {
             start_date: None,
             target_date: None,
             color: None,
+            links: Vec::new(),
         }
     }
 
@@ -919,6 +1286,7 @@ mod tests {
                 target_date: plan.target_date.clone(),
                 color: plan.color,
                 archived: true,
+                links: Vec::new(),
             })
             .unwrap()
     }
@@ -955,6 +1323,9 @@ mod tests {
             estimated_minutes: None,
             status: TaskStatus::Todo,
             priority: TaskPriority::Normal,
+            checklist: Vec::new(),
+            recurrence: None,
+            waiting_on: Vec::new(),
         }
     }
 
@@ -974,6 +1345,9 @@ mod tests {
             estimated_minutes: task.estimated_minutes,
             status: task.status,
             priority: task.priority,
+            checklist: Vec::new(),
+            recurrence: None,
+            waiting_on: Vec::new(),
         }
     }
 
@@ -1012,6 +1386,7 @@ mod tests {
             target_date: Some("2027-06-12".into()),
             color: Some(PlanColor::Plum),
             archived: false,
+            links: Vec::new(),
         };
         let updated = database.update_plan(edit(1, "Our wedding")).unwrap();
         assert_eq!(updated.revision, 2);

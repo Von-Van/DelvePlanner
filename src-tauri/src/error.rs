@@ -13,29 +13,31 @@ pub enum AppError {
     NotFound,
     #[error("This item changed after it was loaded or proposed. Review the latest version and try again.")]
     Conflict,
-    #[error("DayPlan's local AI runtime is unavailable. Restart it from Settings and try again.")]
+    #[error(
+        "Delve Planner's local AI runtime is unavailable. Restart it from Settings and try again."
+    )]
     OllamaUnavailable,
-    #[error("DayPlan's bundled AI runtime is missing or incompatible: {0}")]
+    #[error("Delve Planner's bundled AI runtime is missing or incompatible: {0}")]
     OllamaRuntime(String),
     #[error("The local model download was cancelled.")]
     ModelDownloadCancelled,
     #[error("Ollama returned an invalid planner response: {0}")]
     InvalidModelResponse(String),
-    #[error("The local DayPlan database did not pass its integrity check. Restore a backup from Settings.")]
+    #[error("The local Delve Planner database did not pass its integrity check. Restore a backup from Settings.")]
     CorruptDatabase,
-    #[error("This DayPlan database was created by a newer app version.")]
+    #[error("This Delve Planner database was created by a newer app version.")]
     UnsupportedDatabaseVersion,
     #[error("The selected backup is not available.")]
     BackupNotFound,
     #[error("That schedule proposal is unavailable or has already been used.")]
     ProposalUnavailable,
-    #[error("That schedule proposal expired. Ask DayPlan to prepare it again.")]
+    #[error("That schedule proposal expired. Ask Delve Planner to prepare it again.")]
     ProposalExpired,
     #[error("The planner request was cancelled.")]
     RequestCancelled,
     #[error("{}", .0.message())]
     Calendar(CalendarProblem),
-    #[error("DayPlan couldn't use the system keychain for this calendar's link. Unlock the keychain or allow access, then try again.")]
+    #[error("Delve Planner couldn't use the system keychain for this calendar's link. Unlock the keychain or allow access, then try again.")]
     Keychain,
     #[error(transparent)]
     Database(#[from] rusqlite::Error),

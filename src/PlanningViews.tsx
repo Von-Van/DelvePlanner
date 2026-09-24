@@ -2,6 +2,7 @@ import { ReactNode, useEffect, useRef, useState } from "react";
 import {
   Agenda,
   api,
+  ChecklistItem,
   Capacity,
   messageFor,
   Milestone,
@@ -624,6 +625,14 @@ function SessionTaskRow({
       onMessage(messageFor(cause));
     }
   }
+  async function saveChecklist(checklist: ChecklistItem[]) {
+    try {
+      await api.updateTask({ ...taskUpdate(task), checklist });
+      await onChanged();
+    } catch (cause) {
+      onMessage(messageFor(cause));
+    }
+  }
   return (
     <TaskRow
       task={task}
@@ -640,8 +649,10 @@ function SessionTaskRow({
         move: (tasks, target) => void mover.move(tasks, target),
         pickDay: mover.pickDay,
         blockTime: mover.blockTime,
+        skip: mover.skip,
       })}
       onToggle={() => void toggle()}
+      onChecklistChange={(checklist) => void saveChecklist(checklist)}
       onOpen={() => onOpenTask(task)}
     />
   );

@@ -187,8 +187,8 @@ impl PlannerDatabase {
         collect(rows)
     }
 
-    /// Blocks that start after `now` and belong to finished tasks: time DayPlan offers to give
-    /// back. Past blocks are kept as a record of the work.
+    /// Blocks that start after `now` and belong to finished tasks: time Delve Planner offers to
+    /// give back. Past blocks are kept as a record of the work.
     pub fn releasable_blocks(&self) -> AppResult<Vec<ScheduledBlock>> {
         let mut statement = self.connection.prepare(&format!(
             "{BLOCK_SELECT}
@@ -432,6 +432,9 @@ mod tests {
                 estimated_minutes: Some(90),
                 status: TaskStatus::Todo,
                 priority: TaskPriority::Normal,
+                checklist: Vec::new(),
+                recurrence: None,
+                waiting_on: Vec::new(),
             })
             .unwrap()
     }
@@ -524,6 +527,9 @@ mod tests {
                 estimated_minutes: outline.estimated_minutes,
                 status: TaskStatus::Done,
                 priority: TaskPriority::Normal,
+                checklist: Vec::new(),
+                recurrence: None,
+                waiting_on: Vec::new(),
             })
             .unwrap();
         assert!(matches!(
@@ -692,6 +698,9 @@ mod tests {
                     estimated_minutes: Some(30),
                     status: TaskStatus::Todo,
                     priority: TaskPriority::Normal,
+                    checklist: Vec::new(),
+                    recurrence: None,
+                    waiting_on: Vec::new(),
                 }
             })
             .unwrap();

@@ -1,5 +1,5 @@
 /*
- * DayPlan — cold white, silver, one blue.
+ * Delve Planner — cold white, silver, one blue.
  * White ground and silver hairlines carry the structure; blue marks the one thing that matters in
  * each region. Plan colours come from planning.ts and are user data, not theme.
  */
@@ -1033,11 +1033,73 @@ select:focus-visible,
   border-color: var(--blue);
   color: var(--blue);
 }
+/* Repeat, checklist, and waiting chips, and a checklist opened from its row. */
+.task-meta .task-repeat,
+.task-meta .task-checklist {
+  color: var(--blue);
+}
+.task-meta .task-checklist.complete {
+  color: var(--success);
+}
+.task-meta .task-waiting {
+  min-width: 0;
+  max-width: 240px;
+  display: block;
+  padding: 2px 7px;
+  border: 1px dashed var(--control);
+  color: var(--text);
+  font: 600 10px var(--font-ui);
+  text-transform: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.task-row.expanded {
+  flex-wrap: wrap;
+}
+.task-expand .glyph {
+  font-size: 15px;
+}
+/* Indented to line up with the title, past the check box and the row gap. */
+.task-checklist-items {
+  flex: 1 0 100%;
+  display: grid;
+  gap: 1px;
+  margin: -6px 0 9px;
+  padding: 0 0 0 33px;
+  list-style: none;
+}
+.task-checklist-items label {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 3px 0;
+  color: var(--text);
+  font: 400 12.5px var(--font-ui);
+  cursor: pointer;
+}
+.task-checklist-items input {
+  flex: 0 0 13px;
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  accent-color: var(--blue);
+}
+.task-checklist-items input:checked + span {
+  color: var(--chevron);
+  text-decoration: line-through;
+}
 .empty-tasks {
   margin: 14px 0;
   color: var(--secondary);
   font: 300 18px/1.3 var(--font-display);
   letter-spacing: 0.4px;
+}
+.filtered-out {
+  margin: 14px 0;
+}
+.filtered-out .empty-tasks {
+  margin: 0 0 7px;
 }
 .due-tasks {
   margin-top: 26px;
@@ -1586,6 +1648,176 @@ select:focus-visible,
 .color-swatches button.selected {
   box-shadow: 0 0 0 2px var(--blue);
 }
+/* Grouped fields in editors: repeat rules, checklists, waits, and plan links. */
+.editor-dialog fieldset {
+  min-width: 0;
+  margin: 0 0 15px;
+  padding: 0;
+  border: 0;
+}
+.editor-dialog legend {
+  margin-bottom: 7px;
+  padding: 0;
+  color: var(--text);
+  font: 600 11px var(--font-ui);
+  letter-spacing: 0.3px;
+}
+.editor-dialog legend span {
+  margin-left: 6px;
+  color: var(--muted);
+  font: 400 10px var(--font-mono);
+  letter-spacing: 0.4px;
+}
+.field-note {
+  margin: -6px 0 15px;
+  color: var(--muted);
+  font: 400 11px/1.45 var(--font-ui);
+  letter-spacing: 0;
+}
+.editor-dialog label > span.field-note {
+  margin: 0;
+  font: 400 11px/1.45 var(--font-ui);
+  letter-spacing: 0;
+}
+.editor-dialog fieldset > .field-note:last-child {
+  margin-bottom: 0;
+}
+/* A number with its unit after it, such as "2 weeks". */
+.editor-dialog label > span.unit-input {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--text);
+  font: 400 12px var(--font-ui);
+  letter-spacing: 0;
+}
+.unit-input input {
+  min-width: 0;
+  flex: 1;
+}
+.weekday-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: -4px 0 15px;
+}
+.weekday-toggles button {
+  min-width: 42px;
+  padding: 6px 0;
+  border: 1px solid var(--control);
+  background: var(--ground);
+  color: var(--secondary);
+  font: 500 11px var(--font-ui);
+}
+.weekday-toggles button.selected {
+  border-color: var(--blue);
+  background: var(--blue-wash);
+  color: var(--blue-deep);
+}
+/* The last chosen day can't be cleared, but it still reads as chosen. */
+.weekday-toggles button.selected:disabled {
+  cursor: default;
+  opacity: 1;
+}
+.checklist-field ul {
+  display: grid;
+  gap: 5px;
+  margin: 0 0 7px;
+  padding: 0;
+  list-style: none;
+}
+.checklist-field li,
+.checklist-add {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.editor-dialog .checklist-field input[type="checkbox"] {
+  flex: 0 0 14px;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--blue);
+}
+.editor-dialog .checklist-field li input:not([type="checkbox"]) {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 9px;
+}
+.checklist-field li input[type="checkbox"]:checked + input {
+  color: var(--chevron);
+  text-decoration: line-through;
+}
+.checklist-add input {
+  flex: 1;
+  min-width: 0;
+}
+.checklist-add button {
+  flex: 0 0 auto;
+  align-self: stretch;
+  padding: 0 13px;
+  border: 1px solid var(--control);
+  background: var(--ground);
+  color: var(--text);
+  font: 500 12px var(--font-ui);
+}
+.checklist-add button:hover:not(:disabled) {
+  border-color: var(--silver);
+  background: var(--ground-soft);
+}
+.checklist-field li button,
+.wait-chips button,
+.link-row button {
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--silver);
+  font-size: 11px;
+}
+.checklist-field li button:hover,
+.wait-chips button:hover,
+.link-row button:hover {
+  color: var(--danger);
+}
+.wait-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+}
+.wait-chips li {
+  max-width: 100%;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding-left: 9px;
+  border: 1px solid var(--rule);
+  background: var(--ground-soft);
+  color: var(--strong);
+  font: 400 12px var(--font-ui);
+  overflow-wrap: anywhere;
+}
+.wait-chips li button {
+  width: 24px;
+  height: 24px;
+  flex-basis: 24px;
+}
+.link-row {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr) 26px;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 7px;
+}
+.links-field .text-button {
+  margin-top: 3px;
+}
 .toast {
   position: fixed;
   z-index: 40;
@@ -1721,6 +1953,113 @@ select:focus-visible,
   border-color: var(--blue);
   background: linear-gradient(var(--blue-top), var(--blue-bottom));
   color: #fff;
+}
+/* Planning preferences: the week start, the quick-capture shortcut, and the shortcut list. */
+.settings-field {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 14px;
+  color: var(--strong);
+  font: 600 11px var(--font-ui);
+  letter-spacing: 0.3px;
+}
+.settings-field:last-child {
+  margin-bottom: 0;
+}
+.settings-field > span:not(.settings-field-label) {
+  color: var(--secondary);
+  font: 400 11px/1.5 var(--font-ui);
+  letter-spacing: 0;
+}
+.settings-field select {
+  width: 100%;
+  appearance: none;
+  -webkit-appearance: none;
+  padding: 7px 28px 7px 9px;
+  border: 1px solid var(--control);
+  border-radius: 0;
+  background:
+    linear-gradient(45deg, transparent 50%, var(--muted) 50%) calc(100% - 14px)
+      55% / 5px 5px no-repeat,
+    linear-gradient(135deg, var(--muted) 50%, transparent 50%) calc(100% - 9px)
+      55% / 5px 5px no-repeat,
+    var(--ground);
+  color: var(--ink);
+  font: 400 12px var(--font-ui);
+  letter-spacing: 0;
+}
+.settings-field select:focus {
+  border-color: var(--blue-frame);
+  box-shadow: 0 0 0 3px var(--blue-glow);
+}
+.settings-field > p {
+  font-weight: 400;
+  letter-spacing: 0;
+}
+.shortcut-setting .settings-actions {
+  align-items: center;
+  margin-top: 0;
+}
+kbd {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--rule);
+  border-bottom-width: 2px;
+  background: var(--ground-soft);
+  color: var(--ink);
+  font: 500 11px var(--font-mono);
+  letter-spacing: 0.4px;
+  white-space: nowrap;
+}
+kbd.off {
+  color: var(--muted);
+}
+.shortcut-recorder {
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 10px;
+  border: 1px solid var(--blue);
+  background: var(--blue-wash);
+  box-shadow: 0 0 0 3px var(--blue-glow);
+  color: var(--blue-deep);
+  font: 600 11px var(--font-ui);
+  text-align: left;
+}
+.shortcut-recorder small {
+  color: var(--secondary);
+  font: 400 10px var(--font-mono);
+}
+.settings-problem {
+  padding: 7px 9px;
+  border-left: 2px solid var(--danger-dot);
+  background: var(--danger-wash);
+}
+.settings-block-body .settings-problem {
+  color: var(--danger);
+}
+.shortcut-list {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+}
+.shortcut-list div {
+  display: grid;
+  grid-template-columns: minmax(96px, max-content) 1fr;
+  align-items: baseline;
+  gap: 10px;
+}
+.shortcut-list dt,
+.shortcut-list dd {
+  margin: 0;
+}
+.shortcut-list dd {
+  color: var(--secondary);
+  font: 400 11px/1.45 var(--font-ui);
 }
 .import-preview .danger-action {
   border-color: var(--danger-frame);
@@ -1932,6 +2271,56 @@ select:focus-visible,
   grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
   gap: 18px;
 }
+/* The Plans page before the first plan: blank, or from a template. */
+.first-plan {
+  padding: 26px 28px 30px;
+  border: 1px dashed var(--control);
+  background: linear-gradient(160deg, var(--blue-wash), #fff 55%);
+}
+.first-plan h2 {
+  margin: 0;
+  color: var(--ink);
+  font: 300 24px/1.2 var(--font-display);
+  letter-spacing: 0.6px;
+}
+.first-plan > p {
+  max-width: 580px;
+  margin: 10px 0 22px;
+  color: var(--secondary);
+  font: 400 13px/1.6 var(--font-ui);
+}
+.template-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 12px;
+}
+.template-card {
+  display: grid;
+  align-content: start;
+  gap: 7px;
+  padding: 14px 15px 15px;
+  border: 1px solid var(--frame);
+  background: var(--ground);
+  box-shadow: var(--shadow-hairline);
+  color: inherit;
+  text-align: left;
+}
+.template-card strong {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--ink);
+  font: 400 16px/1.2 var(--font-display);
+  letter-spacing: 0.4px;
+}
+.template-card span {
+  color: var(--secondary);
+  font: 400 11.5px/1.5 var(--font-ui);
+}
+.template-card:hover {
+  border-color: var(--blue-frame);
+  box-shadow: var(--shadow-blue);
+}
 .plan-card {
   display: flex;
   flex-direction: column;
@@ -2072,6 +2461,35 @@ select:focus-visible,
   color: var(--text);
   font: 400 13.5px/1.65 var(--font-ui);
   white-space: pre-line;
+}
+.plan-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.link-button {
+  max-width: 280px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 10px;
+  border: 1px solid var(--rule);
+  background: var(--ground);
+  color: var(--blue);
+  font: 500 12px var(--font-ui);
+}
+.link-button span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.link-button:hover {
+  border-color: var(--blue-frame);
+  background: var(--blue-wash);
 }
 .archived-banner {
   margin-top: 18px;
@@ -4226,7 +4644,7 @@ select:focus-visible,
   }
 }
 
-/* Which local model plans: DayPlan's own download beside anything already installed. */
+/* Which local model plans: Delve Planner's own download beside anything already installed. */
 .model-picker {
   display: grid;
   gap: 8px;
@@ -4363,8 +4781,83 @@ select:focus-visible,
   color: var(--muted);
   font-style: italic;
 }
+/* Changing a suggestion's details before applying it. */
+.proposal li {
+  flex-wrap: wrap;
+}
+.proposal li > label {
+  min-width: 0;
+  flex: 1;
+}
+.suggestion-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.edited-mark {
+  padding: 1px 5px;
+  border: 1px solid var(--rule);
+  color: var(--secondary);
+  font: 500 9px var(--font-mono);
+  font-style: normal;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.suggestion-editor {
+  flex: 0 0 calc(100% - 22px);
+  display: grid;
+  gap: 8px;
+  margin: 0 0 2px 22px;
+  padding: 10px 11px;
+  border-left: 2px solid var(--blue-frame);
+  background: var(--blue-wash);
+}
+.proposal li .suggestion-editor label {
+  display: grid;
+  gap: 4px;
+  cursor: default;
+  color: var(--text);
+  font: 600 10.5px var(--font-ui);
+}
+.suggestion-editor input {
+  width: 100%;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--control);
+  border-radius: 0;
+  outline: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font: 400 12px var(--font-ui);
+}
+.suggestion-editor input:focus {
+  border-color: var(--blue-frame);
+  box-shadow: 0 0 0 3px var(--blue-glow);
+}
+.suggestion-pair {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 8px;
+}
+.suggestion-problem {
+  margin: 0;
+  color: var(--danger);
+  font: 400 11px/1.4 var(--font-ui);
+}
+.suggestion-editor-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+}
+.suggestion-editor-actions .secondary-button {
+  min-height: 28px;
+  padding: 0 12px;
+  font-size: 11px;
+}
 
-/* What DayPlan knows: the profile you set, and what it worked out for itself. */
+/* What Delve Planner knows: the profile you set, and what it worked out for itself. */
 .knowledge-page {
   padding: 0 34px 60px;
 }

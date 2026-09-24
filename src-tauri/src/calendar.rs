@@ -1,7 +1,7 @@
 //! Read-only calendars from other services. Every source normalizes into one external-event
-//! shape stored in a cache kept apart from planner data: an iCalendar link DayPlan refreshes in
-//! the background, an iCalendar file imported once, or a Google or Microsoft account read through
-//! OAuth with read-only scopes.
+//! shape stored in a cache kept apart from planner data: an iCalendar link Delve Planner refreshes
+//! in the background, an iCalendar file imported once, or a Google or Microsoft account read
+//! through OAuth with read-only scopes.
 
 pub mod ics;
 pub mod link;
@@ -36,7 +36,7 @@ const TOKEN_MARGIN_SECONDS: i64 = 60;
 /// Access tokens by account, with the moment each one stops working.
 type AccessTokens = HashMap<String, (String, DateTime<Utc>)>;
 
-/// How often a link calendar refreshes while DayPlan runs.
+/// How often a link calendar refreshes while Delve Planner runs.
 const REFRESH_INTERVAL_MINUTES: i64 = 30;
 const MAX_AGENDA_DAYS: u32 = 14;
 
@@ -447,7 +447,8 @@ impl CalendarService {
     }
 
     /// Signs in to an account in the system browser and lists the calendars it offers. Signing in
-    /// again to an account DayPlan already knows refreshes that account instead of doubling it.
+    /// again to an account Delve Planner already knows refreshes that account instead of doubling
+    /// it.
     pub async fn connect(
         &self,
         provider: CalendarProvider,
@@ -492,7 +493,7 @@ impl CalendarService {
         self.store(|store| store.list_accounts())
     }
 
-    /// The calendars an account offers, for choosing which ones DayPlan shows.
+    /// The calendars an account offers, for choosing which ones Delve Planner shows.
     pub async fn account_calendars(&self, account_id: &str) -> AppResult<Vec<RemoteCalendar>> {
         let account = self
             .store(|store| store.account(account_id))?
@@ -820,7 +821,7 @@ impl CalendarService {
     fn ensure_room(&self) -> AppResult<()> {
         if self.list()?.len() >= crate::model::MAX_CALENDARS {
             return Err(AppError::Validation(format!(
-                "DayPlan can show up to {} calendars. Remove one to add another.",
+                "Delve Planner can show up to {} calendars. Remove one to add another.",
                 crate::model::MAX_CALENDARS
             )));
         }
@@ -1117,7 +1118,7 @@ END:VCALENDAR\r
         (format!("http://{address}"), handle)
     }
 
-    /// Stands in for the system browser by following the sign-in URL back to DayPlan.
+    /// Stands in for the system browser by following the sign-in URL back to Delve Planner.
     fn browser() -> impl Fn(&str) -> AppResult<()> + Send + Sync {
         |url: &str| {
             let url = url.to_string();

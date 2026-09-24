@@ -1,7 +1,18 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import type { OllamaStatus, PlannerResponse } from "./api";
+import {
+  commandShortcutText,
+  shortcutPlatform,
+  submitOnCommandEnter,
+} from "./shortcuts";
+import type {
+  OllamaStatus,
+  PlannerResponse,
+  ProposalChange,
+  SuggestionEdit,
+} from "./api";
 import { Glyph, Mark, Spinner } from "./Geometry";
-import { acceptedOperations, describeProposal } from "./proposals";
+import { acceptedOperations, describeProposal, withEdits } from "./proposals";
+import { canEditSuggestion, SuggestionEditor } from "./SuggestionEditor";
 
 export function PlannerCard({
   status,
@@ -23,8 +34,8 @@ export function PlannerCard({
   onSubmit: (event: FormEvent) => void;
   thinking: boolean;
   response: PlannerResponse | null;
-  /** Applies only the suggestions the user kept ticked. */
-  onApply: (accepted: string[]) => void;
+  /** Applies only the suggestions the user kept ticked, with the changes they made to any. */
+  onApply: (accepted: string[], edits: SuggestionEdit[]) => void;
   applying: boolean;
   onDiscard: () => void;
   onClear: () => void;
@@ -39,13 +50,26 @@ export function PlannerCard({
     status?.phase === "stopped" && ready
       ? `${status.modelName} · starts when you ask something`
       : (status?.detail ?? "Checking your local model…");
+  // Suggestions the user changed in review, by handle, as they will be applied.
+  const [edits, setEdits] = useState<ReadonlyMap<string, ProposalChange>>(
+    new Map(),
+  );
+  const [editing, setEditing] = useState<string | null>(null);
+  const reviewed = useMemo(
+    () => (response?.kind === "proposal" ? withEdits(response, edits) : null),
+    [response, edits],
+  );
   const previews = useMemo(
-    () => (response?.kind === "proposal" ? describeProposal(response) : []),
-    [response],
+    () => (reviewed ? describeProposal(reviewed) : []),
+    [reviewed],
   );
   const [rejected, setRejected] = useState<ReadonlySet<string>>(new Set());
   // Every new proposal is reviewed from scratch, with everything accepted to begin with.
-  useEffect(() => setRejected(new Set()), [response]);
+  useEffect(() => {
+    setRejected(new Set());
+    setEdits(new Map());
+    setEditing(null);
+  }, [response]);
   const accepted = acceptedOperations(previews, rejected);
   const kept = new Set(accepted);
   function toggle(id: string) {
@@ -102,6 +126,8 @@ export function PlannerCard({
           maxLength={1000}
           value={command}
           onChange={(event) => onCommand(event.target.value)}
+          onKeyDown={submitOnCommandEnter}
+          aria-keyshortcuts={isMacShortcuts ? "Meta+Enter" : "Control+Enter"}
           aria-label={
             planTitle ? `Plan changes for ${planTitle}` : "Plan changes"
           }
@@ -119,6 +145,7 @@ export function PlannerCard({
           <button
             className="primary-button small"
             disabled={!command.trim() || !ready || thinking}
+            title={`Plan changes (${commandShortcutText("↩")})`}
           >
             {thinking ? <Spinner size={7} /> : <Mark size={6} filled />}
             Plan changes
@@ -137,39 +164,83 @@ export function PlannerCard({
             <p className="proposal-kicker">REVIEW BEFORE APPLYING</p>
             <strong>{response.summary}</strong>
             <ul>
-              {previews.map((preview) => (
-                <li
-                  key={preview.id}
-                  className={kept.has(preview.id) ? "" : "rejected"}
-                >
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={kept.has(preview.id)}
-                      onChange={() => toggle(preview.id)}
-                      aria-label={`Accept: ${preview.title}`}
-                    />
-                    <i
-                      className={`operation-mark ${preview.tone}`}
-                      aria-hidden="true"
-                    />
-                    <span>
-                      {preview.title}
-                      {preview.suggested && (
-                        <em className="suggested-mark">suggested</em>
+              {previews.map((preview) => {
+                const change = reviewed?.operations.find(
+                  (operation) => operation.id === preview.id,
+                )?.change;
+                return (
+                  <li
+                    key={preview.id}
+                    className={`${kept.has(preview.id) ? "" : "rejected"} ${edits.has(preview.id) ? "edited" : ""}`}
+                  >
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={kept.has(preview.id)}
+                        onChange={() => toggle(preview.id)}
+                        aria-label={`Accept: ${preview.title}`}
+                      />
+                      <i
+                        className={`operation-mark ${preview.tone}`}
+                        aria-hidden="true"
+                      />
+                      <span>
+                        {preview.title}
+                        {preview.suggested && (
+                          <em className="suggested-mark">suggested</em>
+                        )}
+                        {preview.details.length > 0 && (
+                          <small>{preview.details.join(" · ")}</small>
+                        )}
+                        {preview.reason && (
+                          <small className="operation-reason">
+                            {preview.reason}
+                          </small>
+                        )}
+                      </span>
+                    </label>
+                    {change &&
+                      editing !== preview.id &&
+                      kept.has(preview.id) &&
+                      canEditSuggestion(change) && (
+                        <div className="suggestion-actions">
+                          {edits.has(preview.id) && (
+                            <em className="edited-mark">edited</em>
+                          )}
+                          <button
+                            className="text-button"
+                            onClick={() => setEditing(preview.id)}
+                            aria-label={`Edit: ${preview.title}`}
+                          >
+                            Edit
+                          </button>
+                          {edits.has(preview.id) && (
+                            <button
+                              className="text-button"
+                              onClick={() => {
+                                const next = new Map(edits);
+                                next.delete(preview.id);
+                                setEdits(next);
+                              }}
+                            >
+                              Undo edit
+                            </button>
+                          )}
+                        </div>
                       )}
-                      {preview.details.length > 0 && (
-                        <small>{preview.details.join(" · ")}</small>
-                      )}
-                      {preview.reason && (
-                        <small className="operation-reason">
-                          {preview.reason}
-                        </small>
-                      )}
-                    </span>
-                  </label>
-                </li>
-              ))}
+                    {change && editing === preview.id && (
+                      <SuggestionEditor
+                        change={change}
+                        onCancel={() => setEditing(null)}
+                        onSave={(next) => {
+                          setEdits(new Map(edits).set(preview.id, next));
+                          setEditing(null);
+                        }}
+                      />
+                    )}
+                  </li>
+                );
+              })}
             </ul>
             {accepted.length < previews.length && (
               <p className="proposal-note">
@@ -189,8 +260,15 @@ export function PlannerCard({
               </button>
               <button
                 className="primary-button small"
-                onClick={() => onApply(accepted)}
-                disabled={applying || accepted.length === 0}
+                onClick={() =>
+                  onApply(
+                    accepted,
+                    [...edits]
+                      .filter(([id]) => kept.has(id))
+                      .map(([id, change]) => ({ id, change })),
+                  )
+                }
+                disabled={applying || accepted.length === 0 || editing !== null}
               >
                 {applying && <Spinner size={7} />}
                 Apply {accepted.length} change
@@ -207,3 +285,5 @@ export function PlannerCard({
     </section>
   );
 }
+
+const isMacShortcuts = shortcutPlatform === "mac";

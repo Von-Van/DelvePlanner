@@ -103,7 +103,8 @@ export function CalendarsView({
     }
   }
 
-  // Signing in again to an account DayPlan already has refreshes it instead of duplicating it.
+  // Signing in again to an account Delve Planner already has refreshes it instead of duplicating
+  // it.
   async function connect(provider: CalendarProvider) {
     setConnecting(provider);
     try {
@@ -149,7 +150,7 @@ export function CalendarsView({
         onSelect: () => {
           if (
             !window.confirm(
-              `Disconnect ${account.label}? Its ${plural(account.calendarCount, "calendar")} and their events leave DayPlan, and the sign-in is withdrawn. Your calendars aren't changed.`,
+              `Disconnect ${account.label}? Its ${plural(account.calendarCount, "calendar")} and their events leave Delve Planner, and the sign-in is withdrawn. Your calendars aren't changed.`,
             )
           )
             return;
@@ -216,7 +217,7 @@ export function CalendarsView({
       onSelect: () => {
         if (
           !window.confirm(
-            `Remove “${calendar.name}”? Its events leave DayPlan${
+            `Remove “${calendar.name}”? Its events leave Delve Planner${
               calendar.kind === "ics_link"
                 ? " and its link is deleted from your keychain"
                 : account
@@ -244,8 +245,8 @@ export function CalendarsView({
       </header>
       <p className="page-intro">
         See your Google, Outlook, and other calendars beside your plans. They
-        stay read-only: DayPlan never changes them, and their events aren't
-        exported or backed up with your planner data.
+        stay read-only: Delve Planner never changes them, and their events
+        aren't exported or backed up with your planner data.
       </p>
       <div className="calendars-grid">
         <section aria-labelledby="calendar-list">
@@ -403,9 +404,9 @@ export function CalendarsView({
             <p className="side-kicker">CONNECT AN ACCOUNT</p>
             <h3>Google or Outlook</h3>
             <p>
-              Sign in once in your browser, then choose which calendars DayPlan
-              shows. DayPlan asks for read-only access: it can see when you're
-              busy and never changes, creates, or deletes anything.
+              Sign in once in your browser, then choose which calendars Delve
+              Planner shows. Delve Planner asks for read-only access: it can see
+              when you're busy and never changes, creates, or deletes anything.
             </p>
             <div className="connect-buttons">
               {(["google", "microsoft"] as const).map((provider) => (
@@ -430,7 +431,7 @@ export function CalendarsView({
             {connecting && (
               <p className="editor-hint">
                 Finish signing in to {providerLabel(connecting)} in your
-                browser. DayPlan waits five minutes.
+                browser. Delve Planner waits five minutes.
               </p>
             )}
           </section>
@@ -527,7 +528,7 @@ export function CalendarsView({
   );
 }
 
-/** Chooses which of an account's calendars DayPlan shows. */
+/** Chooses which of an account's calendars Delve Planner shows. */
 function CalendarPicker({
   account,
   calendars,
@@ -550,7 +551,7 @@ function CalendarPicker({
     <EditorShell
       label="Choose calendars"
       kicker={`${providerLabel(account.provider).toUpperCase()} · ${account.label}`}
-      heading="Which calendars should DayPlan show?"
+      heading="Which calendars should Delve Planner show?"
       busy={saving}
       onClose={onClose}
       onSubmit={(form) => {
@@ -606,8 +607,8 @@ function CalendarPicker({
         </ul>
       )}
       <p className="editor-hint">
-        DayPlan only reads these calendars. You can hide or remove any of them
-        later.
+        Delve Planner only reads these calendars. You can hide or remove any of
+        them later.
       </p>
     </EditorShell>
   );
@@ -694,9 +695,9 @@ function SubscribeCard({
           <dd>Look for a public or private iCal (.ics) or webcal link.</dd>
         </dl>
         <p>
-          Anyone with a private link can read that calendar, so DayPlan keeps it
-          in your system keychain and never shows it again. It checks the
-          calendar every 30 minutes while DayPlan is running.
+          Anyone with a private link can read that calendar, so Delve Planner
+          keeps it in your system keychain and never shows it again. It checks
+          the calendar every 30 minutes while Delve Planner is running.
         </p>
       </details>
     </form>
@@ -942,7 +943,7 @@ function LinkEditor({
           maxLength={1200}
         />
         <span>
-          DayPlan checks the link first. The old link is replaced in your
+          Delve Planner checks the link first. The old link is replaced in your
           keychain only if the new one works.
         </span>
       </label>

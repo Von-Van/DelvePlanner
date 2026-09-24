@@ -204,6 +204,9 @@ mod tests {
             estimated_minutes: None,
             status: TaskStatus::Todo,
             priority: TaskPriority::Normal,
+            checklist: Vec::new(),
+            recurrence: None,
+            waiting_on: Vec::new(),
         }
     }
 
@@ -308,6 +311,7 @@ mod tests {
                         start_date: None,
                         target_date: None,
                         color: None,
+                        links: Vec::new(),
                     },
                 },
             })

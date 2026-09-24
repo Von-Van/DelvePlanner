@@ -11,4 +11,4 @@ if (versions.some((version) => !version) || new Set(versions).size !== 1) {
   process.exit(1);
 }
 
-console.log(`DayPlan versions synchronized at ${versions[0]}.`);
+console.log(`Delve Planner versions synchronized at ${versions[0]}.`);

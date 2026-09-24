@@ -1,12 +1,12 @@
-# DayPlan roadmap
+# Delve Planner roadmap
 
-DayPlan is the private planning layer between your larger plans and your actual days. The next releases deepen one loop instead of adding project-management breadth:
+Delve Planner is the private planning layer between your larger plans and your actual days. The next releases deepen one loop instead of adding project-management breadth:
 
 **Capture → Organize → Plan → Week → Today → Calendar → Execute → Replan**
 
 Each priority from the September 2026 product development handoff ships as one version, in the handoff's order. The commit subject, tag, and release title all use the version name.
 
-Every version answers to one test: can someone with several things going on open DayPlan and quickly see what deserves their attention this week and what to work on today?
+Every version answers to one test: can someone with several things going on open Delve Planner and quickly see what deserves their attention this week and what to work on today?
 
 | Version | Priority | Theme                          | Contents                                                                  |
 | ------- | -------- | ------------------------------ | ------------------------------------------------------------------------- |
@@ -15,8 +15,8 @@ Every version answers to one test: can someone with several things going on open
 | v0.3.0  | 2        | Calendar integration           | Google and Outlook accounts, read-only                                    |
 | v0.3.1  | 2        | Local model flexibility        | Any installed model, and a runtime that runs only while it works          |
 | v0.3.2  | 3        | AI planning                    | Reviewable suggestions, estimates, week choice, reasons                   |
-| v0.3.3  | 3        | AI planning, continued         | Inbox conversion, workstreams, inline edits before applying               |
-| v0.3.5  | 4        | Personal planning intelligence | Planning profile, local observations, What DayPlan Knows                  |
+| v0.3.3  | 3        | AI planning, continued         | Inbox conversion, workstreams, inline edits (shipped in v0.4.0 instead)   |
+| v0.3.5  | 4        | Personal planning intelligence | Planning profile, local observations, What Delve Planner Knows            |
 | v0.4.0  | 5        | Quality of life                | Templates, recurring tasks, checklists, duplication, dependencies, polish |
 
 Other patch numbers stay free for fixes and intermediate builds. v0.2.9 is one: it shipped the part of Priority 2 that needs no account keys.
@@ -77,17 +77,17 @@ One task record moves between horizons. Nothing is copied.
 
 ## v0.3.0 — Calendar integration
 
-Priority 2. DayPlan learns when you're actually busy. External calendars stay read-only and separate from DayPlan's own events. v0.2.9 shipped everything in this section except Google and Outlook sign-in, which this version adds.
+Priority 2. Delve Planner learns when you're actually busy. External calendars stay read-only and separate from Delve Planner's own events. v0.2.9 shipped everything in this section except Google and Outlook sign-in, which this version adds.
 
 - **Sync design first.** [The calendar design](docs/calendar-integration.md) covers data ownership, caching, refresh, recurring events, and revocation, and is reviewed before provider code lands.
 - **iCalendar links and files.** Subscribing to an https or webcal link (Google's secret iCal address, an Outlook published calendar) keeps a calendar refreshed; an imported `.ics` file is a snapshot a newer file replaces. Both are read-only calendars in the same cache as the account connections.
 - **Provider architecture.** A Rust `CalendarProvider` interface normalizes every provider into one external-event shape: provider, calendar, source ID, title, start and end or all-day date, time zone, busy or free, and recurrence instance. Google and Outlook share the scheduling, display, and capacity code.
 - **Authorization.** OAuth runs in Rust with the system browser, PKCE, and a loopback redirect, using read-only scopes. Tokens live in the OS keychain and never reach SQLite, exports, backups, diagnostics, or the renderer.
-- **Storage.** External events live in a Rust-owned, non-authoritative cache kept apart from the planner database, in a separate SQLite file. The cache is cleared on disconnect and excluded from export and backup. External events never get DayPlan event IDs or mix with `schedule_events`.
-- **Display.** Today and Week show external events in a distinct read-only style, with all-day events, overlaps, expanded recurring instances, and time zones handled. Revoked or expired access shows a reconnect prompt and never affects DayPlan data.
+- **Storage.** External events live in a Rust-owned, non-authoritative cache kept apart from the planner database, in a separate SQLite file. The cache is cleared on disconnect and excluded from export and backup. External events never get Delve Planner event IDs or mix with `schedule_events`.
+- **Display.** Today and Week show external events in a distinct read-only style, with all-day events, overlaps, expanded recurring instances, and time zones handled. Revoked or expired access shows a reconnect prompt and never affects Delve Planner data.
 - **Time blocks.** A `task_blocks` table links reserved time (start, duration, time zone, revision) to a task, shown on the agenda apart from events. A task can have several blocks. Moving or deleting a block never changes the task; deleting a task removes its blocks; completing a task offers to release its future blocks and keeps past ones. Blocks stay local, with no write-back to external calendars.
-- **Capacity.** Planned work is the estimated time of open tasks chosen for or scheduled in the period. Available time is planning hours minus DayPlan events and busy external events. DayPlan shows the numbers and warns when planned exceeds available ("Planned 17h, available 11h") but never rearranges anything. Planning hours come from a minimal working-hours setting (a Rust-owned, revision-checked settings record) that v0.3.5 grows into the planning profile.
-- **Docs.** The README's privacy section explains that DayPlan contacts Google or Microsoft only after a calendar is connected, and the scope limits no longer list sync.
+- **Capacity.** Planned work is the estimated time of open tasks chosen for or scheduled in the period. Available time is planning hours minus Delve Planner events and busy external events. Delve Planner shows the numbers and warns when planned exceeds available ("Planned 17h, available 11h") but never rearranges anything. Planning hours come from a minimal working-hours setting (a Rust-owned, revision-checked settings record) that v0.3.5 grows into the planning profile.
+- **Docs.** The README's privacy section explains that Delve Planner contacts Google or Microsoft only after a calendar is connected, and the scope limits no longer list sync.
 
 **Done when:** a connected Google calendar appears read-only in Today and Week, a task can be blocked into free time, the week shows planned against available hours, and disconnecting removes every cached calendar record.
 
@@ -97,7 +97,7 @@ Priority 2. DayPlan learns when you're actually busy. External calendars stay re
 
 **Decided:**
 
-- An imported `.ics` file becomes a read-only calendar, not editable DayPlan events.
+- An imported `.ics` file becomes a read-only calendar, not editable Delve Planner events.
 - Calendar links are secrets: each one lives in the OS keychain, like the OAuth tokens that follow.
 - Working hours are a planner-database record that exports leave out.
 - Hidden calendars don't count toward busy time, and all-day events count only when they're marked busy.
@@ -110,15 +110,15 @@ Priority 2. DayPlan learns when you're actually busy. External calendars stay re
 
 ## v0.3.1 — Local model flexibility
 
-Priority 2. DayPlan uses the local AI the machine already has, and stops costing anything when nobody is asking it for anything.
+Priority 2. Delve Planner uses the local AI the machine already has, and stops costing anything when nobody is asking it for anything.
 
-- **Any installed model.** The model picker lists what DayPlan downloaded alongside what's already installed, read from the folder Ollama uses (`OLLAMA_MODELS`, else `~/.ollama/models`). Ollama serves one folder at a time, so the runtime follows the chosen model's folder. DayPlan only reads the machine's folder: its own downloads stay in its application data, so removing DayPlan's model data can never delete a model the user installed.
+- **Any installed model.** The model picker lists what Delve Planner downloaded alongside what's already installed, read from the folder Ollama uses (`OLLAMA_MODELS`, else `~/.ollama/models`). Ollama serves one folder at a time, so the runtime follows the chosen model's folder. Delve Planner only reads the machine's folder: its own downloads stay in its application data, so removing Delve Planner's model data can never delete a model the user installed.
 - **Tested versus merely working.** `qwen3:8b` stays the model the eval gates run against and is labelled tested. Any other choice is asked one schema-constrained question it can't get wrong; a model that can't hold the reply format says so at the picker rather than halfway through planning a week. The result is remembered per model.
-- **Quitting means quitting.** Ollama runs a model in a separate runner process, so DayPlan starts the server in its own process group and ends the group on exit. The exit hook runs on Tauri's `Exit` event, because destructors don't run when the app exits. A force-quit or crash leaves a recorded process ID, and the next launch ends it before starting another.
+- **Quitting means quitting.** Ollama runs a model in a separate runner process, so Delve Planner starts the server in its own process group and ends the group on exit. The exit hook runs on Tauri's `Exit` event, because destructors don't run when the app exits. A force-quit or crash leaves a recorded process ID, and the next launch ends it before starting another.
 - **Idle costs nothing.** Reading status never starts the runtime; a planner request, a download, or a model check does. The model is released when the window is hidden and unloads shortly after each reply, and the server stops after five minutes with nothing to do.
 - **Docs.** The README's bundled-runtime section covers choosing a model and the lifecycle, and the release checklist verifies that quitting leaves nothing running.
 
-**Done when:** a machine with its own Ollama models can plan without downloading anything, and quitting DayPlan leaves no `ollama` process behind.
+**Done when:** a machine with its own Ollama models can plan without downloading anything, and quitting Delve Planner leaves no `ollama` process behind.
 
 ## v0.3.2 — AI planning
 
@@ -139,7 +139,9 @@ Build order: plan creation, plan breakdown, inbox processing, weekly planning, d
 
 **Shipped in v0.3.2:** per-suggestion accept and reject with dependency-aware rejection and atomic partial apply; estimates and week choice as typed fields on the task operations; a one-line reason on the operations where the planner chooses something the request didn't state; and planner-chosen days, due dates, and weeks marked as suggestions, allowed only when the request asks the planner to choose.
 
-**Still open, moved to v0.3.3:** converting inbox items through the planner (needs inbox records in the request context), creating workstreams (worth little until tasks can be assigned to them), and editing a suggestion inline before applying it. Accept-or-reject covers the common case; anything else is edited afterwards with DayPlan's own editors.
+**Still open, moved to v0.3.3:** converting inbox items through the planner (needs inbox records in the request context), creating workstreams (worth little until tasks can be assigned to them), and editing a suggestion inline before applying it. Accept-or-reject covers the common case; anything else is edited afterwards with Delve Planner's own editors.
+
+**Shipped in v0.4.0 (v0.3.3 was never released on its own):** the planner creates workstreams and puts tasks in them, including in a workstream the same proposal creates; turns inbox items into tasks, events, or plans when the request mentions the inbox, removing the item in the same transaction; and lets a suggestion's details be edited before applying, with Rust checking the edit still targets what was proposed. When asked to choose a day, it gets Rust-computed spare time for the next 14 days — events, busy calendar time, planned estimates, working hours, days off, and the daily limit folded into one number per day — and a chosen day with no working time moves to the next day that has some.
 
 ## v0.3.5 — Personal planning intelligence
 
@@ -147,13 +149,15 @@ Priority 4. Suggestions adapt to how the user actually plans, locally and transp
 
 - **Planning profile.** All optional: working hours (from v0.3.0), preferred planning hours, maximum planned work per day, focus-block length, break behavior, no-work days, and weekend and morning or evening preferences. Capacity and AI proposals use them.
 - **Local observations.** Deterministic summaries computed in Rust from local data, such as estimate accuracy from completed time blocks, days or times that work is often moved away from, usual working hours, and typical daily load. Each observation shows the data behind it.
-- **What DayPlan Knows.** A Settings page lists the profile and every observation with edit, delete, and off controls. AI explanations can cite what informed them.
+- **What Delve Planner Knows.** A Settings page lists the profile and every observation with edit, delete, and off controls. AI explanations can cite what informed them.
 
 **Done when:** every personalized suggestion traces back to settings or observations the user can see, change, or delete.
 
-**Shipped in v0.3.5:** the planning profile as a schema-7 record that capacity honours (a day off holds no working time, and a daily limit is reported), four observations computed in Rust from local records with the evidence behind each and a five-record floor, per-observation off switches, and What DayPlan Knows with controls to change, switch off, or forget any of it.
+**Shipped in v0.3.5:** the planning profile as a schema-7 record that capacity honours (a day off holds no working time, and a daily limit is reported), four observations computed in Rust from local records with the evidence behind each and a five-record floor, per-observation off switches, and What Delve Planner Knows with controls to change, switch off, or forget any of it.
 
 **Still open:** using the profile in the planner's own suggestions, which waits on the planning workflows deferred to v0.3.3, and observations about deferral beyond which weekday work slips.
+
+**Shipped in v0.4.0:** days off and the daily limit shape the spare time the planner sees when it's asked to choose a day, and two deferral observations — open work that keeps moving off its day, and the plan whose work slips most. Preferred hours, focus and break lengths, and energy preference are still recorded without being used.
 
 **Decided:** the carry-forward history starts in v0.3.5 alongside its controls, so nothing was recorded before it could be inspected or turned off. It keeps only the two days and the moment — never a title or note — and can be cleared from the same screen.
 
@@ -170,6 +174,10 @@ Priority 5. Useful additions after the core loop is solid.
 - **Docs.** The README's scope limits drop recurrence and dependencies, noting that both stay lightweight.
 
 **Done when:** starting a common kind of plan takes one step, and routine work repeats without being re-entered.
+
+**Shipped in v0.4.0:** all six templates, as a choice in the new-plan editor and on the Plans page before the first plan; repeating tasks; checklists; plan duplication with a date shift; waits between tasks, shown as a hint; plan links for notes and resources; a system-wide quick-capture shortcut that is off until recorded; ⌘N, ⇧⌘N, ⌘← and ⌘→, ⌘↩, and ⌘, with a shortcut list in Settings; a week-start setting and a remembered plan filter as saved planning preferences; a first-plan experience, empty states that say when the plan filter is hiding work, and onboarding focus that follows each step.
+
+**Decided:** a repeating task keeps one open occurrence at a time. Finishing it brings the next; a missed occurrence waits with unfinished work until it's moved, skipped to its next date, or finished, instead of new ones appearing while it's missed.
 
 ## Not planned
 

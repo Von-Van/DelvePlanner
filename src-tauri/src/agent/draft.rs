@@ -10,16 +10,16 @@ use super::grounding::{
     mentions_notes, mentions_plan_word, mentions_week, names, user_spelling,
     wants_reminder_at_start, words,
 };
-use crate::db::{fold, validate_model_response, PlannerDatabase};
+use crate::db::{fold, mentions_inbox, validate_model_response, PlannerDatabase};
 use crate::error::{AppError, AppResult};
 use crate::model::{
-    DayChange, EstimateChange, LocalDateTimeInput, LocalDateTimeResolution, Milestone,
-    MilestoneStatus, ModelResponse, MutationOperation, Plan, PlanStatus, PlannerCandidates,
-    ProposalReference, RecordKind, RecordRef, ReminderChange, ReviewNote, ScheduleEvent, Task,
-    TaskPriority, TaskStatus, MAX_DESCRIPTION_LENGTH, MAX_NOTES_LENGTH, MAX_OPERATIONS,
-    MAX_REMINDER_MINUTES, MAX_TITLE_LENGTH,
+    DayChange, EstimateChange, InboxItem, InboxSource, LocalDateTimeInput, LocalDateTimeResolution,
+    Milestone, MilestoneStatus, ModelResponse, MutationOperation, Plan, PlanStatus,
+    PlannerCandidates, ProposalReference, RecordKind, RecordRef, ReminderChange, ReviewNote,
+    ScheduleEvent, Task, TaskPriority, TaskStatus, Workstream, MAX_DESCRIPTION_LENGTH,
+    MAX_NAME_LENGTH, MAX_NOTES_LENGTH, MAX_OPERATIONS, MAX_REMINDER_MINUTES, MAX_TITLE_LENGTH,
 };
-use chrono::{DateTime, Duration, NaiveDate, NaiveTime, Utc};
+use chrono::{DateTime, Duration, NaiveDate, NaiveTime, Utc, Weekday};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
@@ -62,6 +62,9 @@ pub(super) enum DraftOperation {
         reminder_minutes_before: Option<i64>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         plan: Option<RecordRef>,
+        /// The inbox item this event is made from, by ID.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        from_inbox: Option<String>,
     },
     UpdateEvent {
         event_id: String,
@@ -103,6 +106,8 @@ pub(super) enum DraftOperation {
         start_date: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         target_date: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        from_inbox: Option<String>,
     },
     UpdatePlan {
         plan_id: String,
@@ -156,6 +161,10 @@ pub(super) enum DraftOperation {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         priority: Option<TaskPriority>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        workstream: Option<RecordRef>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        from_inbox: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         reason: Option<String>,
     },
     UpdateTask {
@@ -192,6 +201,14 @@ pub(super) enum DraftOperation {
     },
     DeleteTask {
         task_id: String,
+    },
+    CreateWorkstream {
+        plan: RecordRef,
+        name: String,
+    },
+    SetTaskWorkstream {
+        task_id: String,
+        workstream: Option<RecordRef>,
     },
 }
 
@@ -247,6 +264,8 @@ pub(super) struct Resolver<'a> {
     /// Records the latest proposal of this session touched, or created once applied.
     pub recent_ids: &'a [String],
     pub now: DateTime<Utc>,
+    /// The day the user's weeks start on, which is how a chosen week is written down.
+    pub week_start: Weekday,
 }
 
 impl Resolver<'_> {
@@ -309,7 +328,11 @@ impl Resolver<'_> {
         self.check_conflicts(&drafts)?;
         self.resolve_plan_titles(&mut drafts)?;
         self.resolve_milestone_titles(&mut drafts)?;
+        self.resolve_workstream_titles(&mut drafts)?;
         self.check_task_homes(&drafts)?;
+        if chose_the_timing {
+            self.move_off_days_off(&mut drafts)?;
+        }
         let operations = drafts
             .iter()
             .map(|draft| self.mutation(draft))
@@ -423,6 +446,7 @@ impl Resolver<'_> {
                 duration_minutes,
                 reminder_minutes_before,
                 plan,
+                from_inbox,
             } => {
                 let title = clean_title(&self.spelled(title))?;
                 let start = self.stated_clock(start);
@@ -450,6 +474,7 @@ impl Resolver<'_> {
                     duration_minutes,
                     reminder_minutes_before,
                     plan,
+                    from_inbox: self.check_inbox(from_inbox)?,
                 })
             }
             DraftOperation::UpdateEvent {
@@ -518,6 +543,7 @@ impl Resolver<'_> {
                 status,
                 start_date,
                 target_date,
+                from_inbox,
             } => {
                 let title = clean_title(&self.spelled(title))?;
                 let description = clean_optional_description(description)?;
@@ -530,6 +556,7 @@ impl Resolver<'_> {
                     status,
                     start_date,
                     target_date,
+                    from_inbox: self.check_inbox(from_inbox)?,
                 })
             }
             DraftOperation::UpdatePlan {
@@ -617,10 +644,13 @@ impl Resolver<'_> {
                 due_by,
                 status,
                 priority,
+                workstream,
+                from_inbox,
                 reason,
             } => {
                 self.check_plan_reference(plan.as_ref())?;
                 self.check_milestone_reference(milestone.as_ref())?;
+                self.check_workstream_reference(workstream.as_ref())?;
                 Some(DraftOperation::CreateTask {
                     title: clean_title(&self.spelled(title))?,
                     description: clean_optional_description(description)?,
@@ -630,6 +660,8 @@ impl Resolver<'_> {
                     due_by: due_by.map(|day| check_day(&day)).transpose()?,
                     status,
                     priority,
+                    workstream,
+                    from_inbox: self.check_inbox(from_inbox)?,
                     reason: clean_reason(reason),
                 })
             }
@@ -673,7 +705,7 @@ impl Resolver<'_> {
                 let task = self.task(&task_id)?;
                 let do_on = changed_day(do_on, task.scheduled_day.as_deref())?;
                 let due_by = changed_day(due_by, task.due_date.as_deref())?;
-                let in_week = changed_week(in_week, task.planned_week.as_deref())?;
+                let in_week = changed_week(in_week, task.planned_week.as_deref(), self.week_start)?;
                 (do_on.is_some() || due_by.is_some() || in_week.is_some()).then_some(
                     DraftOperation::ScheduleTask {
                         task_id,
@@ -703,6 +735,26 @@ impl Resolver<'_> {
             DraftOperation::DeleteTask { task_id } => {
                 self.task(&task_id)?;
                 Some(DraftOperation::DeleteTask { task_id })
+            }
+            DraftOperation::CreateWorkstream { plan, name } => {
+                self.check_plan_reference(Some(&plan))?;
+                Some(DraftOperation::CreateWorkstream {
+                    plan,
+                    name: clean_name(&self.spelled(name))?,
+                })
+            }
+            DraftOperation::SetTaskWorkstream {
+                task_id,
+                workstream,
+            } => {
+                let task = self.task(&task_id)?;
+                self.check_workstream_reference(workstream.as_ref())?;
+                (!same_link(workstream.as_ref(), task.workstream_id.as_deref())).then_some(
+                    DraftOperation::SetTaskWorkstream {
+                        task_id,
+                        workstream,
+                    },
+                )
             }
         })
     }
@@ -779,6 +831,24 @@ impl Resolver<'_> {
             DraftOperation::CreateMilestone { title, .. } => Some(title),
             _ => None,
         });
+        let created_workstreams = created(|draft| match draft {
+            DraftOperation::CreateWorkstream { name, .. } => Some(name),
+            _ => None,
+        });
+        // An inbox item only becomes something when the request talks about the inbox.
+        let from_inbox_ok = mentions_inbox(stated);
+        let workstream_ok = |reference: &RecordRef| match reference {
+            RecordRef::Existing(existing) => {
+                known(&existing.id)
+                    || self
+                        .workstream(&existing.id)
+                        .is_ok_and(|workstream| names(self.said, &workstream.name))
+            }
+            RecordRef::New(new) => {
+                created_workstreams.contains(&fold(&new.new_title))
+                    || names(self.said, &new.new_title)
+            }
+        };
         // A reference is grounded when the user named the record, touched it earlier, is viewing
         // it, or, for a new title, when this proposal creates it.
         let plan_ok = |reference: &RecordRef| match reference {
@@ -818,7 +888,25 @@ impl Resolver<'_> {
                     .is_ok_and(|milestone| milestone.plan_id == plan.id),
                 _ => false,
             };
+        if from_inbox_ok {
+            self.link_inbox_items(drafts);
+        }
         for draft in drafts.iter_mut() {
+            match draft {
+                DraftOperation::CreateEvent {
+                    from_inbox: from_inbox @ Some(_),
+                    ..
+                }
+                | DraftOperation::CreatePlan {
+                    from_inbox: from_inbox @ Some(_),
+                    ..
+                }
+                | DraftOperation::CreateTask {
+                    from_inbox: from_inbox @ Some(_),
+                    ..
+                } if !from_inbox_ok => *from_inbox = None,
+                _ => {}
+            }
             match draft {
                 DraftOperation::CreateEvent { title, plan, .. } => {
                     if plan.as_ref().is_some_and(|plan| !plan_ok(plan)) {
@@ -897,6 +985,7 @@ impl Resolver<'_> {
                     milestone,
                     do_on,
                     due_by,
+                    workstream,
                     ..
                 } => {
                     if milestone
@@ -904,6 +993,13 @@ impl Resolver<'_> {
                         .is_some_and(|milestone| !milestone_ok(milestone))
                     {
                         *milestone = None;
+                    }
+                    // A workstream the request never mentioned is as invented as a day it never gave.
+                    if workstream
+                        .as_ref()
+                        .is_some_and(|workstream| !workstream_ok(workstream))
+                    {
+                        *workstream = None;
                     }
                     if plan
                         .as_ref()
@@ -971,6 +1067,31 @@ impl Resolver<'_> {
                 DraftOperation::DeleteTask { task_id } if !task_named(task_id) => {
                     return ask("Which task should I delete?");
                 }
+                DraftOperation::CreateWorkstream { plan, name } => {
+                    if !plan_ok(plan) {
+                        return ask(format!("Which plan should the “{name}” workstream go in?"));
+                    }
+                    if !names(self.said, name) {
+                        return ask(format!("Should I create a workstream named “{name}”?"));
+                    }
+                }
+                DraftOperation::SetTaskWorkstream {
+                    task_id,
+                    workstream,
+                } => {
+                    if !task_named(task_id) && !bulk {
+                        return ask("Which task do you mean?");
+                    }
+                    if workstream
+                        .as_ref()
+                        .is_some_and(|workstream| !workstream_ok(workstream))
+                    {
+                        return ask(format!(
+                            "Which workstream should “{}” go in?",
+                            self.title_of(task_id)
+                        ));
+                    }
+                }
                 _ => {}
             }
         }
@@ -979,6 +1100,46 @@ impl Resolver<'_> {
             return ask("That would not change anything. What would you like to change?");
         }
         Ok(())
+    }
+
+    /// A request about the inbox that makes a record named exactly like one captured item means
+    /// that item, even when the model left out which one it came from.
+    fn link_inbox_items(&self, drafts: &mut [DraftOperation]) {
+        let mut used: HashSet<String> = drafts
+            .iter()
+            .filter_map(DraftOperation::inbox_id)
+            .cloned()
+            .collect();
+        for draft in drafts.iter_mut() {
+            let (title, from_inbox) = match draft {
+                DraftOperation::CreateEvent {
+                    title,
+                    from_inbox: from_inbox @ None,
+                    ..
+                }
+                | DraftOperation::CreatePlan {
+                    title,
+                    from_inbox: from_inbox @ None,
+                    ..
+                }
+                | DraftOperation::CreateTask {
+                    title,
+                    from_inbox: from_inbox @ None,
+                    ..
+                } => (title, from_inbox),
+                _ => continue,
+            };
+            let named = self
+                .candidates
+                .inbox_items
+                .iter()
+                .filter(|item| fold(&item.text) == fold(title) && !used.contains(&item.id))
+                .collect::<Vec<_>>();
+            if let [item] = named.as_slice() {
+                *from_inbox = Some(item.id.clone());
+                used.insert(item.id.clone());
+            }
+        }
     }
 
     /// The request's own spelling of a title the model copied from it.
@@ -1037,6 +1198,7 @@ impl Resolver<'_> {
                     (task_id, Touch::Link)
                 }
                 DraftOperation::DeleteTask { task_id } => (task_id, Touch::Delete),
+                DraftOperation::SetTaskWorkstream { task_id, .. } => (task_id, Touch::Group),
                 DraftOperation::CreateTask {
                     milestone: Some(RecordRef::Existing(existing)),
                     ..
@@ -1089,7 +1251,8 @@ impl Resolver<'_> {
         }
         for draft in drafts.iter_mut() {
             let reference = match draft {
-                DraftOperation::CreateMilestone { plan, .. } => Some(plan),
+                DraftOperation::CreateMilestone { plan, .. }
+                | DraftOperation::CreateWorkstream { plan, .. } => Some(plan),
                 DraftOperation::CreateEvent { plan, .. }
                 | DraftOperation::SetEventPlan { plan, .. }
                 | DraftOperation::CreateTask { plan, .. }
@@ -1302,6 +1465,164 @@ impl Resolver<'_> {
         Ok(())
     }
 
+    /// Resolves workstream references: to a workstream created in the same proposal, or to the
+    /// one existing workstream with that name in the task's plan. A task given only a workstream
+    /// joins that workstream's plan.
+    fn resolve_workstream_titles(&self, drafts: &mut [DraftOperation]) -> Step<()> {
+        let mut created: HashSet<(PlanKey, String)> = HashSet::new();
+        for draft in drafts.iter() {
+            let DraftOperation::CreateWorkstream { plan, name } = draft else {
+                continue;
+            };
+            let plan_key = PlanKey::from(plan);
+            if let PlanKey::Existing(plan_id) = &plan_key {
+                if self.candidates.workstreams.iter().any(|workstream| {
+                    workstream.plan_id == *plan_id && fold(&workstream.name) == fold(name)
+                }) {
+                    return ask(format!(
+                        "“{}” already has a workstream named “{name}”. Should I use that one?",
+                        self.plan_title(plan_id)
+                    ));
+                }
+            }
+            if !created.insert((plan_key, fold(name))) {
+                return ask(format!(
+                    "Should I create just one workstream named “{name}”?"
+                ));
+            }
+        }
+        for draft in drafts.iter_mut() {
+            let (task_title, plan, workstream) = match draft {
+                DraftOperation::CreateTask {
+                    title,
+                    plan,
+                    workstream,
+                    ..
+                } => (title.clone(), PlanSlot::Proposed(plan), workstream),
+                DraftOperation::SetTaskWorkstream {
+                    task_id,
+                    workstream,
+                } => {
+                    let task = self.task(task_id)?;
+                    (
+                        task.title.clone(),
+                        PlanSlot::Current(task.plan_id.clone()),
+                        workstream,
+                    )
+                }
+                _ => continue,
+            };
+            let Some(reference) = workstream.as_mut() else {
+                continue;
+            };
+            let plan_key = match &plan {
+                PlanSlot::Proposed(plan) => plan.as_ref().map(PlanKey::from),
+                PlanSlot::Current(plan_id) => plan_id.clone().map(PlanKey::Existing),
+            };
+            match reference {
+                RecordRef::Existing(existing) => {
+                    let found = self.workstream(&existing.id)?;
+                    match (&plan_key, plan) {
+                        (None, PlanSlot::Proposed(plan)) => {
+                            *plan = Some(RecordRef::existing(found.plan_id.clone()));
+                        }
+                        (Some(PlanKey::Existing(plan_id)), _) if *plan_id == found.plan_id => {}
+                        (None, PlanSlot::Current(_)) => {
+                            return ask(format!(
+                                "“{task_title}” isn't in a plan yet. Which plan should it go in?"
+                            ))
+                        }
+                        _ => {
+                            return ask(format!(
+                                "“{}” is a workstream in “{}”. Which workstream should “{task_title}” go in?",
+                                found.name,
+                                self.plan_title(&found.plan_id)
+                            ))
+                        }
+                    }
+                }
+                RecordRef::New(new) => {
+                    let key = fold(&new.new_title);
+                    let Some(plan_key) = plan_key else {
+                        return ask(format!(
+                            "Which plan's “{}” workstream should “{task_title}” go in?",
+                            new.new_title
+                        ));
+                    };
+                    if created.contains(&(plan_key.clone(), key.clone())) {
+                        continue;
+                    }
+                    let existing = match &plan_key {
+                        PlanKey::Existing(plan_id) => self
+                            .candidates
+                            .workstreams
+                            .iter()
+                            .filter(|workstream| {
+                                workstream.plan_id == *plan_id && fold(&workstream.name) == key
+                            })
+                            .collect::<Vec<_>>(),
+                        PlanKey::New(_) => Vec::new(),
+                    };
+                    match existing.as_slice() {
+                        [found] => *reference = RecordRef::existing(found.id.clone()),
+                        _ => {
+                            return ask(format!(
+                                "I couldn't find a workstream named “{}”. Should I create it?",
+                                new.new_title
+                            ))
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// A day the planner chose on its own may not be one without any working time.
+    /// A day the planner chose on its own is never one without working time. The user handed it
+    /// the choice, so a day off moves to the next day that has working time, with a reason that
+    /// says so; only when the coming days have none does the planner ask.
+    fn move_off_days_off(&self, drafts: &mut [DraftOperation]) -> Step<()> {
+        let Some(facts) = &self.candidates.planning else {
+            return Ok(());
+        };
+        for draft in drafts.iter_mut() {
+            let (task, day, reason) = match draft {
+                DraftOperation::CreateTask {
+                    title,
+                    do_on: Some(day),
+                    reason,
+                    ..
+                } => (title.clone(), day, reason),
+                DraftOperation::ScheduleTask {
+                    task_id,
+                    do_on: Some(DayChange::Set { day }),
+                    reason,
+                    ..
+                } => (self.title_of(task_id), day, reason),
+                _ => continue,
+            };
+            if !facts.is_off(day) {
+                continue;
+            }
+            let next = facts
+                .days
+                .iter()
+                .find(|candidate| !candidate.off && candidate.day.as_str() > day.as_str());
+            let Some(next) = next else {
+                let weekday = NaiveDate::parse_from_str(day, "%Y-%m-%d")
+                    .map(|date| date.format("%A").to_string())
+                    .unwrap_or_else(|_| day.clone());
+                return ask(format!(
+                    "{weekday} has no working time. Which day should “{task}” go on instead?"
+                ));
+            };
+            *day = next.day.clone();
+            *reason = Some("The next day with working time".into());
+        }
+        Ok(())
+    }
+
     fn mutation(&self, draft: &DraftOperation) -> Step<MutationOperation> {
         Ok(match draft.clone() {
             DraftOperation::CreateEvent {
@@ -1311,6 +1632,7 @@ impl Resolver<'_> {
                 duration_minutes,
                 reminder_minutes_before,
                 plan,
+                from_inbox,
             } => MutationOperation::CreateEvent {
                 title,
                 notes: notes.unwrap_or_default(),
@@ -1319,6 +1641,7 @@ impl Resolver<'_> {
                 duration_minutes: duration_minutes.unwrap_or(DEFAULT_EVENT_MINUTES),
                 reminder_minutes_before,
                 plan,
+                from_inbox: self.inbox_source(from_inbox)?,
             },
             DraftOperation::UpdateEvent {
                 event_id,
@@ -1366,12 +1689,14 @@ impl Resolver<'_> {
                 status,
                 start_date,
                 target_date,
+                from_inbox,
             } => MutationOperation::CreatePlan {
                 title,
                 description: description.unwrap_or_default(),
                 status: status.unwrap_or_default(),
                 start_date,
                 target_date,
+                from_inbox: self.inbox_source(from_inbox)?,
             },
             DraftOperation::UpdatePlan {
                 plan_id,
@@ -1429,6 +1754,8 @@ impl Resolver<'_> {
                 due_by,
                 status,
                 priority,
+                workstream,
+                from_inbox,
                 ..
             } => MutationOperation::CreateTask {
                 title,
@@ -1439,6 +1766,8 @@ impl Resolver<'_> {
                 due_date: due_by,
                 status: status.unwrap_or_default(),
                 priority: priority.unwrap_or_default(),
+                workstream,
+                from_inbox: self.inbox_source(from_inbox)?,
             },
             DraftOperation::UpdateTask {
                 task_id,
@@ -1483,6 +1812,17 @@ impl Resolver<'_> {
             DraftOperation::DeleteTask { task_id } => MutationOperation::DeleteTask {
                 expected_revision: self.task(&task_id)?.revision,
                 task_id,
+            },
+            DraftOperation::CreateWorkstream { plan, name } => {
+                MutationOperation::CreateWorkstream { plan, name }
+            }
+            DraftOperation::SetTaskWorkstream {
+                task_id,
+                workstream,
+            } => MutationOperation::SetTaskWorkstream {
+                expected_revision: self.task(&task_id)?.revision,
+                task_id,
+                workstream,
             },
         })
     }
@@ -1538,6 +1878,10 @@ impl Resolver<'_> {
                     plan.as_ref(),
                     milestone.as_ref(),
                 ),
+                MutationOperation::CreateWorkstream { plan, .. } => (None, Some(plan), None),
+                MutationOperation::SetTaskWorkstream { task_id, .. } => {
+                    (Some((RecordKind::Task, task_id)), None, None)
+                }
             };
             if let Some((kind, id)) = target {
                 add(kind, id);
@@ -1547,6 +1891,14 @@ impl Resolver<'_> {
             }
             if let Some(RecordRef::Existing(existing)) = milestone {
                 add(RecordKind::Milestone, &existing.id);
+            }
+            for (kind, reference) in operation.references() {
+                if let RecordRef::Existing(existing) = reference {
+                    add(kind, &existing.id);
+                }
+            }
+            if let Some(source) = operation.inbox_source() {
+                add(RecordKind::InboxItem, &source.item_id);
             }
         }
         references
@@ -1623,6 +1975,50 @@ impl Resolver<'_> {
         }
     }
 
+    fn check_workstream_reference(&self, reference: Option<&RecordRef>) -> Step<()> {
+        match reference {
+            Some(RecordRef::Existing(existing)) => self.workstream(&existing.id).map(|_| ()),
+            Some(RecordRef::New(new)) => clean_name(&new.new_title).map(|_| ()),
+            None => Ok(()),
+        }
+    }
+
+    /// An inbox item the request may turn into a record: one of those offered with it.
+    fn check_inbox(&self, id: Option<String>) -> Step<Option<String>> {
+        id.map(|id| self.inbox_item(&id).map(|_| id)).transpose()
+    }
+
+    fn inbox_source(&self, id: Option<String>) -> Step<Option<InboxSource>> {
+        id.map(|id| {
+            let item = self.inbox_item(&id)?;
+            Ok(InboxSource {
+                item_id: item.id.clone(),
+                expected_revision: item.revision,
+            })
+        })
+        .transpose()
+    }
+
+    fn workstream(&self, id: &str) -> Step<&Workstream> {
+        self.candidates
+            .workstreams
+            .iter()
+            .find(|workstream| workstream.id == id)
+            .ok_or_else(|| {
+                invalid("an operation referenced a workstream outside the request context")
+            })
+    }
+
+    fn inbox_item(&self, id: &str) -> Step<&InboxItem> {
+        self.candidates
+            .inbox_items
+            .iter()
+            .find(|item| item.id == id)
+            .ok_or_else(|| {
+                invalid("an operation referenced an inbox item outside the request context")
+            })
+    }
+
     fn event(&self, id: &str) -> Step<&ScheduleEvent> {
         self.candidates
             .events
@@ -1689,6 +2085,20 @@ impl Resolver<'_> {
                     .find(|task| task.id == id)
                     .map(|task| task.title.clone())
             })
+            .or_else(|| {
+                candidates
+                    .workstreams
+                    .iter()
+                    .find(|workstream| workstream.id == id)
+                    .map(|workstream| workstream.name.clone())
+            })
+            .or_else(|| {
+                candidates
+                    .inbox_items
+                    .iter()
+                    .find(|item| item.id == id)
+                    .map(|item| item.text.clone())
+            })
             .unwrap_or_else(|| "that item".into())
     }
 }
@@ -1698,7 +2108,15 @@ enum Touch {
     Edit,
     Schedule,
     Link,
+    Group,
     Delete,
+}
+
+/// Where a task's plan comes from while its workstream is resolved: the plan a new task is
+/// proposed with, which may be filled in, or an existing task's current plan.
+enum PlanSlot<'a> {
+    Proposed(&'a mut Option<RecordRef>),
+    Current(Option<String>),
 }
 
 /// A plan a milestone or task points at: an existing ID or a title created in the proposal.
@@ -1902,6 +2320,8 @@ fn subject(operation: &DraftOperation) -> (&'static str, String) {
         DraftOperation::ScheduleTask { task_id, .. } => ("task-days", task_id.clone()),
         DraftOperation::SetTaskPlan { task_id, .. } => ("task-plan", task_id.clone()),
         DraftOperation::DeleteTask { task_id } => ("task-delete", task_id.clone()),
+        DraftOperation::CreateWorkstream { name, .. } => ("new-workstream", fold(name)),
+        DraftOperation::SetTaskWorkstream { task_id, .. } => ("task-workstream", task_id.clone()),
     }
 }
 
@@ -2001,6 +2421,7 @@ fn combine(pending: DraftOperation, new: DraftOperation) -> DraftOperation {
                 duration_minutes,
                 reminder_minutes_before,
                 plan,
+                from_inbox,
                 ..
             },
             Op::CreateEvent {
@@ -2010,6 +2431,7 @@ fn combine(pending: DraftOperation, new: DraftOperation) -> DraftOperation {
                 duration_minutes: new_duration,
                 reminder_minutes_before: new_reminder,
                 plan: new_plan,
+                from_inbox: new_from_inbox,
             },
         ) => Op::CreateEvent {
             title,
@@ -2018,6 +2440,7 @@ fn combine(pending: DraftOperation, new: DraftOperation) -> DraftOperation {
             duration_minutes: new_duration.or(duration_minutes),
             reminder_minutes_before: new_reminder.or(reminder_minutes_before),
             plan: new_plan.or(plan),
+            from_inbox: new_from_inbox.or(from_inbox),
         },
         (
             Op::CreatePlan {
@@ -2025,6 +2448,7 @@ fn combine(pending: DraftOperation, new: DraftOperation) -> DraftOperation {
                 status,
                 start_date,
                 target_date,
+                from_inbox,
                 ..
             },
             Op::CreatePlan {
@@ -2033,6 +2457,7 @@ fn combine(pending: DraftOperation, new: DraftOperation) -> DraftOperation {
                 status: new_status,
                 start_date: new_start,
                 target_date: new_target,
+                from_inbox: new_from_inbox,
             },
         ) => Op::CreatePlan {
             title,
@@ -2040,6 +2465,7 @@ fn combine(pending: DraftOperation, new: DraftOperation) -> DraftOperation {
             status: new_status.or(status),
             start_date: new_start.or(start_date),
             target_date: new_target.or(target_date),
+            from_inbox: new_from_inbox.or(from_inbox),
         },
         (
             Op::CreateMilestone {
@@ -2068,6 +2494,8 @@ fn combine(pending: DraftOperation, new: DraftOperation) -> DraftOperation {
                 due_by,
                 status,
                 priority,
+                workstream,
+                from_inbox,
                 reason,
                 ..
             },
@@ -2080,6 +2508,8 @@ fn combine(pending: DraftOperation, new: DraftOperation) -> DraftOperation {
                 due_by: new_due_by,
                 status: new_status,
                 priority: new_priority,
+                workstream: new_workstream,
+                from_inbox: new_from_inbox,
                 reason: new_reason,
             },
         ) => Op::CreateTask {
@@ -2091,6 +2521,8 @@ fn combine(pending: DraftOperation, new: DraftOperation) -> DraftOperation {
             due_by: new_due_by.or(due_by),
             status: new_status.or(status),
             priority: new_priority.or(priority),
+            workstream: new_workstream.or(workstream),
+            from_inbox: new_from_inbox.or(from_inbox),
             reason: new_reason.or(reason),
         },
         (
@@ -2241,6 +2673,16 @@ impl DraftOperation {
                 .iter()
                 .any(|change| matches!(change, Some(DayChange::Set { .. }))),
             _ => false,
+        }
+    }
+
+    /// The inbox item a new record is made from, by ID.
+    fn inbox_id(&self) -> Option<&String> {
+        match self {
+            Self::CreateEvent { from_inbox, .. }
+            | Self::CreatePlan { from_inbox, .. }
+            | Self::CreateTask { from_inbox, .. } => from_inbox.as_ref(),
+            _ => None,
         }
     }
 
@@ -2421,16 +2863,20 @@ fn changed_day(change: Option<DayChange>, current: Option<&str>) -> Step<Option<
 }
 
 /// A week is stored as a day inside it, so every day of one week means the same thing. The model
-/// may answer with any of them; they all become that week's Monday, which keeps what is stored
-/// comparable and makes "the same week again" a no-op.
-fn changed_week(change: Option<DayChange>, current: Option<&str>) -> Step<Option<DayChange>> {
+/// may answer with any of them; they all become the first day of that week as the user counts
+/// weeks, which keeps what is stored comparable and makes "the same week again" a no-op.
+fn changed_week(
+    change: Option<DayChange>,
+    current: Option<&str>,
+    starts_on: Weekday,
+) -> Step<Option<DayChange>> {
     Ok(match change {
         None | Some(DayChange::Unchanged) => None,
         Some(DayChange::Clear) => current.is_some().then_some(DayChange::Clear),
         Some(DayChange::Set { day }) => {
-            let day = week_start(&check_day(&day)?)?;
+            let day = week_start(&check_day(&day)?, starts_on)?;
             let same = current
-                .map(week_start)
+                .map(|current| week_start(current, starts_on))
                 .transpose()?
                 .is_some_and(|current| current == day);
             (!same).then_some(DayChange::Set { day })
@@ -2438,13 +2884,13 @@ fn changed_week(change: Option<DayChange>, current: Option<&str>) -> Step<Option
     })
 }
 
-/// The Monday of the week a day falls in.
-fn week_start(day: &str) -> Step<String> {
+/// The first day of the week a day falls in, for weeks starting on `starts_on`.
+fn week_start(day: &str, starts_on: Weekday) -> Step<String> {
     let Ok(parsed) = NaiveDate::parse_from_str(day, "%Y-%m-%d") else {
         return ask("Which week do you mean?");
     };
     Ok(parsed
-        .week(chrono::Weekday::Mon)
+        .week(starts_on)
         .first_day()
         .format("%Y-%m-%d")
         .to_string())
@@ -2488,6 +2934,18 @@ fn clean_title(value: &str) -> Step<String> {
         return ask("That title is longer than 140 characters. What shorter title should I use?");
     }
     Ok(title)
+}
+
+/// Workstream names follow the same limit as the workstream editor's.
+fn clean_name(value: &str) -> Step<String> {
+    let name = sentence_start(value.trim());
+    if name.is_empty() {
+        return ask("What should the workstream be called?");
+    }
+    if name.chars().count() > MAX_NAME_LENGTH {
+        return ask("That name is longer than 80 characters. What shorter name should I use?");
+    }
+    Ok(name)
 }
 
 fn clean_notes(value: &str) -> Step<String> {
@@ -2596,6 +3054,7 @@ mod tests {
                 revision: 2,
                 created_at: stamp.clone(),
                 updated_at: stamp.clone(),
+                links: Vec::new(),
             })
             .collect(),
             milestones: vec![Milestone {
@@ -2630,7 +3089,13 @@ mod tests {
                 revision: 4,
                 created_at: stamp.clone(),
                 updated_at: stamp,
+                checklist: Vec::new(),
+                recurrence: None,
+                waiting_on: Vec::new(),
             }],
+            inbox_items: Vec::new(),
+            planning: None,
+            workstreams: Vec::new(),
         }
     }
 
@@ -2647,6 +3112,7 @@ mod tests {
             pending: &[],
             recent_ids: &[],
             now: "2026-09-14T12:00:00Z".parse().unwrap(),
+            week_start: chrono::Weekday::Mon,
         }
         .resolve(draft)
         .expect("no contract violation")
@@ -2709,6 +3175,7 @@ mod tests {
                 duration_minutes: 60,
                 reminder_minutes_before: None,
                 plan: None,
+                from_inbox: None,
             }]
         );
         assert!(question(
@@ -2893,6 +3360,7 @@ mod tests {
             pending: &[],
             recent_ids: &[],
             now: Utc::now(),
+            week_start: chrono::Weekday::Mon,
         };
         let unknown = serde_json::from_value::<Draft>(json!({
             "kind": "proposal", "summary": "Delete",
@@ -2923,6 +3391,7 @@ mod tests {
             pending,
             recent_ids,
             now: "2026-09-14T12:00:00Z".parse().unwrap(),
+            week_start: chrono::Weekday::Mon,
         }
         .resolve(serde_json::from_value::<Draft>(reply).expect("valid draft"))
         .expect("no contract violation")
@@ -2965,6 +3434,8 @@ mod tests {
             due_by: Some("2026-10-01".into()),
             status: None,
             priority: None,
+            from_inbox: None,
+            workstream: None,
         }];
         let Resolution::Proposal(redated) = resolve_with(
             "actually make it due September 30",
@@ -3006,6 +3477,7 @@ mod tests {
             pending: &[],
             recent_ids: &recent,
             now: Utc::now(),
+            week_start: chrono::Weekday::Mon,
         }
         .resolve(
             serde_json::from_value::<Draft>(
@@ -3149,6 +3621,8 @@ mod tests {
             due_by: Some("2026-10-03".into()),
             status: None,
             priority: None,
+            from_inbox: None,
+            workstream: None,
         };
         let value = serde_json::to_value(&draft).unwrap();
         assert_eq!(
@@ -3161,5 +3635,282 @@ mod tests {
         );
         assert_eq!(sentence_start("post-change check"), "Post-change check");
         assert_eq!(sentence_start("iPhone repair"), "iPhone repair");
+    }
+
+    const WORKSTREAM: &str = "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d";
+    const INBOX: &str = "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e";
+
+    /// The usual candidates plus a Paint workstream in Home renovation, one captured item, and
+    /// the spare time on a few days.
+    fn richer_candidates() -> PlannerCandidates {
+        let stamp = "2026-09-01T10:00:00.000Z".to_string();
+        PlannerCandidates {
+            workstreams: vec![Workstream {
+                id: WORKSTREAM.into(),
+                plan_id: OTHER_PLAN.into(),
+                name: "Paint".into(),
+                description: "private".into(),
+                sort_order: 0,
+                revision: 1,
+                created_at: stamp.clone(),
+                updated_at: stamp.clone(),
+            }],
+            inbox_items: vec![InboxItem {
+                id: INBOX.into(),
+                text: "Renew passport".into(),
+                notes: String::new(),
+                revision: 2,
+                created_at: stamp.clone(),
+                updated_at: stamp,
+            }],
+            planning: Some(crate::model::PlanningFacts {
+                days: vec![
+                    crate::model::DayFacts {
+                        day: "2026-09-19".into(),
+                        spare_minutes: None,
+                        off: true,
+                    },
+                    crate::model::DayFacts {
+                        day: "2026-09-21".into(),
+                        spare_minutes: Some(240),
+                        off: false,
+                    },
+                ],
+            }),
+            ..candidates()
+        }
+    }
+
+    fn resolve_in(
+        candidates: &PlannerCandidates,
+        command: &str,
+        week_start: Weekday,
+        operations: serde_json::Value,
+    ) -> Resolution {
+        Resolver {
+            command,
+            said: command,
+            time_zone: "America/New_York",
+            candidates,
+            active_plan_id: None,
+            session_ids: &[],
+            pending: &[],
+            recent_ids: &[],
+            now: "2026-09-14T12:00:00Z".parse().unwrap(),
+            week_start,
+        }
+        .resolve(
+            serde_json::from_value::<Draft>(
+                json!({ "kind": "proposal", "summary": "Change it", "operations": operations }),
+            )
+            .expect("valid draft"),
+        )
+        .expect("no contract violation")
+    }
+
+    fn only_operation(resolution: Resolution) -> MutationOperation {
+        match resolution {
+            Resolution::Proposal(mut proposal) => {
+                assert_eq!(proposal.operations.len(), 1, "{:?}", proposal.operations);
+                proposal.operations.remove(0)
+            }
+            Resolution::Clarification(question) => panic!("unexpected question: {question}"),
+        }
+    }
+
+    fn asked(resolution: Resolution) -> String {
+        match resolution {
+            Resolution::Clarification(question) => question,
+            Resolution::Proposal(proposal) => panic!("unexpected proposal: {proposal:?}"),
+        }
+    }
+
+    #[test]
+    fn workstreams_resolve_by_name_and_bring_their_plan() {
+        let candidates = richer_candidates();
+        let resolve =
+            |command: &str, operations| resolve_in(&candidates, command, Weekday::Mon, operations);
+        assert_eq!(
+            only_operation(resolve(
+                "put pick paint colors in the paint workstream",
+                json!([{"type": "set_task_workstream", "taskId": TASK, "workstream": {"newTitle": "Paint"}}]),
+            )),
+            MutationOperation::SetTaskWorkstream {
+                task_id: TASK.into(),
+                expected_revision: 4,
+                workstream: Some(RecordRef::existing(WORKSTREAM)),
+            }
+        );
+        // A task given only a workstream joins that workstream's plan.
+        let MutationOperation::CreateTask {
+            plan, workstream, ..
+        } = only_operation(resolve(
+            "add buy brushes to the paint workstream",
+            json!([{"type": "create_task", "title": "Buy brushes", "workstream": {"id": WORKSTREAM}}]),
+        ))
+        else {
+            panic!("expected a new task");
+        };
+        assert_eq!(plan, Some(RecordRef::existing(OTHER_PLAN)));
+        assert_eq!(workstream, Some(RecordRef::existing(WORKSTREAM)));
+        // One the request never mentions is dropped like an invented day.
+        let MutationOperation::CreateTask { workstream, .. } = only_operation(resolve(
+            "add buy brushes to home renovation",
+            json!([{"type": "create_task", "title": "Buy brushes", "plan": {"id": OTHER_PLAN}, "workstream": {"id": WORKSTREAM}}]),
+        )) else {
+            panic!("expected a new task");
+        };
+        assert_eq!(workstream, None);
+        assert_eq!(
+            only_operation(resolve(
+                "add a demo workstream to home renovation",
+                json!([{"type": "create_workstream", "plan": {"id": OTHER_PLAN}, "name": "demo"}]),
+            )),
+            MutationOperation::CreateWorkstream {
+                plan: RecordRef::existing(OTHER_PLAN),
+                name: "Demo".into(),
+            }
+        );
+        assert!(asked(resolve(
+            "put pick paint colors in the logistics workstream",
+            json!([{"type": "set_task_workstream", "taskId": TASK, "workstream": {"newTitle": "Logistics"}}]),
+        ))
+        .contains("couldn't find a workstream named “Logistics”"));
+        assert!(asked(resolve(
+            "add a paint workstream to home renovation",
+            json!([{"type": "create_workstream", "plan": {"id": OTHER_PLAN}, "name": "Paint"}]),
+        ))
+        .contains("already has a workstream named “Paint”"));
+    }
+
+    #[test]
+    fn inbox_items_become_records_only_when_the_request_names_the_inbox() {
+        let candidates = richer_candidates();
+        let draft = json!([{
+            "type": "create_task",
+            "title": "Renew passport",
+            "doOn": "2026-09-18",
+            "fromInbox": INBOX
+        }]);
+        let MutationOperation::CreateTask { from_inbox, .. } = only_operation(resolve_in(
+            &candidates,
+            "turn renew passport from my inbox into a task for friday",
+            Weekday::Mon,
+            draft.clone(),
+        )) else {
+            panic!("expected a new task");
+        };
+        assert_eq!(
+            from_inbox,
+            Some(InboxSource {
+                item_id: INBOX.into(),
+                expected_revision: 2,
+            })
+        );
+        let MutationOperation::CreateTask { from_inbox, .. } = only_operation(resolve_in(
+            &candidates,
+            "add renew passport for friday",
+            Weekday::Mon,
+            draft,
+        )) else {
+            panic!("expected a new task");
+        };
+        assert_eq!(from_inbox, None, "the inbox stays as it is");
+        // Named after exactly one captured item in a request about the inbox, it comes from that
+        // item even when the model didn't say so.
+        let MutationOperation::CreateTask { from_inbox, .. } = only_operation(resolve_in(
+            &candidates,
+            "turn renew passport in my inbox into a task for friday",
+            Weekday::Mon,
+            json!([{"type": "create_task", "title": "renew passport", "doOn": "2026-09-18"}]),
+        )) else {
+            panic!("expected a new task");
+        };
+        assert_eq!(
+            from_inbox.map(|source| source.item_id),
+            Some(INBOX.to_string())
+        );
+    }
+
+    #[test]
+    fn a_day_the_planner_picks_is_never_one_without_working_time() {
+        let candidates = richer_candidates();
+        let pick = |day: &str| {
+            resolve_in(
+                &candidates,
+                "when should I do pick paint colors?",
+                Weekday::Mon,
+                json!([{"type": "schedule_task", "taskId": TASK, "doOn": {"action": "set", "day": day}}]),
+            )
+        };
+        // Saturday has no working time, so the suggestion moves to the next day that does.
+        match pick("2026-09-19") {
+            Resolution::Proposal(proposal) => {
+                assert!(matches!(
+                    &proposal.operations[0],
+                    MutationOperation::ScheduleTask {
+                        scheduled_day: DayChange::Set { day },
+                        ..
+                    } if day == "2026-09-21"
+                ));
+                assert_eq!(
+                    proposal.notes[0].reason.as_deref(),
+                    Some("The next day with working time")
+                );
+                assert!(proposal.notes[0].suggested);
+            }
+            Resolution::Clarification(question) => panic!("unexpected question: {question}"),
+        }
+        match pick("2026-09-21") {
+            Resolution::Proposal(proposal) => {
+                assert!(proposal.notes[0].suggested);
+                assert_eq!(proposal.notes[0].reason, None);
+            }
+            Resolution::Clarification(question) => panic!("unexpected question: {question}"),
+        }
+        // With no working day left in view, it asks.
+        let mut closed = richer_candidates();
+        closed.planning = Some(crate::model::PlanningFacts {
+            days: vec![crate::model::DayFacts {
+                day: "2026-09-19".into(),
+                spare_minutes: None,
+                off: true,
+            }],
+        });
+        assert!(asked(resolve_in(
+            &closed,
+            "when should I do pick paint colors?",
+            Weekday::Mon,
+            json!([{"type": "schedule_task", "taskId": TASK, "doOn": {"action": "set", "day": "2026-09-19"}}]),
+        ))
+        .starts_with("Saturday has no working time"));
+    }
+
+    #[test]
+    fn a_chosen_week_starts_on_the_users_first_day() {
+        let candidates = candidates();
+        let week = |starts_on: Weekday| {
+            let MutationOperation::ScheduleTask { planned_week, .. } = only_operation(resolve_in(
+                &candidates,
+                "put pick paint colors in next week",
+                starts_on,
+                json!([{"type": "schedule_task", "taskId": TASK, "inWeek": {"action": "set", "day": "2026-09-23"}}]),
+            )) else {
+                panic!("expected a scheduling change");
+            };
+            planned_week
+        };
+        assert_eq!(
+            week(Weekday::Mon),
+            DayChange::Set {
+                day: "2026-09-21".into()
+            }
+        );
+        assert_eq!(
+            week(Weekday::Sun),
+            DayChange::Set {
+                day: "2026-09-20".into()
+            }
+        );
     }
 }

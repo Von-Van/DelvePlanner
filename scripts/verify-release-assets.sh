@@ -3,7 +3,7 @@ set -euo pipefail
 
 assets=${1:?release assets directory required}
 test -s "$assets/SHA256SUMS.txt"
-test -s "$assets/dayplan-sbom.cdx.json"
+test -s "$assets/delve-planner-sbom.cdx.json"
 test -s "$assets/latest.json"
 test -n "$(find "$assets" -name '*.dmg' -print -quit)"
 test -n "$(find "$assets" -name '*setup.exe' -print -quit)"

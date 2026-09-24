@@ -16,8 +16,8 @@ const START_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_PULL_RESPONSE_BYTES: u64 = 2 * 1024 * 1024;
 /// How long a stopping server gets to unload its model and exit before it is killed outright.
 const STOP_GRACE: Duration = Duration::from_secs(2);
-/// The runtime stops itself after this long without a planner request, so an open DayPlan that
-/// nobody is asking anything costs nothing.
+/// The runtime stops itself after this long without a planner request, so an open Delve Planner
+/// that nobody is asking anything costs nothing.
 const IDLE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 /// How often the idle worker looks.
 pub const IDLE_CHECK: Duration = Duration::from_secs(30);
@@ -58,7 +58,7 @@ struct RuntimeState {
     /// When the planner last needed the runtime, which is what the idle worker measures.
     last_used: Instant,
     /// Which models folder the running server was started with. Ollama serves one folder, so
-    /// moving between DayPlan's models and the machine's own means a restart.
+    /// moving between Delve Planner's models and the machine's own means a restart.
     serving_dir: Option<PathBuf>,
 }
 
@@ -67,7 +67,7 @@ impl Default for RuntimeState {
         Self {
             child: None,
             phase: RuntimePhase::Stopped,
-            detail: "DayPlan's local AI runtime starts when the planner needs it.".into(),
+            detail: "Delve Planner's local AI runtime starts when the planner needs it.".into(),
             download: None,
             download_cancel: None,
             last_used: Instant::now(),
@@ -104,8 +104,8 @@ impl Drop for RuntimeInner {
 }
 
 /// What the runtime remembers between launches: which model the user chose, whether it answered
-/// DayPlan's format check, and the server's process ID. A DayPlan that crashed can't clean up
-/// after itself, and every leftover server holds on to its model.
+/// Delve Planner's format check, and the server's process ID. A Delve Planner that crashed can't
+/// clean up after itself, and every leftover server holds on to its model.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 struct RuntimeRecord {
@@ -116,12 +116,12 @@ struct RuntimeRecord {
     checked: Vec<String>,
 }
 
-/// Where a model's files live. DayPlan reads both folders and only ever writes to its own.
+/// Where a model's files live. Delve Planner reads both folders and only ever writes to its own.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ModelSource {
-    /// Downloaded by DayPlan, under its own application data.
-    Dayplan,
+    /// Downloaded by Delve Planner, under its own application data.
+    DelvePlanner,
     /// Already on the machine, in the folder Ollama itself uses.
     System,
 }
@@ -133,9 +133,9 @@ pub struct InstalledModel {
     pub name: String,
     pub size_bytes: u64,
     pub source: ModelSource,
-    /// Whether this is the model DayPlan's own evaluations run against.
+    /// Whether this is the model Delve Planner's own evaluations run against.
     pub tested: bool,
-    /// Whether this model has answered DayPlan's format check on this machine.
+    /// Whether this model has answered Delve Planner's format check on this machine.
     pub checked: bool,
     pub selected: bool,
 }
@@ -178,8 +178,8 @@ impl OllamaRuntimeManager {
         Ok(manager)
     }
 
-    /// Ends a server left behind by a DayPlan that crashed or was force-quit. Without this, every
-    /// such launch adds another idle server holding its model.
+    /// Ends a server left behind by a Delve Planner that crashed or was force-quit. Without this,
+    /// every such launch adds another idle server holding its model.
     fn end_leftover_server(&self) {
         let Some(pid) = self.record().server_pid else {
             return;
@@ -241,15 +241,16 @@ impl OllamaRuntimeManager {
         &self.inner.model_dir
     }
 
-    /// Every model DayPlan could use: the ones it downloaded itself and the ones already on the
-    /// machine. Read from the manifests on disk, so browsing them starts nothing.
+    /// Every model Delve Planner could use: the ones it downloaded itself and the ones already on
+    /// the machine. Read from the manifests on disk, so browsing them starts nothing.
     pub fn installed_models(&self) -> Vec<InstalledModel> {
         let record = self.record();
         let selected = self.selected_model(&record);
         let mut models: Vec<InstalledModel> = Vec::new();
         for (source, dir) in self.model_dirs() {
             for (name, size_bytes) in models_in(&dir) {
-                // A model in both folders is listed once; DayPlan's own copy is the one it runs.
+                // A model in both folders is listed once; Delve Planner's own copy is the one it
+                // runs.
                 if models.iter().any(|model| model.name == name) {
                     continue;
                 }
@@ -272,10 +273,10 @@ impl OllamaRuntimeManager {
         models
     }
 
-    /// Both model folders, DayPlan's first: `OLLAMA_MODELS` if the user set one, otherwise the
-    /// place Ollama keeps models by default.
+    /// Both model folders, Delve Planner's first: `OLLAMA_MODELS` if the user set one, otherwise
+    /// the place Ollama keeps models by default.
     fn model_dirs(&self) -> Vec<(ModelSource, PathBuf)> {
-        let mut dirs = vec![(ModelSource::Dayplan, self.inner.model_dir.clone())];
+        let mut dirs = vec![(ModelSource::DelvePlanner, self.inner.model_dir.clone())];
         if let Some(system) = self.inner.system_dir.clone() {
             if system != self.inner.model_dir && system.is_dir() {
                 dirs.push((ModelSource::System, system));
@@ -285,7 +286,7 @@ impl OllamaRuntimeManager {
     }
 
     /// The model the planner should use: the user's choice while it still exists, otherwise the
-    /// model DayPlan ships against, otherwise nothing and the app asks.
+    /// model Delve Planner ships against, otherwise nothing and the app asks.
     fn selected_model(&self, record: &RuntimeRecord) -> Option<String> {
         if let Some(chosen) = record.model.as_ref() {
             if self.model_dir_for(chosen).is_some() {
@@ -299,7 +300,7 @@ impl OllamaRuntimeManager {
         self.selected_model(&self.record())
     }
 
-    /// Which folder holds a model, DayPlan's own taking precedence.
+    /// Which folder holds a model, Delve Planner's own taking precedence.
     fn model_dir_for(&self, model: &str) -> Option<(ModelSource, PathBuf)> {
         self.model_dirs()
             .into_iter()
@@ -307,7 +308,7 @@ impl OllamaRuntimeManager {
     }
 
     /// The folder the server should serve from. Only one folder can be active at a time, so it
-    /// follows the chosen model; downloads always use DayPlan's own.
+    /// follows the chosen model; downloads always use Delve Planner's own.
     fn active_model_dir(&self) -> PathBuf {
         self.chosen_model()
             .and_then(|model| self.model_dir_for(&model))
@@ -327,7 +328,7 @@ impl OllamaRuntimeManager {
         Ok(())
     }
 
-    /// Records that a model answered DayPlan's format check, so it isn't asked again.
+    /// Records that a model answered Delve Planner's format check, so it isn't asked again.
     pub fn mark_checked(&self, model: &str) {
         self.update_record(|record| {
             if !record.checked.iter().any(|name| name == model) {
@@ -359,7 +360,7 @@ impl OllamaRuntimeManager {
         if !binary.is_file() {
             self.set_failure(
                 RuntimePhase::Unavailable,
-                "The signed DayPlan package does not contain its local AI runtime.",
+                "The signed Delve Planner package does not contain its local AI runtime.",
             );
             return Err(AppError::OllamaRuntime(format!(
                 "missing {}",
@@ -369,7 +370,7 @@ impl OllamaRuntimeManager {
 
         self.set_phase(
             RuntimePhase::Starting,
-            "Starting DayPlan's local AI runtime…",
+            "Starting Delve Planner's local AI runtime…",
         );
         let mut command = Command::new(&binary);
         command
@@ -387,7 +388,8 @@ impl OllamaRuntimeManager {
                 Stdio::null()
             })
             .kill_on_drop(true);
-        // Its own process group, so DayPlan can end the server and its model runners together.
+        // Its own process group, so Delve Planner can end the server and its model runners
+        // together.
         #[cfg(unix)]
         command.process_group(0);
         let child = command.spawn().map_err(|error| {
@@ -412,7 +414,7 @@ impl OllamaRuntimeManager {
                 if status.ollama_version.as_deref() != Some(BUNDLED_OLLAMA_VERSION) {
                     self.set_failure(
                         RuntimePhase::UpdateRequired,
-                        "The bundled AI runtime version does not match this DayPlan release.",
+                        "The bundled AI runtime version does not match this Delve Planner release.",
                     );
                     self.stop_locked().await?;
                     return Err(AppError::OllamaRuntime("runtime version mismatch".into()));
@@ -438,8 +440,8 @@ impl OllamaRuntimeManager {
     }
 
     /// What the app can say about the runtime without changing it. Starting a server to answer
-    /// "is it running?" is what used to leave Ollama running from the moment DayPlan opened, and
-    /// a status that could restart one would cut off whatever it was in the middle of — a model
+    /// "is it running?" is what used to leave Ollama running from the moment Delve Planner opened,
+    /// and a status that could restart one would cut off whatever it was in the middle of — a model
     /// download is polled by this very call.
     pub async fn status(&self, agent: &PlannerAgent) -> OllamaStatus {
         if self.running() {
@@ -466,7 +468,7 @@ impl OllamaRuntimeManager {
             detail: state
                 .as_ref()
                 .map(|value| value.detail.clone())
-                .unwrap_or_else(|| "DayPlan's local AI runtime is not running.".into()),
+                .unwrap_or_else(|| "Delve Planner's local AI runtime is not running.".into()),
             download: None,
             storage_bytes: self.storage_bytes(),
         }
@@ -515,8 +517,9 @@ impl OllamaRuntimeManager {
         status
     }
 
-    /// Downloads the model DayPlan ships against. Downloads always land in DayPlan's own folder:
-    /// the machine's model library belongs to the user, and DayPlan only ever reads it.
+    /// Downloads the model Delve Planner ships against. Downloads always land in Delve Planner's
+    /// own folder: the machine's model library belongs to the user, and Delve Planner only ever
+    /// reads it.
     pub async fn pull_model(&self, agent: &PlannerAgent) -> AppResult<()> {
         self.ensure_started_in(agent, self.inner.model_dir.clone())
             .await?;
@@ -550,7 +553,7 @@ impl OllamaRuntimeManager {
         match &result {
             Ok(()) => {
                 state.phase = RuntimePhase::ModelReady;
-                state.detail = "DayPlan's local qwen3:8b model is ready.".into();
+                state.detail = "Delve Planner's local qwen3:8b model is ready.".into();
                 state.download = None;
             }
             Err(AppError::ModelDownloadCancelled) => {
@@ -675,7 +678,7 @@ impl OllamaRuntimeManager {
         self.forget_server();
         self.set_phase(
             RuntimePhase::Stopped,
-            "DayPlan's local AI runtime starts when the planner needs it.",
+            "Delve Planner's local AI runtime starts when the planner needs it.",
         );
         Ok(())
     }
@@ -776,7 +779,7 @@ impl OllamaRuntimeManager {
     }
 
     fn binary_path(&self) -> PathBuf {
-        if let Some(path) = std::env::var_os("DAYPLAN_OLLAMA_RUNTIME") {
+        if let Some(path) = std::env::var_os("DELVE_PLANNER_OLLAMA_RUNTIME") {
             return PathBuf::from(path);
         }
         let relative = if cfg!(windows) {
@@ -810,7 +813,7 @@ impl OllamaRuntimeManager {
 }
 
 /// Ollama serves a model from a separate runner process. Killing the server alone leaves that
-/// runner holding the model in memory, so DayPlan always ends the whole tree.
+/// runner holding the model in memory, so Delve Planner always ends the whole tree.
 #[cfg(unix)]
 fn signal_tree(pid: u32, signal: i32) {
     // The server leads its own process group, so one signal reaches every runner under it.
@@ -846,9 +849,9 @@ fn kill_tree(pid: u32) {
         .status();
 }
 
-/// Ends a server DayPlan started, without waiting on an async runtime: the app calls this while it
-/// is already quitting. Ollama unloads its model on `SIGTERM`, so it is asked first and killed only
-/// if it doesn't go.
+/// Ends a server Delve Planner started, without waiting on an async runtime: the app calls this
+/// while it is already quitting. Ollama unloads its model on `SIGTERM`, so it is asked first and
+/// killed only if it doesn't go.
 fn end_tree(child: &mut Child) {
     let Some(pid) = child.id() else {
         return;
@@ -866,8 +869,8 @@ fn end_tree(child: &mut Child) {
     let _ = child.try_wait();
 }
 
-/// Whether `pid` is still a server DayPlan started. A process ID alone isn't enough — the system
-/// reuses them — so the command behind it has to be this build's own runtime binary.
+/// Whether `pid` is still a server Delve Planner started. A process ID alone isn't enough — the
+/// system reuses them — so the command behind it has to be this build's own runtime binary.
 fn is_our_server(pid: u32, binary: &Path) -> bool {
     #[cfg(unix)]
     let listing = std::process::Command::new("ps")
@@ -886,7 +889,8 @@ fn is_our_server(pid: u32, binary: &Path) -> bool {
         return false;
     };
     let line = String::from_utf8_lossy(&listing.stdout);
-    // Windows lists only the image name, which the process ID DayPlan recorded already narrows.
+    // Windows lists only the image name, which the process ID Delve Planner recorded already
+    // narrows.
     let needle = if cfg!(windows) {
         binary.file_name().unwrap_or_default().to_string_lossy()
     } else {
@@ -911,7 +915,7 @@ fn reserve_loopback_port() -> std::io::Result<u16> {
 }
 
 /// The folder Ollama itself keeps models in, which is where anything the user has already pulled
-/// lives. DayPlan reads it and never writes to it.
+/// lives. Delve Planner reads it and never writes to it.
 fn system_model_dir() -> Option<PathBuf> {
     if let Some(configured) = std::env::var_os("OLLAMA_MODELS") {
         let path = PathBuf::from(configured);
@@ -1199,9 +1203,9 @@ mod tests {
         // A model stored without a tag is `latest`, which is how Ollama itself lists it.
         assert_eq!(names, [MODEL_NAME, "llama3.1:8b", "mistral:latest"]);
         assert!(models[0].tested && models[0].checked && models[0].selected);
-        assert_eq!(models[0].source, ModelSource::Dayplan);
+        assert_eq!(models[0].source, ModelSource::DelvePlanner);
         assert_eq!(models[0].size_bytes, 5_200_000_100);
-        // A model DayPlan hasn't evaluated is offered, but never as one it has checked.
+        // A model Delve Planner hasn't evaluated is offered, but never as one it has checked.
         assert!(!models[1].tested && !models[1].checked);
         assert_eq!(models[1].source, ModelSource::System);
     }
@@ -1236,7 +1240,8 @@ mod tests {
         let manager = manager_with(root.path(), Some(system.clone()));
         install(&system, "llama3.1:8b", 4_700_000_100);
         manager.choose_model("llama3.1:8b").unwrap();
-        // A download serves DayPlan's own folder while the chosen model lives in the other one.
+        // A download serves Delve Planner's own folder while the chosen model lives in the other
+        // one.
         assert_eq!(manager.active_model_dir(), system);
         assert_ne!(manager.model_dir(), system);
 

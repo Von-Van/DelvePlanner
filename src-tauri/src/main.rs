@@ -1,3 +1,3 @@
 fn main() {
-    dayplan_desktop::run();
+    delve_planner_desktop::run();
 }

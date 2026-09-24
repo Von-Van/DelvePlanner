@@ -28,7 +28,7 @@ jobs:
         run: |
           test "$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" --jq .draft)" = true
           assets=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" --jq '.assets[].name')
-          for pattern in '^latest.json$' '^SHA256SUMS.txt$' '^dayplan-sbom.cdx.json$' '\.dmg$' 'setup\.exe$' '\.app\.tar\.gz\.sig$' 'setup\.exe\.sig$'; do
+          for pattern in '^latest.json$' '^SHA256SUMS.txt$' '^delve-planner-sbom.cdx.json$' '\.dmg$' 'setup\.exe$' '\.app\.tar\.gz\.sig$' 'setup\.exe\.sig$'; do
             grep -Eq "$pattern" <<< "$assets" || { echo "Missing release asset matching: $pattern"; exit 1; }
           done
           gh release edit "$RELEASE_TAG" --draft=false

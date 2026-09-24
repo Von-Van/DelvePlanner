@@ -16,11 +16,13 @@ import type {
   PlanningBoard,
   PlanStatus,
   PlanWorkspace,
+  Recurrence,
   ScheduleEvent,
   Task,
   TaskInput,
   TaskMove,
   TaskPriority,
+  TaskReference,
   TaskStatus,
   Workstream,
 } from "./api";
@@ -165,6 +167,7 @@ export function planUpdate(plan: Plan, archived = plan.archived) {
     startDate: plan.startDate,
     targetDate: plan.targetDate,
     color: plan.color,
+    links: plan.links,
     archived,
   };
 }
@@ -189,10 +192,13 @@ export function taskUpdate(task: Task): TaskInput & {
     estimatedMinutes: task.estimatedMinutes,
     status: task.status,
     priority: task.priority,
+    recurrence: task.recurrence,
+    checklist: task.checklist,
+    waitingOn: task.waitingOn,
   };
 }
 
-/** A new task's fields with DayPlan's defaults: to do, normal priority, and no links. */
+/** A new task's fields with Delve Planner's defaults: to do, normal priority, and no links. */
 export function newTask(fields: Pick<TaskInput, "title"> & Partial<TaskInput>) {
   return {
     description: "",
@@ -206,8 +212,64 @@ export function newTask(fields: Pick<TaskInput, "title"> & Partial<TaskInput>) {
     estimatedMinutes: null,
     status: "todo",
     priority: "normal",
+    recurrence: null,
+    checklist: [],
+    waitingOn: [],
     ...fields,
   } satisfies TaskInput;
+}
+
+const weekdayLabels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+function ordinal(day: number) {
+  const tens = day % 100;
+  if (tens >= 11 && tens <= 13) return `${day}th`;
+  return `${day}${["th", "st", "nd", "rd"][day % 10] ?? "th"}`;
+}
+
+/** "Every weekday", "Every 2 weeks on Mon, Thu", "Every month on the 31st". */
+export function recurrenceLabel(rule: Recurrence) {
+  const every = (unit: string) =>
+    rule.interval === 1 ? `Every ${unit}` : `Every ${rule.interval} ${unit}s`;
+  switch (rule.frequency) {
+    case "daily":
+      return every("day");
+    case "weekdays":
+      return "Every weekday";
+    case "weekly": {
+      const days = rule.weekdays.map((weekday) => weekdayLabels[weekday - 1]);
+      return days.length > 0
+        ? `${every("week")} on ${days.join(", ")}`
+        : every("week");
+    }
+    case "monthly":
+      return rule.monthDay === null
+        ? every("month")
+        : `${every("month")} on the ${ordinal(rule.monthDay)}`;
+  }
+}
+
+/** Ticked and total checklist items, or null when the task has no checklist. */
+export function checklistProgress(task: Pick<Task, "checklist">) {
+  if (task.checklist.length === 0) return null;
+  return {
+    done: task.checklist.filter((item) => item.done).length,
+    total: task.checklist.length,
+  };
+}
+
+/**
+ * The open tasks this one still waits on, from an index of open tasks. A task missing from the
+ * index is finished, so nothing waits on it any more.
+ */
+export function openWaits(
+  task: Pick<Task, "waitingOn">,
+  openTasks: ReadonlyMap<string, TaskReference>,
+) {
+  return task.waitingOn.flatMap((id) => {
+    const reference = openTasks.get(id);
+    return reference ? [reference] : [];
+  });
 }
 
 /** Mirrors the repository rule that every task is reachable from a plan, week, or day. */

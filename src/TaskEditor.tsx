@@ -1,4 +1,5 @@
 import { FormEvent, useRef, useState } from "react";
+import { submitOnCommandEnter } from "./shortcuts";
 import {
   api,
   InboxItem,
@@ -30,6 +31,7 @@ import {
   taskUpdate,
   weekLabel,
 } from "./planning";
+import { ChecklistField, RepeatField, WaitsOnField } from "./TaskDetailsFields";
 import { useModalFocus } from "./useModalFocus";
 import { usePlanLinks } from "./usePlanLinks";
 
@@ -90,7 +92,7 @@ export function TaskEditor({
 
   function submit(form: FormEvent) {
     form.preventDefault();
-    const input = pickTaskInput(draft);
+    const input = pickTaskInput(draft, task);
     // A newly scheduled day also records its week, so returning the task to the pool keeps it there.
     if (
       input.scheduledDay !== null &&
@@ -127,6 +129,8 @@ export function TaskEditor({
           ? nextWeek
           : draft.plannedWeek;
   const hasHome = taskHasHome(draft);
+  // A finished task doesn't repeat; finishing an open repeating one here still brings the next.
+  const finished = draft.status === "done" && (!task || task.status === "done");
   return (
     <div
       className="modal-backdrop"
@@ -139,6 +143,7 @@ export function TaskEditor({
         ref={dialogRef}
         className="editor-dialog"
         onSubmit={submit}
+        onKeyDown={submitOnCommandEnter}
         role="dialog"
         aria-modal="true"
         aria-label={inboxItem ? "Make a task" : task ? "Edit task" : "New task"}
@@ -350,6 +355,12 @@ export function TaskEditor({
             has a place to appear.
           </p>
         )}
+        <RepeatField
+          value={draft.recurrence}
+          scheduledDay={draft.scheduledDay}
+          finished={finished}
+          onChange={(recurrence) => setDraft({ ...draft, recurrence })}
+        />
         <label>
           Description
           <textarea
@@ -361,6 +372,17 @@ export function TaskEditor({
             maxLength={2000}
           />
         </label>
+        <ChecklistField
+          items={draft.checklist}
+          onChange={(checklist) => setDraft({ ...draft, checklist })}
+        />
+        <WaitsOnField
+          taskId={task?.id}
+          value={draft.waitingOn}
+          plans={plans}
+          onChange={(waitingOn) => setDraft({ ...draft, waitingOn })}
+          onError={onError}
+        />
         <footer>
           {task && (
             <button
@@ -388,7 +410,11 @@ export function TaskEditor({
   );
 }
 
-function pickTaskInput(draft: TaskInput): TaskInput {
+function pickTaskInput(draft: TaskInput, task?: Task): TaskInput {
+  // A rule needs a day to repeat from, and a task that was already finished can't take one.
+  const keepsRule =
+    draft.scheduledDay !== null &&
+    !(draft.status === "done" && (!task || task.status === "done"));
   return {
     title: draft.title,
     description: draft.description,
@@ -402,5 +428,10 @@ function pickTaskInput(draft: TaskInput): TaskInput {
     estimatedMinutes: draft.estimatedMinutes,
     status: draft.status,
     priority: draft.priority,
+    recurrence: keepsRule ? draft.recurrence : null,
+    checklist: draft.checklist
+      .map((item) => ({ ...item, text: item.text.trim() }))
+      .filter((item) => item.text !== ""),
+    waitingOn: draft.waitingOn,
   };
 }

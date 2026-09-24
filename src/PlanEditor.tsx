@@ -1,4 +1,6 @@
-import { FormEvent, ReactNode, useRef, useState } from "react";
+import { FormEvent, ReactNode, useEffect, useRef, useState } from "react";
+import { differenceInCalendarDays, parseISO } from "date-fns";
+import { submitOnCommandEnter } from "./shortcuts";
 import {
   api,
   InboxItem,
@@ -9,7 +11,10 @@ import {
   Plan,
   PlanColor,
   PlanInput,
+  PlanLink,
   planStatuses,
+  PlanTemplate,
+  PlanTemplateInfo,
   Workstream,
   WorkstreamInput,
 } from "./api";
@@ -22,6 +27,7 @@ export function PlanEditor({
   plan,
   inboxItem,
   defaultColor,
+  initialTemplate = null,
   onClose,
   onSaved,
   onArchive,
@@ -31,6 +37,8 @@ export function PlanEditor({
   /** Converts this inbox item: saving creates the plan and removes the item together. */
   inboxItem?: InboxItem;
   defaultColor: PlanColor;
+  /** For a new plan, the template it starts from until the user picks another. */
+  initialTemplate?: PlanTemplate | null;
   onClose: () => void;
   onSaved: (planId: string) => Promise<void> | void;
   /** Offered for an existing, unarchived plan. Unsaved edits in the form are discarded. */
@@ -44,7 +52,28 @@ export function PlanEditor({
     startDate: plan?.startDate ?? null,
     targetDate: plan?.targetDate ?? null,
     color: plan ? plan.color : defaultColor,
+    links: plan?.links ?? [],
   }));
+  const creating = !plan && !inboxItem;
+  const [template, setTemplate] = useState<PlanTemplate | null>(
+    initialTemplate,
+  );
+  const [templates, setTemplates] = useState<PlanTemplateInfo[]>([]);
+  useEffect(() => {
+    if (!creating) return;
+    let active = true;
+    api
+      .listPlanTemplates()
+      .then((list) => {
+        if (active) setTemplates(list);
+      })
+      .catch((cause) => onError(messageFor(cause)));
+    return () => {
+      active = false;
+    };
+    // Loaded once per editor; `onError` only reports a failed load.
+  }, [creating]);
+  const chosenTemplate = templates.find((item) => item.template === template);
   const [saving, setSaving] = useState(false);
   const invertedDates =
     draft.startDate !== null &&
@@ -54,20 +83,29 @@ export function PlanEditor({
   async function submit(form: FormEvent) {
     form.preventDefault();
     setSaving(true);
+    // Rows left without an address are dropped rather than refused.
+    const input: PlanInput = {
+      ...draft,
+      links: draft.links
+        .map((link) => ({ title: link.title.trim(), url: link.url.trim() }))
+        .filter((link) => link.url !== ""),
+    };
     try {
       const savedId = inboxItem
-        ? (await api.processInboxItem(inboxItem, { kind: "plan", plan: draft }))
+        ? (await api.processInboxItem(inboxItem, { kind: "plan", plan: input }))
             .id
         : plan
           ? (
               await api.updatePlan({
-                ...draft,
+                ...input,
                 id: plan.id,
                 revision: plan.revision,
                 archived: plan.archived,
               })
             ).id
-          : (await api.createPlan(draft)).id;
+          : template
+            ? (await api.createPlanFromTemplate(input, template)).id
+            : (await api.createPlan(input)).id;
       await onSaved(savedId);
     } catch (cause) {
       onError(messageFor(cause));
@@ -116,6 +154,29 @@ export function PlanEditor({
         </>
       }
     >
+      {creating && (
+        <label>
+          Start from
+          <select
+            value={template ?? ""}
+            onChange={(input) =>
+              setTemplate((input.target.value || null) as PlanTemplate | null)
+            }
+          >
+            <option value="">A blank plan</option>
+            {templates.map((item) => (
+              <option key={item.template} value={item.template}>
+                {item.label}
+              </option>
+            ))}
+          </select>
+          <span className="field-note">
+            {chosenTemplate
+              ? `Starts with ${chosenTemplate.workstreams.join(", ")} as workstreams, ready to rename or remove.`
+              : "Starts empty."}
+          </span>
+        </label>
+      )}
       <label>
         Title
         <input
@@ -182,7 +243,186 @@ export function PlanEditor({
           maxLength={2000}
         />
       </label>
+      <PlanLinksField
+        links={draft.links}
+        onChange={(links) => setDraft({ ...draft, links })}
+      />
     </EditorShell>
+  );
+}
+
+/**
+ * Copies a plan's workstreams, milestones, and open tasks into a new plan. Choosing the copy's
+ * start (or target) date moves every other date by the same number of days.
+ */
+export function DuplicatePlanDialog({
+  plan,
+  onClose,
+  onDuplicated,
+  onError,
+}: {
+  plan: Plan;
+  onClose: () => void;
+  onDuplicated: (planId: string) => Promise<void> | void;
+  onError: (message: string) => void;
+}) {
+  const anchor = plan.startDate ?? plan.targetDate;
+  const [title, setTitle] = useState(`${plan.title} (copy)`);
+  const [anchorDay, setAnchorDay] = useState(anchor ?? "");
+  const [shiftDays, setShiftDays] = useState(0);
+  const [saving, setSaving] = useState(false);
+  const shift =
+    anchor && anchorDay
+      ? differenceInCalendarDays(parseISO(anchorDay), parseISO(anchor))
+      : shiftDays;
+
+  async function submit(form: FormEvent) {
+    form.preventDefault();
+    setSaving(true);
+    try {
+      const copy = await api.duplicatePlan({
+        id: plan.id,
+        title: title.trim(),
+        shiftDays: shift,
+      });
+      await onDuplicated(copy.id);
+    } catch (cause) {
+      onError(messageFor(cause));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <EditorShell
+      label="Duplicate plan"
+      kicker="DUPLICATE PLAN"
+      heading="Start a copy"
+      busy={saving}
+      onClose={onClose}
+      onSubmit={submit}
+      footer={
+        <>
+          <button type="button" className="editor-cancel" onClick={onClose}>
+            Cancel
+          </button>
+          <button
+            className="primary-button small editor-save"
+            disabled={saving || !title.trim()}
+          >
+            {saving && <Spinner size={7} />}
+            Duplicate
+          </button>
+        </>
+      }
+    >
+      <p className="dialog-subject">
+        Copies the workstreams, milestones, and open tasks of {plan.title}.
+        Finished work, events, and time blocks stay with the original.
+      </p>
+      <label>
+        Title
+        <input
+          autoFocus
+          value={title}
+          required
+          maxLength={140}
+          onChange={(input) => setTitle(input.target.value)}
+        />
+      </label>
+      {anchor ? (
+        <label>
+          {plan.startDate ? "Starts" : "Target date"}{" "}
+          <span>Every date moves by the same number of days</span>
+          <input
+            type="date"
+            value={anchorDay}
+            required
+            onChange={(input) => setAnchorDay(input.target.value)}
+          />
+        </label>
+      ) : (
+        <label>
+          Move dates by <span>Days; a negative number moves them earlier</span>
+          <input
+            type="number"
+            min={-3660}
+            max={3660}
+            value={shiftDays}
+            onChange={(input) =>
+              setShiftDays(Math.round(Number(input.target.value) || 0))
+            }
+          />
+        </label>
+      )}
+      <p className="field-note" role="status">
+        {shift === 0
+          ? "Dates stay as they are."
+          : `Dates move ${Math.abs(shift)} day${Math.abs(shift) === 1 ? "" : "s"} ${shift > 0 ? "later" : "earlier"}.`}
+      </p>
+    </EditorShell>
+  );
+}
+
+const MAX_PLAN_LINKS = 20;
+
+/** Pages that belong with a plan: a title and a web address each, opened in the browser. */
+function PlanLinksField({
+  links,
+  onChange,
+}: {
+  links: PlanLink[];
+  onChange: (links: PlanLink[]) => void;
+}) {
+  const change = (index: number, field: keyof PlanLink, value: string) =>
+    onChange(
+      links.map((link, position) =>
+        position === index ? { ...link, [field]: value } : link,
+      ),
+    );
+  return (
+    <fieldset className="links-field">
+      <legend>
+        Links <span>Bookings, documents, tickets; opened in your browser</span>
+      </legend>
+      {links.map((link, index) => (
+        <div className="link-row" key={index}>
+          <input
+            value={link.title}
+            maxLength={80}
+            placeholder="Title"
+            aria-label={`Link ${index + 1} title`}
+            onChange={(input) => change(index, "title", input.target.value)}
+          />
+          <input
+            type="url"
+            value={link.url}
+            maxLength={2048}
+            placeholder="https://"
+            aria-label={`Link ${index + 1} address`}
+            onChange={(input) => change(index, "url", input.target.value)}
+          />
+          <button
+            type="button"
+            aria-label={`Remove link ${link.title || index + 1}`}
+            onClick={() =>
+              onChange(links.filter((_, position) => position !== index))
+            }
+          >
+            <Glyph>✕</Glyph>
+          </button>
+        </div>
+      ))}
+      {links.length < MAX_PLAN_LINKS && (
+        <button
+          type="button"
+          className="text-button"
+          onClick={() => onChange([...links, { title: "", url: "" }])}
+        >
+          Add a link
+        </button>
+      )}
+    </fieldset>
   );
 }
 
@@ -487,6 +727,7 @@ export function EditorShell({
         ref={dialogRef}
         className="editor-dialog"
         onSubmit={onSubmit}
+        onKeyDown={submitOnCommandEnter}
         role="dialog"
         aria-modal="true"
         aria-label={label}

@@ -16,6 +16,11 @@ pub const MAX_BLOCK_CHANGES: usize = 200;
 pub const MAX_CALENDAR_NAME_LENGTH: usize = 80;
 pub const MAX_CALENDAR_LINK_LENGTH: usize = 1_200;
 pub const MAX_CALENDARS: usize = 20;
+pub const MAX_CHECKLIST_ITEMS: usize = 30;
+pub const MAX_WAITING_ON: usize = 10;
+pub const MAX_RECURRENCE_INTERVAL: u32 = 99;
+pub const MAX_PLAN_LINKS: usize = 20;
+pub const MAX_LINK_URL_LENGTH: usize = 2_048;
 
 /// Declares a closed enum whose serde name and SQLite text value come from one literal.
 macro_rules! stored_enum {
@@ -63,7 +68,7 @@ stored_enum! {
 }
 
 stored_enum! {
-    /// A small fixed palette keeps plan labels legible against DayPlan's theme.
+    /// A small fixed palette keeps plan labels legible against Delve Planner's theme.
     pub enum PlanColor {
         Sage => "sage",
         Clay => "clay",
@@ -108,6 +113,56 @@ stored_enum! {
 }
 
 stored_enum! {
+    /// How often a repeating task comes back.
+    pub enum RecurrenceFrequency {
+        Daily => "daily",
+        /// Monday through Friday.
+        Weekdays => "weekdays",
+        Weekly => "weekly",
+        Monthly => "monthly",
+    }
+}
+
+/// How a task repeats. Only the open occurrence carries the rule: finishing it creates the next
+/// occurrence, which takes the rule forward, so there is never more than one open copy.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Recurrence {
+    pub frequency: RecurrenceFrequency,
+    /// Every this many days, weeks, or months. Weekday rules always step one working day.
+    #[serde(default = "one")]
+    pub interval: u32,
+    /// For weekly rules, the ISO weekdays it lands on, Monday = 1 through Sunday = 7.
+    #[serde(default)]
+    pub weekdays: Vec<u8>,
+    /// For monthly rules, the day of the month, moved to the last day in shorter months.
+    #[serde(default)]
+    pub month_day: Option<u8>,
+}
+
+fn one() -> u32 {
+    1
+}
+
+/// One line of a task's checklist: steps inside the task rather than tasks of their own.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ChecklistItem {
+    pub text: String,
+    #[serde(default)]
+    pub done: bool,
+}
+
+/// A page that belongs with a plan, such as a booking, a shared document, or a ticket.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PlanLink {
+    #[serde(default)]
+    pub title: String,
+    pub url: String,
+}
+
+stored_enum! {
     /// Where a read-only calendar comes from.
     pub enum CalendarKind {
         /// A subscription to an iCalendar link, refreshed in the background.
@@ -122,7 +177,7 @@ stored_enum! {
 }
 
 stored_enum! {
-    /// An account DayPlan can read calendars from. Both are read-only: DayPlan asks for
+    /// An account Delve Planner can read calendars from. Both are read-only: Delve Planner asks for
     /// read-only scopes and never calls an endpoint that changes a calendar.
     pub enum CalendarProvider {
         Google => "google",
@@ -177,16 +232,16 @@ impl CalendarProblem {
                 "The calendar service refused the link. Check that the calendar is still shared."
             }
             Self::Unreachable => {
-                "DayPlan couldn't reach the calendar service. It will try again automatically."
+                "Delve Planner couldn't reach the calendar service. It will try again automatically."
             }
             Self::RateLimited => {
-                "The calendar service asked DayPlan to slow down. It will try again later."
+                "The calendar service asked Delve Planner to slow down. It will try again later."
             }
             Self::ServerError => {
-                "The calendar service had a problem. DayPlan will try again automatically."
+                "The calendar service had a problem. Delve Planner will try again automatically."
             }
             Self::LinkUnavailable => {
-                "DayPlan couldn't read this calendar's link from the system keychain. Paste the link again."
+                "Delve Planner couldn't read this calendar's link from the system keychain. Paste the link again."
             }
         }
     }
@@ -266,6 +321,9 @@ pub struct Plan {
     pub target_date: Option<String>,
     pub color: Option<PlanColor>,
     pub archived: bool,
+    /// Pages that belong with the plan. Opened in the browser; never sent to the planner.
+    #[serde(default)]
+    pub links: Vec<PlanLink>,
     pub revision: i64,
     pub created_at: String,
     pub updated_at: String,
@@ -312,6 +370,14 @@ pub struct Task {
     pub status: TaskStatus,
     pub priority: TaskPriority,
     pub completed_at: Option<String>,
+    /// How the task repeats. Only the open occurrence of a repeating task has one.
+    #[serde(default)]
+    pub recurrence: Option<Recurrence>,
+    #[serde(default)]
+    pub checklist: Vec<ChecklistItem>,
+    /// Tasks this one waits on. A hint shown beside the task; nothing is blocked automatically.
+    #[serde(default)]
+    pub waiting_on: Vec<String>,
     pub sort_order: i64,
     pub revision: i64,
     pub created_at: String,
@@ -353,7 +419,7 @@ pub struct ScheduledBlock {
     pub task: Task,
 }
 
-/// The hours DayPlan counts as available for planned work, in the viewer's local time.
+/// The hours Delve Planner counts as available for planned work, in the viewer's local time.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkingHours {
@@ -366,7 +432,7 @@ pub struct WorkingHours {
     pub updated_at: String,
 }
 
-/// An account DayPlan reads calendars from. Its tokens stay in the system keychain and never
+/// An account Delve Planner reads calendars from. Its tokens stay in the system keychain and never
 /// reach SQLite or the renderer.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -382,7 +448,7 @@ pub struct CalendarAccount {
     pub updated_at: String,
 }
 
-/// A calendar offered by a connected account, for choosing which ones DayPlan shows.
+/// A calendar offered by a connected account, for choosing which ones Delve Planner shows.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct RemoteCalendar {
@@ -552,6 +618,8 @@ pub struct CreatePlanInput {
     pub target_date: Option<String>,
     #[serde(default)]
     pub color: Option<PlanColor>,
+    #[serde(default)]
+    pub links: Vec<PlanLink>,
 }
 
 /// Replaces every editable plan field under one revision check.
@@ -567,6 +635,112 @@ pub struct UpdatePlanInput {
     pub target_date: Option<String>,
     pub color: Option<PlanColor>,
     pub archived: bool,
+    pub links: Vec<PlanLink>,
+}
+
+impl UpdatePlanInput {
+    /// A replacement that keeps every field of `plan`, for callers that change only some.
+    pub fn keeping(plan: &Plan) -> Self {
+        Self {
+            id: plan.id.clone(),
+            revision: plan.revision,
+            title: plan.title.clone(),
+            description: plan.description.clone(),
+            status: plan.status,
+            start_date: plan.start_date.clone(),
+            target_date: plan.target_date.clone(),
+            color: plan.color,
+            archived: plan.archived,
+            links: plan.links.clone(),
+        }
+    }
+}
+
+/// The kinds of plan Delve Planner can start from, each with a few workstreams to fill in.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PlanTemplate {
+    Event,
+    Trip,
+    Move,
+    Research,
+    JobSearch,
+    PersonalProject,
+}
+
+impl PlanTemplate {
+    pub const ALL: [Self; 6] = [
+        Self::Event,
+        Self::Trip,
+        Self::Move,
+        Self::Research,
+        Self::JobSearch,
+        Self::PersonalProject,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Event => "Event",
+            Self::Trip => "Trip",
+            Self::Move => "Move",
+            Self::Research => "Research or school project",
+            Self::JobSearch => "Job search",
+            Self::PersonalProject => "Personal project",
+        }
+    }
+
+    /// The workstreams a plan of this kind starts with. A handful, not an exhaustive list: they
+    /// are a first shape to rename, remove, or add to.
+    pub fn workstreams(self) -> &'static [&'static str] {
+        match self {
+            Self::Event => &["Venue and logistics", "Program", "Promotion", "Budget"],
+            Self::Trip => &["Travel", "Lodging", "Itinerary", "Packing"],
+            Self::Move => &[
+                "Finding a place",
+                "Packing and movers",
+                "Utilities and address changes",
+                "Settling in",
+            ],
+            Self::Research => &["Reading and research", "Analysis", "Writing", "Submission"],
+            Self::JobSearch => &[
+                "Applications",
+                "Networking",
+                "Interview prep",
+                "Résumé and portfolio",
+            ],
+            Self::PersonalProject => &["Planning", "Making", "Finishing"],
+        }
+    }
+}
+
+/// A template as the plan editor offers it: what it's called and what it starts with.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanTemplateInfo {
+    pub template: PlanTemplate,
+    pub label: &'static str,
+    pub workstreams: &'static [&'static str],
+}
+
+/// An open task in a word, for choosing what another task waits on and showing the wait.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskReference {
+    pub id: String,
+    pub title: String,
+    pub plan_id: Option<String>,
+    pub scheduled_day: Option<String>,
+    pub due_date: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DuplicatePlanInput {
+    pub id: String,
+    pub title: String,
+    /// Days to move every date by; negative moves them earlier.
+    #[serde(default)]
+    pub shift_days: i64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -623,6 +797,12 @@ pub struct CreateTaskInput {
     pub status: TaskStatus,
     #[serde(default)]
     pub priority: TaskPriority,
+    #[serde(default)]
+    pub recurrence: Option<Recurrence>,
+    #[serde(default)]
+    pub checklist: Vec<ChecklistItem>,
+    #[serde(default)]
+    pub waiting_on: Vec<String>,
 }
 
 /// Replaces every editable task field under one revision check.
@@ -643,6 +823,35 @@ pub struct UpdateTaskInput {
     pub estimated_minutes: Option<i64>,
     pub status: TaskStatus,
     pub priority: TaskPriority,
+    pub recurrence: Option<Recurrence>,
+    pub checklist: Vec<ChecklistItem>,
+    pub waiting_on: Vec<String>,
+}
+
+impl UpdateTaskInput {
+    /// A replacement that keeps every field of `task`, for callers that change only some. Going
+    /// through here means a field added later can't be dropped by a caller that never heard of it.
+    pub fn keeping(task: &Task) -> Self {
+        Self {
+            id: task.id.clone(),
+            revision: task.revision,
+            title: task.title.clone(),
+            description: task.description.clone(),
+            plan_id: task.plan_id.clone(),
+            milestone_id: task.milestone_id.clone(),
+            workstream_id: task.workstream_id.clone(),
+            owner_id: task.owner_id.clone(),
+            due_date: task.due_date.clone(),
+            scheduled_day: task.scheduled_day.clone(),
+            planned_week: task.planned_week.clone(),
+            estimated_minutes: task.estimated_minutes,
+            status: task.status,
+            priority: task.priority,
+            recurrence: task.recurrence.clone(),
+            checklist: task.checklist.clone(),
+            waiting_on: task.waiting_on.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -742,8 +951,8 @@ pub struct RecordVersion {
     pub revision: i64,
 }
 
-/// Something DayPlan worked out from what is already on this device. Every observation says what
-/// it is based on, so the user can judge it rather than take it on trust.
+/// Something Delve Planner worked out from what is already on this device. Every observation says
+/// what it is based on, so the user can judge it rather than take it on trust.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Observation {
@@ -757,12 +966,14 @@ pub struct Observation {
 }
 
 stored_enum! {
-    /// The observations DayPlan can make, each computed in Rust from local records only.
+    /// The observations Delve Planner can make, each computed in Rust from local records only.
     pub enum ObservationKind {
         EstimateAccuracy => "estimate_accuracy",
         UsualStart => "usual_start",
         TypicalDailyLoad => "typical_daily_load",
         DeferredDays => "deferred_days",
+        RepeatedlyMoved => "repeatedly_moved",
+        SlippingPlan => "slipping_plan",
     }
 }
 
@@ -829,9 +1040,9 @@ pub struct TimeRange {
     pub end_at_utc: String,
 }
 
-/// One local day's planning hours against what already fills them. Busy time is DayPlan events
-/// and busy events from visible calendars inside working hours; time blocks are planned work,
-/// so they reduce `free` but not `available_minutes`.
+/// One local day's planning hours against what already fills them. Busy time is Delve Planner
+/// events and busy events from visible calendars inside working hours; time blocks are planned
+/// work, so they reduce `free` but not `available_minutes`.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct DayCapacity {
@@ -847,8 +1058,8 @@ pub struct DayCapacity {
     pub free: Vec<TimeRange>,
 }
 
-/// Planned work against available time for a window of local days. DayPlan reports these numbers
-/// and never rearranges anything because of them.
+/// Planned work against available time for a window of local days. Delve Planner reports these
+/// numbers and never rearranges anything because of them.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Capacity {
@@ -1156,6 +1367,15 @@ impl RecordRef {
     }
 }
 
+/// The inbox item a new record is made from. Applying the proposal removes the item, and an
+/// item edited or removed since the proposal was made fails the whole proposal.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct InboxSource {
+    pub item_id: String,
+    pub expected_revision: i64,
+}
+
 /// A typed edit to an optional local day such as a task's scheduled day or due date.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
@@ -1219,6 +1439,8 @@ pub enum MutationOperation {
         reminder_minutes_before: Option<i64>,
         #[serde(default)]
         plan: Option<RecordRef>,
+        #[serde(default)]
+        from_inbox: Option<InboxSource>,
     },
     UpdateEvent {
         event_id: String,
@@ -1254,6 +1476,8 @@ pub enum MutationOperation {
         status: PlanStatus,
         start_date: Option<String>,
         target_date: Option<String>,
+        #[serde(default)]
+        from_inbox: Option<InboxSource>,
     },
     UpdatePlan {
         plan_id: String,
@@ -1291,6 +1515,11 @@ pub enum MutationOperation {
         due_date: Option<String>,
         status: TaskStatus,
         priority: TaskPriority,
+        /// One of the task's plan's workstreams, existing or created in the same proposal.
+        #[serde(default)]
+        workstream: Option<RecordRef>,
+        #[serde(default)]
+        from_inbox: Option<InboxSource>,
     },
     UpdateTask {
         task_id: String,
@@ -1323,6 +1552,14 @@ pub enum MutationOperation {
         task_id: String,
         expected_revision: i64,
     },
+    /// Adds a named group of work to a plan, which tasks in the same proposal may then join.
+    CreateWorkstream { plan: RecordRef, name: String },
+    /// Puts a task in one of its plan's workstreams, or takes it out of its workstream.
+    SetTaskWorkstream {
+        task_id: String,
+        expected_revision: i64,
+        workstream: Option<RecordRef>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -1347,33 +1584,109 @@ impl ModelResponse {
 }
 
 impl MutationOperation {
-    /// The plans and milestones this operation needs the same proposal to create. An operation
-    /// refers to one by title until it exists, which is what makes it depend on another.
+    /// The plans, milestones, and workstreams this operation needs the same proposal to create.
+    /// An operation refers to one by title until it exists, which is what makes it depend on
+    /// another.
     pub fn new_references(&self) -> Vec<(RecordKind, &str)> {
-        fn title(reference: Option<&RecordRef>) -> Option<&str> {
-            match reference {
-                Some(RecordRef::New(NewRef { new_title })) => Some(new_title.as_str()),
-                _ => None,
-            }
-        }
-        let (plan, milestone) = match self {
-            Self::CreateEvent { plan, .. } | Self::SetEventPlan { plan, .. } => {
-                (title(plan.as_ref()), None)
-            }
-            Self::CreateMilestone { plan, .. } => (title(Some(plan)), None),
-            Self::CreateTask {
-                plan, milestone, ..
-            }
-            | Self::SetTaskPlan {
-                plan, milestone, ..
-            } => (title(plan.as_ref()), title(milestone.as_ref())),
-            _ => (None, None),
-        };
-        plan.map(|title| (RecordKind::Plan, title))
+        self.references()
             .into_iter()
-            .chain(milestone.map(|title| (RecordKind::Milestone, title)))
+            .filter_map(|(kind, reference)| match reference {
+                RecordRef::New(NewRef { new_title }) => Some((kind, new_title.as_str())),
+                RecordRef::Existing(_) => None,
+            })
             .collect()
     }
+
+    /// Every plan, milestone, and workstream reference in the operation, with its kind.
+    pub fn references(&self) -> Vec<(RecordKind, &RecordRef)> {
+        let (plan, milestone, workstream) = match self {
+            Self::CreateEvent { plan, .. } | Self::SetEventPlan { plan, .. } => {
+                (plan.as_ref(), None, None)
+            }
+            Self::CreateMilestone { plan, .. } | Self::CreateWorkstream { plan, .. } => {
+                (Some(plan), None, None)
+            }
+            Self::CreateTask {
+                plan,
+                milestone,
+                workstream,
+                ..
+            } => (plan.as_ref(), milestone.as_ref(), workstream.as_ref()),
+            Self::SetTaskPlan {
+                plan, milestone, ..
+            } => (plan.as_ref(), milestone.as_ref(), None),
+            Self::SetTaskWorkstream { workstream, .. } => (None, None, workstream.as_ref()),
+            _ => (None, None, None),
+        };
+        [
+            (RecordKind::Plan, plan),
+            (RecordKind::Milestone, milestone),
+            (RecordKind::Workstream, workstream),
+        ]
+        .into_iter()
+        .filter_map(|(kind, reference)| reference.map(|reference| (kind, reference)))
+        .collect()
+    }
+
+    /// The same references, for rewriting a new title the user renamed before applying.
+    pub fn references_mut(&mut self) -> Vec<(RecordKind, &mut RecordRef)> {
+        let (plan, milestone, workstream) = match self {
+            Self::CreateEvent { plan, .. } | Self::SetEventPlan { plan, .. } => {
+                (plan.as_mut(), None, None)
+            }
+            Self::CreateMilestone { plan, .. } | Self::CreateWorkstream { plan, .. } => {
+                (Some(plan), None, None)
+            }
+            Self::CreateTask {
+                plan,
+                milestone,
+                workstream,
+                ..
+            } => (plan.as_mut(), milestone.as_mut(), workstream.as_mut()),
+            Self::SetTaskPlan {
+                plan, milestone, ..
+            } => (plan.as_mut(), milestone.as_mut(), None),
+            Self::SetTaskWorkstream { workstream, .. } => (None, None, workstream.as_mut()),
+            _ => (None, None, None),
+        };
+        [
+            (RecordKind::Plan, plan),
+            (RecordKind::Milestone, milestone),
+            (RecordKind::Workstream, workstream),
+        ]
+        .into_iter()
+        .filter_map(|(kind, reference)| reference.map(|reference| (kind, reference)))
+        .collect()
+    }
+
+    /// The new plan, milestone, or workstream this operation creates, by title.
+    pub fn creates(&self) -> Option<(RecordKind, &str)> {
+        match self {
+            Self::CreatePlan { title, .. } => Some((RecordKind::Plan, title)),
+            Self::CreateMilestone { title, .. } => Some((RecordKind::Milestone, title)),
+            Self::CreateWorkstream { name, .. } => Some((RecordKind::Workstream, name)),
+            _ => None,
+        }
+    }
+
+    /// The inbox item this operation turns into a new record, if any.
+    pub fn inbox_source(&self) -> Option<&InboxSource> {
+        match self {
+            Self::CreateEvent { from_inbox, .. }
+            | Self::CreatePlan { from_inbox, .. }
+            | Self::CreateTask { from_inbox, .. } => from_inbox.as_ref(),
+            _ => None,
+        }
+    }
+}
+
+/// A suggestion the user changed before applying it. Only its values may differ: what it targets,
+/// what it links to, and the revision it was proposed against stay as proposed.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SuggestionEdit {
+    pub id: String,
+    pub change: MutationOperation,
 }
 
 /// What the planner says about one of its own suggestions.
@@ -1410,17 +1723,15 @@ impl ProposedOperation {
     /// operation depends on another when it refers to a plan or milestone that one creates.
     /// `notes` carries what the planner said about each, in the same order.
     pub fn review(operations: &[MutationOperation], notes: &[ReviewNote]) -> Vec<Self> {
-        let creates: HashMap<(RecordKind, &str), String> = operations
+        // Titles match the way applying resolves them, ignoring case and spacing, so "charity
+        // WEEK" depends on the suggestion that creates "Charity week".
+        let creates: HashMap<(RecordKind, String), String> = operations
             .iter()
             .enumerate()
-            .filter_map(|(index, operation)| match operation {
-                MutationOperation::CreatePlan { title, .. } => {
-                    Some(((RecordKind::Plan, title.as_str()), Self::handle(index)))
-                }
-                MutationOperation::CreateMilestone { title, .. } => {
-                    Some(((RecordKind::Milestone, title.as_str()), Self::handle(index)))
-                }
-                _ => None,
+            .filter_map(|(index, operation)| {
+                operation
+                    .creates()
+                    .map(|(kind, title)| ((kind, crate::db::fold(title)), Self::handle(index)))
             })
             .collect();
         operations
@@ -1430,7 +1741,9 @@ impl ProposedOperation {
                 let mut depends_on: Vec<String> = operation
                     .new_references()
                     .into_iter()
-                    .filter_map(|(kind, title)| creates.get(&(kind, title)).cloned())
+                    .filter_map(|(kind, title)| {
+                        creates.get(&(kind, crate::db::fold(title))).cloned()
+                    })
                     .collect();
                 depends_on.sort();
                 depends_on.dedup();
@@ -1473,6 +1786,8 @@ stored_enum! {
         Plan => "plan",
         Milestone => "milestone",
         Task => "task",
+        Workstream => "workstream",
+        InboxItem => "inbox_item",
     }
 }
 
@@ -1492,6 +1807,7 @@ pub struct AppliedProposal {
     pub plan_ids: Vec<String>,
     pub milestone_ids: Vec<String>,
     pub task_ids: Vec<String>,
+    pub workstream_ids: Vec<String>,
 }
 
 /// The records the planner may reference for one request, chosen by relevance.
@@ -1501,4 +1817,59 @@ pub struct PlannerCandidates {
     pub plans: Vec<Plan>,
     pub milestones: Vec<Milestone>,
     pub tasks: Vec<Task>,
+    /// The workstreams of the candidate plans, by name only.
+    pub workstreams: Vec<Workstream>,
+    /// Captured items, only when the request talks about the inbox. Their notes stay behind.
+    pub inbox_items: Vec<InboxItem>,
+    /// Spare time on the coming days, for requests that ask the planner to choose a day.
+    pub planning: Option<PlanningFacts>,
+}
+
+/// What the planner may know about the coming days when it's asked to pick one: how much time is
+/// left after events and planned work, and which days have no working time at all. Totals only;
+/// nothing about what fills a day.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PlanningFacts {
+    pub days: Vec<DayFacts>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DayFacts {
+    pub day: String,
+    /// Working time left once events and the estimates of work already on the day are placed,
+    /// never more than the daily limit leaves.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub spare_minutes: Option<i64>,
+    /// A day with no working time: outside working hours or a day off in the planning profile.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub off: bool,
+}
+
+impl PlanningFacts {
+    pub fn from_capacity(capacity: &Capacity) -> Self {
+        let limit = capacity.planned_limit_minutes;
+        Self {
+            days: capacity
+                .days
+                .iter()
+                .map(|day| {
+                    let off = day.working_minutes == 0;
+                    let room = limit.map_or(day.available_minutes, |limit| {
+                        day.available_minutes.min(limit)
+                    });
+                    DayFacts {
+                        day: day.day.clone(),
+                        spare_minutes: (!off).then(|| (room - day.planned_minutes).max(0)),
+                        off,
+                    }
+                })
+                .collect(),
+        }
+    }
+
+    /// Whether `day` has no working time at all.
+    pub fn is_off(&self, day: &str) -> bool {
+        self.days.iter().any(|facts| facts.day == day && facts.off)
+    }
 }

@@ -1,5 +1,11 @@
-import { CSSProperties, useRef, useState } from "react";
-import { api, messageFor, PlanSummary } from "./api";
+import { CSSProperties, useEffect, useRef, useState } from "react";
+import {
+  api,
+  messageFor,
+  PlanSummary,
+  PlanTemplate,
+  PlanTemplateInfo,
+} from "./api";
 import { Glyph, Mark } from "./Geometry";
 import { StatusPill } from "./PlanControls";
 import {
@@ -29,7 +35,8 @@ export function PlansView({
   today: string;
   focusToken: number;
   onOpenPlan: (planId: string) => void;
-  onNewPlan: () => void;
+  /** Opens the new-plan editor, blank or starting from a template. */
+  onNewPlan: (template: PlanTemplate | null) => void;
   onShowArchived: (archived: boolean) => void;
   onChanged: () => Promise<void>;
   onMessage: (message: string) => void;
@@ -92,7 +99,7 @@ export function PlansView({
             {archived ? "Active plans" : "Archived"} · {otherCount}
           </button>
           {!archived && (
-            <button className="primary-button" onClick={onNewPlan}>
+            <button className="primary-button" onClick={() => onNewPlan(null)}>
               <Mark filled />
               New plan
             </button>
@@ -104,16 +111,21 @@ export function PlansView({
           ? "Archived plans keep their milestones, tasks, and events. Restore a plan to bring it back, or delete it permanently."
           : "A plan holds milestones, tasks, and events. Everything here resolves down to something that fits on a single day."}
       </p>
-      {visible.length === 0 ? (
+      {visible.length === 0 && !archived && summaries.length === 0 ? (
+        <FirstPlan onNewPlan={onNewPlan} onMessage={onMessage} />
+      ) : visible.length === 0 ? (
         <div className="empty-agenda">
           <i className="empty-mark" aria-hidden="true" />
           <p>
             {archived
               ? "Nothing archived."
-              : "No plans yet. Start with the next thing on the horizon."}
+              : "No active plans. Start with the next thing on the horizon."}
           </p>
           {!archived && (
-            <button className="secondary-button" onClick={onNewPlan}>
+            <button
+              className="secondary-button"
+              onClick={() => onNewPlan(null)}
+            >
               <Glyph>+</Glyph> Create a plan
             </button>
           )}
@@ -139,6 +151,64 @@ export function PlansView({
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * The Plans page before there are any plans: a blank plan, or a template that starts with a few
+ * workstreams to rename or remove.
+ */
+function FirstPlan({
+  onNewPlan,
+  onMessage,
+}: {
+  onNewPlan: (template: PlanTemplate | null) => void;
+  onMessage: (message: string) => void;
+}) {
+  const [templates, setTemplates] = useState<PlanTemplateInfo[] | null>(null);
+  useEffect(() => {
+    let active = true;
+    api
+      .listPlanTemplates()
+      .then((list) => {
+        if (active) setTemplates(list);
+      })
+      .catch((cause) => {
+        if (active) setTemplates([]);
+        onMessage(messageFor(cause));
+      });
+    return () => {
+      active = false;
+    };
+    // Loaded once; `onMessage` only reports a failed load.
+  }, []);
+  return (
+    <section className="first-plan" aria-labelledby="first-plan-heading">
+      <h2 id="first-plan-heading">Start your first plan</h2>
+      <p>
+        A plan is anything bigger than a day: a trip, a move, a launch. Start
+        blank, or from a template that sets up a few workstreams you can rename
+        or remove.
+      </p>
+      <div className="template-grid">
+        <button className="template-card" onClick={() => onNewPlan(null)}>
+          <strong>
+            <Glyph>+</Glyph> Blank plan
+          </strong>
+          <span>Just a title, dates, and an outcome to aim for.</span>
+        </button>
+        {(templates ?? []).map((item) => (
+          <button
+            key={item.template}
+            className="template-card"
+            onClick={() => onNewPlan(item.template)}
+          >
+            <strong>{item.label}</strong>
+            <span>{item.workstreams.join(" · ")}</span>
+          </button>
+        ))}
+      </div>
+    </section>
   );
 }
 

@@ -4,29 +4,32 @@ pub mod capacity;
 pub mod db;
 pub mod error;
 pub mod model;
+pub mod recurrence;
 pub mod runtime;
+pub mod shortcut;
 
 use agent::{OllamaStatus, PlannerAgent, PlannerRequest};
 use calendar::{parse_zone, CalendarService, DayRange};
 use chrono::NaiveDate;
 use db::{
-    accepted_operations, backups_for_path, parse_export_bundle, restore_backup, CandidateRequest,
-    DueReminder, PlannerDatabase, CURRENT_SCHEMA_VERSION,
+    accepted_operations, backups_for_path, edited_proposal, parse_export_bundle, restore_backup,
+    CandidateRequest, DueReminder, PlannerDatabase, CURRENT_SCHEMA_VERSION,
 };
 use error::{AppError, CommandError};
 use model::{
     Agenda, AppliedProposal, Calendar, CalendarAccount, CalendarAgenda, CalendarProvider, Capacity,
     ConnectedAccount, CreateEventInput, CreateInboxItemInput, CreateMilestoneInput,
     CreatePersonInput, CreatePlanInput, CreateTaskBlockInput, CreateTaskInput,
-    CreateWorkstreamInput, DatabaseStatus, ExportBundle, ImportPreview, InboxConversion, InboxItem,
-    LocalDateTimeInput, LocalDateTimeResolution, Milestone, Observation, Person, PersonSummary,
-    Plan, PlanColor, PlanDeletion, PlanSummary, PlanWorkspace, PlannerResponse, PlanningBoard,
+    CreateWorkstreamInput, DatabaseStatus, DuplicatePlanInput, ExportBundle, ImportPreview,
+    InboxConversion, InboxItem, LocalDateTimeInput, LocalDateTimeResolution, Milestone,
+    Observation, Person, PersonSummary, Plan, PlanColor, PlanDeletion, PlanSummary, PlanTemplate,
+    PlanTemplateInfo, PlanWorkspace, PlannerResponse, PlanningBoard, PlanningFacts,
     PlanningProfile, ProcessInboxItemInput, RecordVersion, RemoteCalendar,
     ReplaceCalendarLinkInput, RescheduleEventInput, ScheduleEvent, ScheduledBlock,
-    SubscribeCalendarInput, Task, TaskBlock, TaskMove, UpdateCalendarInput, UpdateEventInput,
-    UpdateInboxItemInput, UpdateMilestoneInput, UpdatePersonInput, UpdatePlanInput,
-    UpdatePlanningProfileInput, UpdateTaskBlockInput, UpdateTaskInput, UpdateWorkingHoursInput,
-    UpdateWorkstreamInput, WorkingHours, Workstream,
+    SubscribeCalendarInput, SuggestionEdit, Task, TaskBlock, TaskMove, TaskReference,
+    UpdateCalendarInput, UpdateEventInput, UpdateInboxItemInput, UpdateMilestoneInput,
+    UpdatePersonInput, UpdatePlanInput, UpdatePlanningProfileInput, UpdateTaskBlockInput,
+    UpdateTaskInput, UpdateWorkingHoursInput, UpdateWorkstreamInput, WorkingHours, Workstream,
 };
 use runtime::{InstalledModel, OllamaRuntimeManager};
 use serde::Serialize;
@@ -39,6 +42,7 @@ use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_opener::OpenerExt;
 use uuid::Uuid;
@@ -47,6 +51,8 @@ use zip::write::SimpleFileOptions;
 const MAX_IMPORT_BYTES: u64 = 50 * 1024 * 1024;
 /// Emitted when a background refresh changed what calendars show.
 const CALENDARS_CHANGED: &str = "calendars-changed";
+/// Asks the window to open quick capture, from the global shortcut or the tray.
+const QUICK_CAPTURE: &str = "quick-capture";
 
 struct AppState {
     database: Mutex<DatabaseRuntime>,
@@ -54,6 +60,8 @@ struct AppState {
     agent: PlannerAgent,
     ollama: OllamaRuntimeManager,
     pending_import: Mutex<Option<PendingImport>>,
+    /// Serializes changes to the quick-capture shortcut and remembers where it's saved.
+    shortcuts: Mutex<PathBuf>,
 }
 
 struct PendingImport {
@@ -250,6 +258,53 @@ fn delete_plan(
 }
 
 #[tauri::command]
+fn create_plan_from_template(
+    state: State<'_, AppState>,
+    input: CreatePlanInput,
+    template: PlanTemplate,
+) -> Result<Plan, CommandError> {
+    with_database(&state, |database| {
+        database.create_plan_from_template(input, template)
+    })
+}
+
+/// The templates a new plan can start from, with the workstreams each one creates.
+#[tauri::command]
+fn list_plan_templates() -> Vec<PlanTemplateInfo> {
+    PlanTemplate::ALL
+        .into_iter()
+        .map(|template| PlanTemplateInfo {
+            template,
+            label: template.label(),
+            workstreams: template.workstreams(),
+        })
+        .collect()
+}
+
+#[tauri::command]
+fn duplicate_plan(
+    state: State<'_, AppState>,
+    input: DuplicatePlanInput,
+) -> Result<Plan, CommandError> {
+    with_database(&state, |database| database.duplicate_plan(input))
+}
+
+/// Opens one of a plan's saved links in the browser. The renderer names the link by plan and
+/// position, so it can't ask Delve Planner to open an address the user never saved.
+#[tauri::command]
+fn open_plan_link(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    plan_id: String,
+    index: usize,
+) -> Result<(), CommandError> {
+    let url = with_database(&state, |database| database.plan_link(&plan_id, index))?;
+    app.opener()
+        .open_url(url, None::<&str>)
+        .map_err(|_| CommandError::internal("Delve Planner couldn't open your browser."))
+}
+
+#[tauri::command]
 fn create_milestone(
     state: State<'_, AppState>,
     input: CreateMilestoneInput,
@@ -336,6 +391,23 @@ fn update_task(state: State<'_, AppState>, input: UpdateTaskInput) -> Result<Tas
 #[tauri::command]
 fn delete_task(state: State<'_, AppState>, id: String, revision: i64) -> Result<(), CommandError> {
     with_database(&state, |database| database.delete_task(&id, revision))
+}
+
+/// Moves a repeating task's open occurrence to its next date without finishing it.
+#[tauri::command]
+fn skip_task_occurrence(
+    state: State<'_, AppState>,
+    id: String,
+    revision: i64,
+) -> Result<Task, CommandError> {
+    with_database(&state, |database| database.skip_occurrence(&id, revision))
+}
+
+#[tauri::command]
+fn list_open_task_references(
+    state: State<'_, AppState>,
+) -> Result<Vec<TaskReference>, CommandError> {
+    with_database(&state, |database| database.open_task_references())
 }
 
 #[tauri::command]
@@ -426,7 +498,7 @@ fn list_releasable_blocks(state: State<'_, AppState>) -> Result<Vec<ScheduledBlo
     with_database(&state, |database| database.releasable_blocks())
 }
 
-/// What DayPlan knows about how the user plans, and what it has noticed from local records.
+/// What Delve Planner knows about how the user plans, and what it has noticed from local records.
 #[tauri::command]
 fn get_planning_profile(state: State<'_, AppState>) -> Result<PlanningProfile, CommandError> {
     with_database(&state, |database| database.planning_profile())
@@ -624,7 +696,7 @@ async fn pick_calendar_file(
 }
 
 /// Signs in to a calendar account in the system browser and lists the calendars it offers.
-/// DayPlan asks only for read-only access and never changes another calendar.
+/// Delve Planner asks only for read-only access and never changes another calendar.
 #[tauri::command]
 async fn connect_calendar_account(
     app: AppHandle,
@@ -634,7 +706,7 @@ async fn connect_calendar_account(
     let open = move |url: &str| {
         app.opener()
             .open_url(url, None::<&str>)
-            .map_err(|_| AppError::Internal("DayPlan couldn't open your browser.".into()))
+            .map_err(|_| AppError::Internal("Delve Planner couldn't open your browser.".into()))
     };
     state
         .calendars
@@ -738,9 +810,9 @@ async fn export_planner_file(
         app_for_dialog
             .dialog()
             .file()
-            .set_title("Export DayPlan data")
-            .set_file_name("dayplan-export.json")
-            .add_filter("DayPlan JSON", &["json"])
+            .set_title("Export Delve Planner data")
+            .set_file_name("delve-planner-export.json")
+            .add_filter("Delve Planner JSON", &["json"])
             .blocking_save_file()
             .and_then(|path| path.as_path().map(PathBuf::from))
     })
@@ -774,8 +846,8 @@ async fn select_planner_import(
         app_for_dialog
             .dialog()
             .file()
-            .set_title("Choose a DayPlan export")
-            .add_filter("DayPlan JSON", &["json"])
+            .set_title("Choose a Delve Planner export")
+            .add_filter("Delve Planner JSON", &["json"])
             .blocking_pick_file()
             .and_then(|path| path.as_path().map(PathBuf::from))
     })
@@ -899,8 +971,8 @@ fn cancel_ollama_model_download(state: State<'_, AppState>) {
     state.ollama.cancel_download();
 }
 
-/// Every model DayPlan could plan with: the one it downloaded and anything already installed on
-/// the machine. Reading them starts nothing.
+/// Every model Delve Planner could plan with: the one it downloaded and anything already installed
+/// on the machine. Reading them starts nothing.
 #[tauri::command]
 fn list_installed_models(state: State<'_, AppState>) -> Result<Vec<InstalledModel>, CommandError> {
     Ok(state.ollama.installed_models())
@@ -921,7 +993,7 @@ async fn choose_planner_model(
     Ok(())
 }
 
-/// Asks a model DayPlan hasn't been evaluated against whether it can answer in the planner's
+/// Asks a model Delve Planner hasn't been evaluated against whether it can answer in the planner's
 /// reply format. Starting the runtime is part of the check, so this is a deliberate action.
 #[tauri::command]
 async fn check_planner_model(
@@ -944,7 +1016,7 @@ async fn check_planner_model(
 }
 
 /// Starts the runtime because the user asked for something that needs it. Status alone never
-/// does: an open DayPlan that nobody is asking anything shouldn't be running a model server.
+/// does: an open Delve Planner that nobody is asking anything shouldn't be running a model server.
 #[tauri::command]
 async fn start_ollama_runtime(state: State<'_, AppState>) -> Result<OllamaStatus, CommandError> {
     state.ollama.note_used();
@@ -1029,8 +1101,8 @@ async fn export_diagnostic_bundle(
         app_for_dialog
             .dialog()
             .file()
-            .set_title("Export DayPlan diagnostics")
-            .set_file_name("dayplan-diagnostics.zip")
+            .set_title("Export Delve Planner diagnostics")
+            .set_file_name("delve-planner-diagnostics.zip")
             .add_filter("ZIP archive", &["zip"])
             .blocking_save_file()
             .and_then(|path| path.as_path().map(PathBuf::from))
@@ -1085,7 +1157,7 @@ fn write_diagnostic_zip(
                 .is_ok()
             {
                 archive
-                    .start_file(format!("logs/dayplan-{index}.log"), options)
+                    .start_file(format!("logs/delve-planner-{index}.log"), options)
                     .map_err(|_| {
                         CommandError::internal("The diagnostic archive could not be written.")
                     })?;
@@ -1102,24 +1174,25 @@ fn write_diagnostic_zip(
     Ok(())
 }
 
-/// Whether a file in the log directory is one of DayPlan's logs. The match ignores case because a
-/// log keeps the case it was first created with: installs that ran earlier builds have
-/// `DayPlan.log`, while newer ones write `dayplan.log` and its dated rotations.
-fn is_dayplan_log(file_name: &str) -> bool {
+/// Whether a file in the log directory is one of Delve Planner's logs, which keep the app's former
+/// name. The match ignores case because a log keeps the case it was first created with: installs
+/// that ran earlier builds have `DayPlan.log`, while newer ones write `dayplan.log` and its dated
+/// rotations.
+fn is_app_log(file_name: &str) -> bool {
     let name = file_name.to_ascii_lowercase();
     name.starts_with("dayplan") && name.ends_with(".log")
 }
 
-/// DayPlan's newest log files, newest first. Ordered by modification time rather than name: the
-/// active `dayplan.log` sorts before its dated rotations by name, so a name order would leave out
-/// the latest messages once five rotations exist.
+/// Delve Planner's newest log files, newest first. Ordered by modification time rather than
+/// name: the active `dayplan.log` sorts before its dated rotations by name, so a name order would
+/// leave out the latest messages once five rotations exist.
 fn newest_logs(directory: &Path, count: usize) -> Vec<PathBuf> {
     let mut logs = fs::read_dir(directory)
         .ok()
         .into_iter()
         .flatten()
         .filter_map(Result::ok)
-        .filter(|entry| is_dayplan_log(&entry.file_name().to_string_lossy()))
+        .filter(|entry| is_app_log(&entry.file_name().to_string_lossy()))
         .map(|entry| {
             let modified = entry.metadata().and_then(|metadata| metadata.modified());
             (modified.ok(), entry.path())
@@ -1129,6 +1202,9 @@ fn newest_logs(directory: &Path, count: usize) -> Vec<PathBuf> {
     logs.into_iter().take(count).map(|(_, path)| path).collect()
 }
 
+/// How many coming days the planner sees spare time for when it's asked to pick one.
+const PLANNING_FACT_DAYS: u32 = 14;
+
 #[tauri::command]
 async fn propose_schedule_changes(
     state: State<'_, AppState>,
@@ -1136,6 +1212,8 @@ async fn propose_schedule_changes(
     day: String,
     time_zone: String,
     active_plan_id: Option<String>,
+    // JavaScript's numbering, Sunday = 0; weeks start on Monday when it's left out.
+    week_starts_on: Option<u8>,
 ) -> Result<PlannerResponse, CommandError> {
     state
         .ollama
@@ -1144,7 +1222,7 @@ async fn propose_schedule_changes(
         .map_err(CommandError::from)?;
     state.ollama.note_used();
     let referenced_ids = state.agent.referenced_ids();
-    let candidates = with_database(&state, |database| {
+    let mut candidates = with_database(&state, |database| {
         database.planner_candidates(&CandidateRequest {
             command: &command,
             selected_day: &day,
@@ -1153,6 +1231,10 @@ async fn propose_schedule_changes(
             active_plan_id: active_plan_id.as_deref(),
         })
     })?;
+    if agent::asks_to_choose(&command) {
+        // Capacity trouble leaves the planner without spare-time facts rather than failing.
+        candidates.planning = planning_facts(&state, &day, &time_zone).ok();
+    }
     state
         .agent
         .propose(PlannerRequest {
@@ -1161,9 +1243,41 @@ async fn propose_schedule_changes(
             time_zone: &time_zone,
             active_plan_id: active_plan_id.as_deref(),
             candidates: &candidates,
+            week_start: agent::weekday_from_js(week_starts_on.unwrap_or(1)),
         })
         .await
         .map_err(CommandError::from)
+}
+
+/// Spare time on the coming days, as capacity works it out: working hours and the planning
+/// profile, less events, busy calendar time, and the estimates of work already planned.
+fn planning_facts(
+    state: &State<'_, AppState>,
+    start_day: &str,
+    time_zone: &str,
+) -> Result<PlanningFacts, CommandError> {
+    let range = DayRange::new(start_day, PLANNING_FACT_DAYS, time_zone)?;
+    let zone = parse_zone(time_zone)?;
+    let first_day = NaiveDate::parse_from_str(&range.first_day, "%Y-%m-%d")
+        .map_err(|_| AppError::Validation("Dates must use YYYY-MM-DD.".into()))?;
+    let (facts, profile) = with_database(state, |database| {
+        let facts = database.capacity_facts(&range.first_day, &range.end_day, time_zone, None)?;
+        Ok((facts, database.planning_profile()?))
+    })?;
+    let (busy, incomplete) = state
+        .calendars
+        .busy(&range)
+        .unwrap_or_else(|_| (Vec::new(), true));
+    let capacity = capacity::capacity(
+        first_day,
+        PLANNING_FACT_DAYS,
+        zone,
+        facts,
+        &busy,
+        incomplete,
+        &profile,
+    );
+    Ok(PlanningFacts::from_capacity(&capacity))
 }
 
 #[tauri::command]
@@ -1172,12 +1286,15 @@ fn apply_schedule_changes(
     proposal_id: String,
     // The handles of the suggestions the user accepted; leaving it out applies all of them.
     accepted: Option<Vec<String>>,
+    // Suggestions the user changed before applying; each keeps what it targets.
+    edits: Option<Vec<SuggestionEdit>>,
 ) -> Result<AppliedProposal, CommandError> {
     let proposal = state
         .agent
         .claim_pending(&proposal_id)
         .map_err(CommandError::from)?;
-    let result = accepted_operations(&proposal, accepted.as_deref())
+    let result = edited_proposal(&proposal, edits.as_deref().unwrap_or_default())
+        .and_then(|edited| accepted_operations(&edited, accepted.as_deref()))
         .map_err(CommandError::from)
         .and_then(|chosen| with_database(&state, |database| database.apply_proposal(&chosen)));
     // The proposal is spent either way: a review the user has answered is never shown again.
@@ -1284,20 +1401,92 @@ fn reminder_body(reminder: &DueReminder) -> String {
     format!("Starts {formatted}")
 }
 
+/// Brings the window forward, for the tray and the quick-capture shortcut.
+fn show_main_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
+
+/// Brings the window forward and asks it to open quick capture.
+fn open_quick_capture(app: &AppHandle) {
+    show_main_window(app);
+    let _ = app.emit(QUICK_CAPTURE, ());
+}
+
+/// The quick-capture shortcut saved on this computer, if one is switched on.
+#[tauri::command]
+fn get_quick_capture_shortcut(state: State<'_, AppState>) -> Result<Option<String>, CommandError> {
+    let path = state
+        .shortcuts
+        .lock()
+        .map_err(|_| CommandError::internal("Shortcut settings are unavailable."))?;
+    Ok(shortcut::load(&path).quick_capture)
+}
+
+/// Records, changes, or (with `None`) switches off the quick-capture shortcut. The new one is
+/// registered before anything is saved, so a combination another app already holds leaves the
+/// previous shortcut working.
+#[tauri::command]
+fn set_quick_capture_shortcut(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    shortcut: Option<String>,
+) -> Result<Option<String>, CommandError> {
+    let path = state
+        .shortcuts
+        .lock()
+        .map_err(|_| CommandError::internal("Shortcut settings are unavailable."))?;
+    let mut preferences = shortcut::load(&path);
+    let previous = preferences
+        .quick_capture
+        .as_deref()
+        .and_then(|saved| shortcut::parse(saved).ok());
+    let next = shortcut
+        .as_deref()
+        .map(shortcut::parse)
+        .transpose()
+        .map_err(CommandError::from)?;
+    if next.is_some() && next == previous {
+        return Ok(preferences.quick_capture);
+    }
+    let shortcuts = app.global_shortcut();
+    if let Some(previous) = previous {
+        let _ = shortcuts.unregister(previous);
+    }
+    if let Some(next) = next {
+        if shortcuts.register(next).is_err() {
+            if let Some(previous) = previous {
+                let _ = shortcuts.register(previous);
+            }
+            return Err(AppError::Validation(
+                "Another app or the system already uses that shortcut. Try a different one.".into(),
+            )
+            .into());
+        }
+    }
+    preferences.quick_capture = next.map(|next| next.into_string());
+    shortcut::save(&path, &preferences).map_err(CommandError::from)?;
+    tauri_plugin_log::log::info!(
+        "quick_capture_shortcut enabled={}",
+        preferences.quick_capture.is_some()
+    );
+    Ok(preferences.quick_capture)
+}
+
 fn install_tray(app: &tauri::App) -> tauri::Result<()> {
-    let show = MenuItem::with_id(app, "show", "Show DayPlan", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "Quit DayPlan", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show, &quit])?;
+    let show = MenuItem::with_id(app, "show", "Show Delve Planner", true, None::<&str>)?;
+    let capture = MenuItem::with_id(app, "capture", "Quick Capture…", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "Quit Delve Planner", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&show, &capture, &quit])?;
     let mut tray = TrayIconBuilder::new()
-        .tooltip("DayPlan — reminders stay active while this icon is running")
+        .tooltip("Delve Planner — reminders stay active while this icon is running")
         .menu(&menu)
         .on_menu_event(|app, event| match event.id.as_ref() {
-            "show" => {
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                }
-            }
+            "show" => show_main_window(app),
+            "capture" => open_quick_capture(app),
             "quit" => app.exit(0),
             _ => {}
         });
@@ -1313,27 +1502,38 @@ pub fn run() {
         .plugin(
             tauri_plugin_log::Builder::new()
                 // `new()` starts with stdout and a second, unfiltered log file named after the
-                // product. On case-insensitive disks that file is this one, so without clearing
-                // them every crate's messages would land here beside DayPlan's redacted ones.
+                // product. Clearing them keeps every other crate's messages out of the log folder,
+                // which holds only Delve Planner's redacted ones.
                 .clear_targets()
                 .level(tauri_plugin_log::log::LevelFilter::Info)
                 .max_file_size(512 * 1024)
                 .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepSome(5))
                 .target(
+                    // Keeps the app's former name, DayPlan, so existing logs keep rotating.
                     tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir {
                         file_name: Some("dayplan".into()),
                     })
-                    .filter(|metadata| metadata.target().starts_with("dayplan_desktop")),
+                    .filter(|metadata| metadata.target().starts_with("delve_planner_desktop")),
                 )
                 .build(),
         )
         .plugin(tauri_plugin_dialog::init())
+        .plugin(
+            // Delve Planner registers at most one global shortcut, so any press is quick capture.
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, _shortcut, event| {
+                    if event.state == ShortcutState::Pressed {
+                        open_quick_capture(app);
+                    }
+                })
+                .build(),
+        )
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_process::init())
         .plugin(
             tauri_plugin_updater::Builder::new()
-                .pubkey(option_env!("DAYPLAN_UPDATER_PUBKEY").unwrap_or(""))
+                .pubkey(option_env!("DELVE_PLANNER_UPDATER_PUBKEY").unwrap_or(""))
                 .build(),
         )
         .on_window_event(|window, event| {
@@ -1361,7 +1561,7 @@ pub fn run() {
                 .map_err(|error| error.to_string())?;
             let ollama = OllamaRuntimeManager::new(resource_directory, directory.clone())
                 .map_err(|error| error.to_string())?;
-            // Whichever model the user chose last, or the one DayPlan ships against.
+            // Whichever model the user chose last, or the one Delve Planner ships against.
             let model = ollama
                 .chosen_model()
                 .unwrap_or_else(|| agent::MODEL_NAME.to_string());
@@ -1372,12 +1572,26 @@ pub fn run() {
                 &app.package_info().version.to_string(),
             )
             .map_err(|error| error.to_string())?;
+            let shortcuts = shortcut::preferences_path(&directory);
+            // A saved shortcut another app has taken since stays saved but inactive; Settings
+            // shows it, and recording it again says why it can't be used.
+            if let Some(saved) = shortcut::load(&shortcuts)
+                .quick_capture
+                .as_deref()
+                .and_then(|saved| shortcut::parse(saved).ok())
+            {
+                if app.global_shortcut().register(saved).is_err() {
+                    tauri_plugin_log::log::warn!("quick_capture_shortcut_unavailable");
+                }
+            }
             app.manage(AppState {
+                // Keeps the app's former name, DayPlan, so existing installs open their data.
                 database: Mutex::new(DatabaseRuntime::new(directory.join("dayplan.sqlite3"))),
                 calendars,
                 agent,
                 ollama,
                 pending_import: Mutex::new(None),
+                shortcuts: Mutex::new(shortcuts),
             });
             tauri_plugin_log::log::info!("app_started");
             install_tray(app)?;
@@ -1403,6 +1617,12 @@ pub fn run() {
             create_plan,
             update_plan,
             delete_plan,
+            create_plan_from_template,
+            list_plan_templates,
+            duplicate_plan,
+            open_plan_link,
+            get_quick_capture_shortcut,
+            set_quick_capture_shortcut,
             create_milestone,
             update_milestone,
             delete_milestone,
@@ -1413,6 +1633,8 @@ pub fn run() {
             create_task,
             update_task,
             delete_task,
+            skip_task_occurrence,
+            list_open_task_references,
             list_inbox_items,
             create_inbox_item,
             update_inbox_item,
@@ -1471,7 +1693,7 @@ pub fn run() {
             clear_planner_context,
         ])
         .build(tauri::generate_context!())
-        .expect("error while running DayPlan desktop")
+        .expect("error while running Delve Planner desktop")
         .run(|handle, event| {
             if matches!(event, tauri::RunEvent::Exit) {
                 if let Some(state) = handle.try_state::<AppState>() {
@@ -1495,7 +1717,7 @@ async fn runtime_idle_worker(app: tauri::AppHandle) {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_dayplan_log, newest_logs};
+    use super::{is_app_log, newest_logs};
     use std::fs::File;
     use std::time::{Duration, SystemTime};
 
@@ -1506,14 +1728,14 @@ mod tests {
             "DayPlan.log",
             "dayplan_2026-09-17_20-24-03.log",
         ] {
-            assert!(is_dayplan_log(name), "{name} should be collected");
+            assert!(is_app_log(name), "{name} should be collected");
         }
         for name in [
             "dayplan.sqlite3",
             "other.log",
             "dayplan_2026-09-17_20-24-03.log.bak",
         ] {
-            assert!(!is_dayplan_log(name), "{name} should be skipped");
+            assert!(!is_app_log(name), "{name} should be skipped");
         }
     }
 

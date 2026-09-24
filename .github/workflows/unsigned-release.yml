@@ -50,28 +50,28 @@ jobs:
       - name: Build ad-hoc signed universal app
         run: npm run tauri build -- --target universal-apple-darwin --bundles app --config src-tauri/tauri.unsigned.conf.json
         env:
-          DAYPLAN_GOOGLE_CLIENT_ID: ${{ vars.DAYPLAN_GOOGLE_CLIENT_ID }}
-          DAYPLAN_GOOGLE_CLIENT_SECRET: ${{ secrets.DAYPLAN_GOOGLE_CLIENT_SECRET }}
-          DAYPLAN_MICROSOFT_CLIENT_ID: ${{ vars.DAYPLAN_MICROSOFT_CLIENT_ID }}
+          DELVE_PLANNER_GOOGLE_CLIENT_ID: ${{ vars.DELVE_PLANNER_GOOGLE_CLIENT_ID }}
+          DELVE_PLANNER_GOOGLE_CLIENT_SECRET: ${{ secrets.DELVE_PLANNER_GOOGLE_CLIENT_SECRET }}
+          DELVE_PLANNER_MICROSOFT_CLIENT_ID: ${{ vars.DELVE_PLANNER_MICROSOFT_CLIENT_ID }}
       - name: Package DMG
         env:
           VERSION: ${{ needs.validate-tag.outputs.version }}
         shell: bash
         run: |
-          app=src-tauri/target/universal-apple-darwin/release/bundle/macos/DayPlan.app
+          app="src-tauri/target/universal-apple-darwin/release/bundle/macos/Delve Planner.app"
           codesign --verify --deep --strict --verbose=2 "$app"
           signature=$(codesign --display --verbose=2 "$app" 2>&1)
           grep -q "Signature=adhoc" <<< "$signature"
-          architectures=$(lipo -archs "$app/Contents/MacOS/dayplan-desktop")
+          architectures=$(lipo -archs "$app/Contents/MacOS/delve-planner-desktop")
           grep -q arm64 <<< "$architectures"
           grep -q x86_64 <<< "$architectures"
           root=$(mktemp -d)
-          ditto "$app" "$root/DayPlan.app"
+          ditto "$app" "$root/Delve Planner.app"
           ln -s /Applications "$root/Applications"
           mkdir -p release-assets
-          dmg="release-assets/DayPlan_${VERSION}_universal.dmg"
+          dmg="release-assets/Delve-Planner_${VERSION}_universal.dmg"
           for attempt in 1 2 3; do
-            hdiutil create -volname DayPlan -srcfolder "$root" -ov -format UDZO "$dmg" && break
+            hdiutil create -volname "Delve Planner" -srcfolder "$root" -ov -format UDZO "$dmg" && break
             test "$attempt" -lt 3
             sleep 10
           done
@@ -99,16 +99,17 @@ jobs:
         run: scripts/fetch-ollama-runtime.ps1
       - run: npm run tauri build -- --bundles nsis --config src-tauri/tauri.unsigned.conf.json
         env:
-          DAYPLAN_GOOGLE_CLIENT_ID: ${{ vars.DAYPLAN_GOOGLE_CLIENT_ID }}
-          DAYPLAN_GOOGLE_CLIENT_SECRET: ${{ secrets.DAYPLAN_GOOGLE_CLIENT_SECRET }}
-          DAYPLAN_MICROSOFT_CLIENT_ID: ${{ vars.DAYPLAN_MICROSOFT_CLIENT_ID }}
+          DELVE_PLANNER_GOOGLE_CLIENT_ID: ${{ vars.DELVE_PLANNER_GOOGLE_CLIENT_ID }}
+          DELVE_PLANNER_GOOGLE_CLIENT_SECRET: ${{ secrets.DELVE_PLANNER_GOOGLE_CLIENT_SECRET }}
+          DELVE_PLANNER_MICROSOFT_CLIENT_ID: ${{ vars.DELVE_PLANNER_MICROSOFT_CLIENT_ID }}
       - name: Stage installer
         shell: pwsh
         run: |
           $installer = Get-ChildItem src-tauri/target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
           if (-not $installer) { throw "The NSIS installer was not produced" }
           New-Item -ItemType Directory -Force release-assets | Out-Null
-          Copy-Item $installer.FullName release-assets/
+          # GitHub turns spaces in asset names into dots; a hyphen keeps the name the notes give.
+          Copy-Item $installer.FullName "release-assets/$($installer.Name -replace ' ', '-')"
       - uses: actions/upload-artifact@v4
         with:
           name: unsigned-windows
@@ -145,10 +146,10 @@ jobs:
 
           ## Install
 
-          These installers are not code-signed or notarized yet, so your operating system asks for confirmation the first time DayPlan opens.
+          These installers are not code-signed or notarized yet, so your operating system asks for confirmation the first time Delve Planner opens.
 
-          - **macOS 13 or later (Apple silicon and Intel):** open \`DayPlan_${VERSION}_universal.dmg\` and drag DayPlan to Applications. If macOS says it can't verify DayPlan, open **System Settings → Privacy & Security** and choose **Open Anyway**.
-          - **Windows 10 22H2 or Windows 11 (x64):** run \`DayPlan_${VERSION}_x64-setup.exe\`. If SmartScreen appears, choose **More info → Run anyway**.
+          - **macOS 13 or later (Apple silicon and Intel):** open \`Delve-Planner_${VERSION}_universal.dmg\` and drag Delve Planner to Applications. If macOS says it can't verify Delve Planner, open **System Settings → Privacy & Security** and choose **Open Anyway**.
+          - **Windows 10 22H2 or Windows 11 (x64):** run \`Delve-Planner_${VERSION}_x64-setup.exe\`. If SmartScreen appears, choose **More info → Run anyway**.
 
           Compare downloads with \`SHA256SUMS.txt\`. The local model (qwen3:8b, about 5.2 GB) downloads only after you approve it during onboarding. **Check for updates** doesn't work in unsigned builds, so install newer versions from the Releases page.
 

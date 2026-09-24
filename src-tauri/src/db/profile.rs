@@ -1,5 +1,5 @@
-//! What DayPlan knows about how the user plans: the profile they set themselves, and the local
-//! history observations are computed from. Both stay on the device, neither is exported, and
+//! What Delve Planner knows about how the user plans: the profile they set themselves, and the
+//! local history observations are computed from. Both stay on the device, neither is exported, and
 //! everything here can be turned off or cleared.
 
 use super::{now, validate_revision, PlannerDatabase};
@@ -7,9 +7,10 @@ use crate::error::{AppError, AppResult};
 use crate::model::{
     DayPreference, Observation, ObservationKind, PlanningProfile, UpdatePlanningProfileInput,
 };
-use chrono::{DateTime, Datelike, NaiveDate, Timelike, Utc};
+use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, Timelike, Utc};
 use chrono_tz::Tz;
-use rusqlite::{params, Connection, Row};
+use rusqlite::{params, Connection, OptionalExtension, Row};
+use std::collections::HashMap;
 
 /// The longest a single stretch of planned work can be, matching a time block's limit.
 const MAX_FOCUS_MINUTES: i64 = 1440;
@@ -194,8 +195,8 @@ pub(super) fn ensure_profile_schema(connection: &Connection) -> AppResult<()> {
 }
 
 impl PlannerDatabase {
-    /// What DayPlan has noticed, computed fresh from local records each time it is asked. Nothing
-    /// is stored, so deleting the data behind an observation makes it go away on its own.
+    /// What Delve Planner has noticed, computed fresh from local records each time it is asked.
+    /// Nothing is stored, so deleting the data behind an observation makes it go away on its own.
     pub fn observations(&self) -> AppResult<Vec<Observation>> {
         let muted = self.planning_profile()?.muted_observations;
         let wanted = |kind: ObservationKind| !muted.contains(&kind);
@@ -211,6 +212,12 @@ impl PlannerDatabase {
         }
         if wanted(ObservationKind::DeferredDays) {
             found.extend(self.deferred_days()?);
+        }
+        if wanted(ObservationKind::RepeatedlyMoved) {
+            found.extend(self.repeatedly_moved()?);
+        }
+        if wanted(ObservationKind::SlippingPlan) {
+            found.extend(self.slipping_plan()?);
         }
         Ok(found)
     }
@@ -288,19 +295,33 @@ impl PlannerDatabase {
         }))
     }
 
-    /// How much work a day usually carries, from the days that had any blocked at all.
+    /// How much work a day usually carries, from the days that had any blocked at all. A block
+    /// counts on the local day it starts, in the zone it was made in: evening work belongs to
+    /// that evening, not to the next day in UTC.
     fn typical_daily_load(&self) -> AppResult<Option<Observation>> {
-        let (days, total) = self.connection.query_row(
-            "SELECT COUNT(*), COALESCE(SUM(minutes), 0) FROM (
-                 SELECT substr(start_at_utc, 1, 10) AS day, SUM(duration_minutes) AS minutes
-                 FROM task_blocks GROUP BY day)",
-            [],
-            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
-        )?;
+        let mut statement = self
+            .connection
+            .prepare("SELECT start_at_utc, time_zone, duration_minutes FROM task_blocks")?;
+        let blocks = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        let mut minutes_by_day: HashMap<NaiveDate, i64> = HashMap::new();
+        for (start, zone, minutes) in &blocks {
+            if let Some(local) = local_time(start, zone) {
+                *minutes_by_day.entry(local.date()).or_default() += minutes;
+            }
+        }
+        let days = minutes_by_day.len() as i64;
         if days < MIN_SAMPLE {
             return Ok(None);
         }
-        let average = total / days;
+        let average = minutes_by_day.values().sum::<i64>() / days;
         Ok(Some(Observation {
             kind: ObservationKind::TypicalDailyLoad,
             summary: format!(
@@ -351,6 +372,113 @@ impl PlannerDatabase {
         }))
     }
 
+    /// How many times work has been carried off a day it was on, the floor every deferral
+    /// observation starts from.
+    fn carried_forward_count(&self) -> AppResult<i64> {
+        Ok(self.connection.query_row(
+            "SELECT COUNT(*) FROM task_moves WHERE kind = 'carried_forward'",
+            [],
+            |row| row.get(0),
+        )?)
+    }
+
+    /// Open work that keeps being carried off its day, which usually means it is too big,
+    /// waiting on something, or no longer wanted. Names the task moved most.
+    fn repeatedly_moved(&self) -> AppResult<Option<Observation>> {
+        let total = self.carried_forward_count()?;
+        if total < MIN_SAMPLE {
+            return Ok(None);
+        }
+        let mut statement = self.connection.prepare(
+            "SELECT tasks.title, COUNT(*) AS moves
+             FROM task_moves JOIN tasks ON tasks.id = task_moves.task_id
+             WHERE task_moves.kind = 'carried_forward' AND tasks.status <> 'done'
+             GROUP BY tasks.id
+             HAVING COUNT(*) >= ?1
+             ORDER BY moves DESC, MIN(task_moves.moved_at) ASC",
+        )?;
+        let repeated = statement
+            .query_map(params![REPEATED_MOVES], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        let Some((title, most)) = repeated.first() else {
+            return Ok(None);
+        };
+        let their_moves: i64 = repeated.iter().map(|(_, moves)| moves).sum();
+        let summary = if repeated.len() == 1 {
+            format!("“{title}” has moved off its day {most} times.")
+        } else {
+            format!(
+                "{} open tasks have each moved off their day at least {REPEATED_MOVES} times; “{title}” most, {most} times.",
+                repeated.len()
+            )
+        };
+        Ok(Some(Observation {
+            kind: ObservationKind::RepeatedlyMoved,
+            summary,
+            evidence: format!(
+                "{their_moves} of {total} carried-forward {}.",
+                plural(total, "move")
+            ),
+            sample: total,
+        }))
+    }
+
+    /// The plan whose work is carried off its day most, said only when one plan accounts for at
+    /// least half of it and there is scheduled work elsewhere it could be compared with.
+    fn slipping_plan(&self) -> AppResult<Option<Observation>> {
+        let total = self.carried_forward_count()?;
+        if total < MIN_SAMPLE {
+            return Ok(None);
+        }
+        let top = self
+            .connection
+            .query_row(
+                "SELECT plans.id, plans.title, COUNT(*) AS moves
+                 FROM task_moves
+                 JOIN tasks ON tasks.id = task_moves.task_id
+                 JOIN plans ON plans.id = tasks.plan_id
+                 WHERE task_moves.kind = 'carried_forward' AND plans.archived = 0
+                 GROUP BY plans.id
+                 ORDER BY moves DESC, plans.title ASC
+                 LIMIT 1",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(2)?,
+                    ))
+                },
+            )
+            .optional()?;
+        let Some((plan_id, title, moves)) = top else {
+            return Ok(None);
+        };
+        // A plan that holds every scheduled task would top this by default, which says nothing.
+        let other_work: i64 = self.connection.query_row(
+            "SELECT COUNT(*) FROM tasks
+             WHERE scheduled_day IS NOT NULL AND (plan_id IS NULL OR plan_id <> ?1)",
+            params![plan_id],
+            |row| row.get(0),
+        )?;
+        if moves < REPEATED_MOVES || moves * 2 < total || other_work == 0 {
+            return Ok(None);
+        }
+        Ok(Some(Observation {
+            kind: ObservationKind::SlippingPlan,
+            summary: format!(
+                "Work in {title} moves off its day more often than work anywhere else."
+            ),
+            evidence: format!(
+                "{moves} of {total} carried-forward {}.",
+                plural(total, "move")
+            ),
+            sample: total,
+        }))
+    }
+
     /// Forgets the history observations are drawn from. The observations go with it.
     pub fn clear_planning_history(&mut self) -> AppResult<()> {
         self.connection.execute("DELETE FROM task_moves", [])?;
@@ -358,11 +486,16 @@ impl PlannerDatabase {
     }
 }
 
-/// Minutes after local midnight for an instant, in the zone the block was made in.
-fn local_minute_of_day(start_at_utc: &str, time_zone: &str) -> Option<i64> {
+/// An instant as local time in the zone the block was made in.
+fn local_time(start_at_utc: &str, time_zone: &str) -> Option<NaiveDateTime> {
     let instant: DateTime<Utc> = start_at_utc.parse().ok()?;
     let zone: Tz = time_zone.parse().ok()?;
-    let local = instant.with_timezone(&zone).time();
+    Some(instant.with_timezone(&zone).naive_local())
+}
+
+/// Minutes after local midnight for an instant, in the zone the block was made in.
+fn local_minute_of_day(start_at_utc: &str, time_zone: &str) -> Option<i64> {
+    let local = local_time(start_at_utc, time_zone)?.time();
     Some(i64::from(local.hour()) * 60 + i64::from(local.minute()))
 }
 
@@ -373,8 +506,11 @@ fn weekday_index(day: &str) -> Option<usize> {
         .map(|day| day.weekday().num_days_from_monday() as usize)
 }
 
-/// Below this, a pattern is a coincidence and DayPlan says nothing.
+/// Below this, a pattern is a coincidence and Delve Planner says nothing.
 const MIN_SAMPLE: i64 = 5;
+
+/// How many times a task has to be carried off its day before it counts as repeatedly moved.
+const REPEATED_MOVES: i64 = 3;
 
 const WEEKDAYS: [&str; 7] = [
     "Monday",
@@ -412,7 +548,8 @@ fn hours(minutes: i64) -> String {
 mod tests {
     use super::*;
     use crate::model::{
-        CreateTaskBlockInput, CreateTaskInput, TaskPriority, TaskStatus, UpdateTaskInput,
+        CreatePlanInput, CreateTaskBlockInput, CreateTaskInput, DayChange, PlanStatus, Task,
+        TaskMove, TaskPriority, TaskStatus, UpdateTaskInput,
     };
     use tempfile::tempdir;
 
@@ -514,6 +651,9 @@ mod tests {
                     estimated_minutes: Some(60),
                     status: TaskStatus::Todo,
                     priority: TaskPriority::Normal,
+                    checklist: Vec::new(),
+                    recurrence: None,
+                    waiting_on: Vec::new(),
                 })
                 .unwrap();
             database
@@ -540,6 +680,9 @@ mod tests {
                     estimated_minutes: task.estimated_minutes,
                     status: TaskStatus::Done,
                     priority: TaskPriority::Normal,
+                    checklist: Vec::new(),
+                    recurrence: None,
+                    waiting_on: Vec::new(),
                 })
                 .unwrap();
             if index < 3 {
@@ -577,5 +720,179 @@ mod tests {
             .unwrap()
             .iter()
             .any(|observation| observation.kind == ObservationKind::EstimateAccuracy));
+    }
+
+    fn task_on(database: &mut PlannerDatabase, title: &str, plan_id: Option<&str>) -> Task {
+        database
+            .create_task(CreateTaskInput {
+                title: title.into(),
+                description: String::new(),
+                plan_id: plan_id.map(Into::into),
+                milestone_id: None,
+                workstream_id: None,
+                owner_id: None,
+                due_date: None,
+                scheduled_day: Some("2026-09-14".into()),
+                planned_week: None,
+                estimated_minutes: None,
+                status: TaskStatus::Todo,
+                priority: TaskPriority::Normal,
+                checklist: Vec::new(),
+                recurrence: None,
+                waiting_on: Vec::new(),
+            })
+            .unwrap()
+    }
+
+    /// Carries a task forward one day at a time, as Today's carry-forward does.
+    fn carry(database: &mut PlannerDatabase, task: &Task, times: usize) -> Task {
+        let mut current = task.clone();
+        for _ in 0..times {
+            let day = crate::db::offset_day(current.scheduled_day.as_deref().unwrap(), 1).unwrap();
+            current = database
+                .move_tasks(vec![TaskMove {
+                    id: current.id.clone(),
+                    revision: current.revision,
+                    scheduled_day: DayChange::Set { day },
+                    planned_week: DayChange::Unchanged,
+                    status: None,
+                }])
+                .unwrap()
+                .remove(0);
+        }
+        current
+    }
+
+    fn observation(database: &PlannerDatabase, kind: ObservationKind) -> Option<Observation> {
+        database
+            .observations()
+            .unwrap()
+            .into_iter()
+            .find(|observation| observation.kind == kind)
+    }
+
+    #[test]
+    fn a_day_of_blocked_work_is_the_local_day_it_started_on() {
+        let mut database = database();
+        let task = task_on(&mut database, "Write", None);
+        // Five New York days, each with an hour at 10:00 and an hour at 21:00, which is already
+        // the next day in UTC. Counted by UTC date this would be six days averaging 1 h 40 m.
+        for day in 14..19 {
+            for start in [
+                format!("2026-09-{day}T14:00:00.000Z"),
+                format!("2026-09-{}T01:00:00.000Z", day + 1),
+            ] {
+                database
+                    .create_task_block(CreateTaskBlockInput {
+                        task_id: task.id.clone(),
+                        start_at_utc: start,
+                        time_zone: "America/New_York".into(),
+                        duration_minutes: 60,
+                    })
+                    .unwrap();
+            }
+        }
+        let load = observation(&database, ObservationKind::TypicalDailyLoad).expect("a load");
+        assert!(load.summary.contains("about 2 h."), "{}", load.summary);
+        assert_eq!(load.evidence, "5 days with blocked time.");
+    }
+
+    #[test]
+    fn work_that_keeps_moving_is_named_once_there_is_enough_history() {
+        let mut database = database();
+        let plan = database
+            .create_plan(CreatePlanInput {
+                title: "Wedding".into(),
+                description: String::new(),
+                status: PlanStatus::Active,
+                start_date: None,
+                target_date: None,
+                color: None,
+                links: Vec::new(),
+            })
+            .unwrap();
+        let venue = task_on(&mut database, "Book the venue", Some(&plan.id));
+        let cake = task_on(&mut database, "Taste cakes", Some(&plan.id));
+        let errand = task_on(&mut database, "Return library books", None);
+
+        carry(&mut database, &venue, 2);
+        carry(&mut database, &errand, 1);
+        assert!(
+            observation(&database, ObservationKind::RepeatedlyMoved).is_none(),
+            "three moves is under the floor"
+        );
+
+        let venue = task_by_title(&database, "Book the venue");
+        carry(&mut database, &venue, 2);
+        let moved = observation(&database, ObservationKind::RepeatedlyMoved).expect("moved work");
+        assert_eq!(
+            moved.summary,
+            "“Book the venue” has moved off its day 4 times."
+        );
+        assert_eq!(moved.evidence, "4 of 5 carried-forward moves.");
+
+        // Wedding holds four of the five moves, and there is other scheduled work to compare.
+        let slipping = observation(&database, ObservationKind::SlippingPlan).expect("a plan");
+        assert_eq!(
+            slipping.summary,
+            "Work in Wedding moves off its day more often than work anywhere else."
+        );
+        assert_eq!(slipping.evidence, "4 of 5 carried-forward moves.");
+
+        // A second task crossing the line changes the wording; finished work drops out.
+        carry(&mut database, &cake, 3);
+        let moved = observation(&database, ObservationKind::RepeatedlyMoved).unwrap();
+        assert!(
+            moved
+                .summary
+                .starts_with("2 open tasks have each moved off their day at least 3 times"),
+            "{}",
+            moved.summary
+        );
+        let venue = task_by_title(&database, "Book the venue");
+        database
+            .update_task(UpdateTaskInput {
+                status: TaskStatus::Done,
+                ..UpdateTaskInput::keeping(&venue)
+            })
+            .unwrap();
+        let moved = observation(&database, ObservationKind::RepeatedlyMoved).unwrap();
+        assert_eq!(
+            moved.summary,
+            "“Taste cakes” has moved off its day 3 times."
+        );
+    }
+
+    #[test]
+    fn a_plan_holding_all_the_scheduled_work_is_not_called_out() {
+        let mut database = database();
+        let plan = database
+            .create_plan(CreatePlanInput {
+                title: "Move".into(),
+                description: String::new(),
+                status: PlanStatus::Active,
+                start_date: None,
+                target_date: None,
+                color: None,
+                links: Vec::new(),
+            })
+            .unwrap();
+        let task = task_on(&mut database, "Pack the kitchen", Some(&plan.id));
+        carry(&mut database, &task, 5);
+        assert!(observation(&database, ObservationKind::RepeatedlyMoved).is_some());
+        assert!(
+            observation(&database, ObservationKind::SlippingPlan).is_none(),
+            "with nothing scheduled elsewhere there is nothing to compare"
+        );
+    }
+
+    fn task_by_title(database: &PlannerDatabase, title: &str) -> Task {
+        database
+            .planning_board("2026-09-14")
+            .unwrap()
+            .tasks
+            .into_iter()
+            .find(|task| task.title == title)
+            .unwrap()
     }
 }

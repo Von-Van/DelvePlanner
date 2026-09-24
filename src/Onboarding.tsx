@@ -24,6 +24,12 @@ export function Onboarding({
     "unknown" | "granted" | "denied"
   >("unknown");
   const dialogRef = useRef<HTMLElement>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  // Each new step starts at its heading, so keyboard and screen reader users aren't left on the
+  // button that just disappeared.
+  useEffect(() => {
+    if (step > 0) headingRef.current?.focus();
+  }, [step]);
   useEffect(() => {
     dialogRef.current?.focus();
     void isPermissionGranted().then((value) =>
@@ -32,7 +38,7 @@ export function Onboarding({
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Tab" || !dialogRef.current) return;
       const items = dialogRef.current.querySelectorAll<HTMLElement>(
-        'button:not(:disabled), [tabindex="0"]',
+        'button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex="0"]',
       );
       if (!items.length) return;
       const first = items[0];
@@ -48,11 +54,16 @@ export function Onboarding({
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, []);
-  // A model DayPlan can use is what "ready" means now; the runtime itself only runs during a
+  // A model Delve Planner can use is what "ready" means now; the runtime itself only runs during a
   // request, so an idle runtime is the healthy state rather than something to fix.
   const ready = status?.modelInstalled ?? false;
   const finish = () => {
-    localStorage.setItem("dayplan-onboarding", "complete");
+    try {
+      // The key keeps the app's former name, DayPlan, which App reads on launch.
+      localStorage.setItem("dayplan-onboarding", "complete");
+    } catch {
+      // Without storage the welcome returns next launch; Delve Planner still opens now.
+    }
     onComplete();
   };
   async function enableNotifications() {
@@ -69,7 +80,9 @@ export function Onboarding({
         01
       </span>
       <p>STEP 1 OF 3</p>
-      <h2>Your day stays on this device.</h2>
+      <h2 ref={headingRef} tabIndex={-1}>
+        Your day stays on this device.
+      </h2>
       <div className="onboarding-copy">
         <Mark size={6} />
         <span>
@@ -89,16 +102,18 @@ export function Onboarding({
         02
       </span>
       <p>STEP 2 OF 3</p>
-      <h2>Your private AI runs inside DayPlan.</h2>
+      <h2 ref={headingRef} tabIndex={-1}>
+        Your private AI runs inside Delve Planner.
+      </h2>
       <div className={`setup-status ${ready ? "ready" : ""}`}>
         <span />
         {ready
-          ? "Ready. DayPlan starts the model only while it answers you."
-          : "Choose a local model, or download the one DayPlan is tested against."}
+          ? "Ready. Delve Planner starts the model only while it answers you."
+          : "Choose a local model, or download the one Delve Planner is tested against."}
       </div>
       <p className="onboarding-model-note">
-        The Ollama runtime is included. DayPlan uses models you already have,
-        and reads your Ollama folder without changing anything in it.
+        The Ollama runtime is included. Delve Planner uses models you already
+        have, and reads your Ollama folder without changing anything in it.
       </p>
       <ModelPicker
         status={status}
@@ -126,12 +141,14 @@ export function Onboarding({
         03
       </span>
       <p>STEP 3 OF 3</p>
-      <h2>Reminders are optional.</h2>
+      <h2 ref={headingRef} tabIndex={-1}>
+        Reminders are optional.
+      </h2>
       <div className="onboarding-copy">
         <Mark size={6} />
         <span>
-          DayPlan asks for OS permission only when you enable a reminder. The
-          app must remain running in the tray to deliver one.
+          Delve Planner asks for OS permission only when you enable a reminder.
+          The app must remain running in the tray to deliver one.
         </span>
       </div>
       {permission === "granted" ? (
@@ -148,7 +165,7 @@ export function Onboarding({
         </button>
       )}
       <button className="primary-button onboarding-next" onClick={finish}>
-        Open DayPlan <Glyph>→</Glyph>
+        Open Delve Planner <Glyph>→</Glyph>
       </button>
     </div>,
   ];
@@ -159,17 +176,17 @@ export function Onboarding({
         tabIndex={-1}
         role="dialog"
         aria-modal="true"
-        aria-label="Welcome to DayPlan"
+        aria-label="Welcome to Delve Planner"
         className="onboarding-card"
       >
         <div className="onboarding-brand">
           <span className="brand-mark" aria-hidden="true">
             <i />
           </span>
-          DAYPLAN
+          DELVE PLANNER
         </div>
         {panels[step]}
-        <div className="onboarding-dots" aria-label={`Step ${step + 1} of 3`}>
+        <div className="onboarding-dots" aria-hidden="true">
           {[0, 1, 2].map((index) => (
             <i key={index} className={index === step ? "active" : ""} />
           ))}

@@ -2,6 +2,7 @@ import type {
   DayChange,
   EstimateChange,
   Proposal,
+  ProposalChange,
   ProposalOperation,
   ProposalReference,
   RecordReference,
@@ -108,6 +109,10 @@ export function describeOperation(
     "id" in reference
       ? named(reference.id, "the selected milestone")
       : `“${reference.newTitle}” (new)`;
+  const workstreamName = (reference: RecordReference) =>
+    "id" in reference
+      ? named(reference.id, "the selected workstream")
+      : `“${reference.newTitle}” (new)`;
   const when = (startAtUtc: string) => dateTimeLabel(startAtUtc, timeZone);
   switch (operation.type) {
     case "create_event":
@@ -120,6 +125,7 @@ export function describeOperation(
           operation.reminderMinutesBefore !== null &&
             capitalize(reminderLabel(operation.reminderMinutesBefore)),
           operation.plan && `In ${planName(operation.plan)}`,
+          operation.fromInbox && "From your inbox",
         ]),
       };
     case "update_event":
@@ -164,6 +170,7 @@ export function describeOperation(
           operation.startDate && `Starts ${shortDate(operation.startDate)}`,
           operation.targetDate && `Target ${shortDate(operation.targetDate)}`,
           operation.description && "With a description",
+          operation.fromInbox && "From your inbox",
         ]),
       };
     case "update_plan":
@@ -213,12 +220,15 @@ export function describeOperation(
           operation.plan && `In ${planName(operation.plan)}`,
           operation.milestone &&
             `Milestone ${milestoneName(operation.milestone)}`,
+          operation.workstream &&
+            `Workstream ${workstreamName(operation.workstream)}`,
           operation.scheduledDay &&
             `Do on ${shortDate(operation.scheduledDay)}`,
           operation.dueDate && `Due ${shortDate(operation.dueDate)}`,
           operation.status !== "todo" && taskStatusLabels[operation.status],
           operation.priority !== "normal" &&
             `${taskPriorityLabels[operation.priority]} priority`,
+          operation.fromInbox && "From your inbox",
         ]),
       };
     case "update_task":
@@ -274,7 +284,121 @@ export function describeOperation(
         title: `Delete task ${named(operation.taskId, "the selected task")}`,
         details: [],
       };
+    case "create_workstream":
+      return {
+        tone: "create",
+        title: `Add workstream “${operation.name}”`,
+        details: [`In ${planName(operation.plan)}`],
+      };
+    case "set_task_workstream":
+      return {
+        tone: "move",
+        title: operation.workstream
+          ? `Put ${named(operation.taskId, "the selected task")} in ${workstreamName(operation.workstream)}`
+          : `Take ${named(operation.taskId, "the selected task")} out of its workstream`,
+        details: [],
+      };
   }
+}
+
+type CreatedKind = "plan" | "milestone" | "workstream";
+
+/** The new plan, milestone, or workstream a change creates, by its name. */
+function createdName(
+  change: ProposalChange,
+): { kind: CreatedKind; name: string } | null {
+  switch (change.type) {
+    case "create_plan":
+      return { kind: "plan", name: change.title };
+    case "create_milestone":
+      return { kind: "milestone", name: change.title };
+    case "create_workstream":
+      return { kind: "workstream", name: change.name };
+    default:
+      return null;
+  }
+}
+
+/** Titles match ignoring case and spacing, the way Rust resolves them. */
+function fold(title: string) {
+  return title.split(/\s+/).filter(Boolean).join(" ").toLowerCase();
+}
+
+type Rename = { kind: CreatedKind; before: string; after: string };
+
+function renamed(change: ProposalChange, renames: Rename[]): ProposalChange {
+  const rename = <R extends RecordReference | null>(
+    kind: CreatedKind,
+    reference: R,
+  ): R => {
+    if (!reference || "id" in reference) return reference;
+    const found = renames.find(
+      (candidate) =>
+        candidate.kind === kind &&
+        candidate.before === fold(reference.newTitle),
+    );
+    return (found ? { newTitle: found.after } : reference) as R;
+  };
+  switch (change.type) {
+    case "create_event":
+    case "set_event_plan":
+      return { ...change, plan: rename("plan", change.plan) };
+    case "create_milestone":
+    case "create_workstream":
+      return { ...change, plan: rename("plan", change.plan) };
+    case "create_task":
+      return {
+        ...change,
+        plan: rename("plan", change.plan),
+        milestone: rename("milestone", change.milestone),
+        workstream: rename("workstream", change.workstream),
+      };
+    case "set_task_plan":
+      return {
+        ...change,
+        plan: rename("plan", change.plan),
+        milestone: rename("milestone", change.milestone),
+      };
+    case "set_task_workstream":
+      return { ...change, workstream: rename("workstream", change.workstream) };
+    default:
+      return change;
+  }
+}
+
+/**
+ * The proposal as it will be applied: each edited suggestion in place of the planner's, with a
+ * renamed new plan, milestone, or workstream carried to the suggestions that refer to it, as Rust
+ * does when it applies the edits.
+ */
+export function withEdits<T extends Pick<Proposal, "operations">>(
+  proposal: T,
+  edits: ReadonlyMap<string, ProposalChange>,
+): T {
+  if (edits.size === 0) return proposal;
+  const renames: Rename[] = [];
+  const operations = proposal.operations.map((operation) => {
+    const change = edits.get(operation.id);
+    if (!change) return operation;
+    const before = createdName(operation.change);
+    const after = createdName(change);
+    if (before && after && fold(before.name) !== fold(after.name))
+      renames.push({
+        kind: before.kind,
+        before: fold(before.name),
+        after: after.name,
+      });
+    return { ...operation, change };
+  });
+  return {
+    ...proposal,
+    operations: renames.length
+      ? operations.map((operation) => ({
+          ...operation,
+          change: renamed(operation.change, renames),
+        }))
+      : operations,
+  };
 }
 
 export function proposalEnablesReminder(

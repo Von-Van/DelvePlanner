@@ -73,21 +73,11 @@ impl PlannerDatabase {
                 scheduled_day: task_move.scheduled_day.apply(current.scheduled_day.clone()),
                 planned_week: task_move.planned_week.apply(current.planned_week.clone()),
                 status: task_move.status.unwrap_or(current.status),
-                id: current.id,
-                revision: current.revision,
-                title: current.title,
-                description: current.description,
-                plan_id: current.plan_id,
-                milestone_id: current.milestone_id,
-                workstream_id: current.workstream_id,
-                owner_id: current.owner_id,
-                due_date: current.due_date,
-                estimated_minutes: current.estimated_minutes,
-                priority: current.priority,
+                ..UpdateTaskInput::keeping(&current)
             };
             // A task that leaves a day it was already on is what "carried forward" means, and it
-            // is the only thing DayPlan keeps a history of. It starts empty in v0.3.5, and What
-            // DayPlan Knows can clear it or switch the observation off.
+            // is the only thing Delve Planner keeps a history of. It starts empty in v0.3.5, and
+            // What Delve Planner Knows can clear it or switch the observation off.
             let from_day = current.scheduled_day.clone();
             let to_day = input.scheduled_day.clone();
             if from_day.is_some() && from_day != to_day {
@@ -146,6 +136,7 @@ mod tests {
                 start_date: None,
                 target_date: None,
                 color: None,
+                links: Vec::new(),
             })
             .unwrap()
     }
@@ -164,6 +155,9 @@ mod tests {
             estimated_minutes: None,
             status: TaskStatus::Todo,
             priority: TaskPriority::Normal,
+            checklist: Vec::new(),
+            recurrence: None,
+            waiting_on: Vec::new(),
         }
     }
 
@@ -304,6 +298,7 @@ mod tests {
                 target_date: None,
                 color: None,
                 archived: true,
+                links: Vec::new(),
             })
             .unwrap();
         for (plan_id, title, target_date) in [

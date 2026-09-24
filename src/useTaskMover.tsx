@@ -4,7 +4,13 @@ import { BlockEditor } from "./BlockEditor";
 import { offsetDay, weekdayShort, weekStartsOn } from "./date";
 import type { MenuItem } from "./Menu";
 import { EditorShell } from "./PlanEditor";
-import { canUnschedule, inWeek, MoveTarget, taskMove } from "./planning";
+import {
+  canUnschedule,
+  inWeek,
+  MoveTarget,
+  recurrenceLabel,
+  taskMove,
+} from "./planning";
 
 /**
  * Moves tasks between Plan, Week, and Today through one revision-checked batch, and owns the
@@ -33,6 +39,19 @@ export function useTaskMover({
       await api.moveTasks(
         tasks.map((task) => taskMove(task, target, weekStartsOn)),
       );
+      await onChanged();
+    } catch (cause) {
+      onError(messageFor(cause));
+    } finally {
+      setBusyIds(new Set());
+    }
+  }
+
+  /** Moves a repeating task's open occurrence to its next date without finishing it. */
+  async function skip(task: Task) {
+    setBusyIds(new Set([task.id]));
+    try {
+      await api.skipTaskOccurrence(task.id, task.revision);
       await onChanged();
     } catch (cause) {
       onError(messageFor(cause));
@@ -77,6 +96,7 @@ export function useTaskMover({
 
   return {
     move,
+    skip: (task: Task) => void skip(task),
     pickDay: (tasks: Task[]) => setPicking(tasks),
     /** Opens the time block dialog for a new block on `task`. */
     blockTime: (task: Task) => setBlocking({ task }),
@@ -90,8 +110,8 @@ export function useTaskMover({
 
 /**
  * The move menu for one task: onto today, tomorrow, or a picked day; into this or next week's
- * pool; back out of every week and day when its plan or due date keeps it visible; time reserved
- * for it; or done.
+ * pool; back out of every week and day when its plan or due date keeps it visible; on to its next
+ * date when it repeats; time reserved for it; or done.
  */
 export function taskMoveItems(
   task: Task,
@@ -101,12 +121,14 @@ export function taskMoveItems(
     move,
     pickDay,
     blockTime,
+    skip,
   }: {
     today: string;
     weekStart: string;
     move: (tasks: Task[], target: MoveTarget) => void;
     pickDay: (tasks: Task[]) => void;
     blockTime?: (task: Task) => void;
+    skip?: (task: Task) => void;
   },
 ): MenuItem[] {
   const tomorrow = offsetDay(today, 1);
@@ -145,6 +167,12 @@ export function taskMoveItems(
     });
   if (task.status !== "done") {
     items.push({ kind: "separator" });
+    if (skip && task.recurrence && task.scheduledDay)
+      items.push({
+        label: "Skip to next date",
+        hint: recurrenceLabel(task.recurrence),
+        onSelect: () => skip(task),
+      });
     if (blockTime)
       items.push({ label: "Block time…", onSelect: () => blockTime(task) });
     items.push({

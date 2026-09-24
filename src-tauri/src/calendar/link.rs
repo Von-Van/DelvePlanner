@@ -1,5 +1,5 @@
-//! Calendar links: which ones DayPlan accepts, and fetching an iCalendar feed within size, time,
-//! and redirect limits. Errors never carry the link, because the link is the secret.
+//! Calendar links: which ones Delve Planner accepts, and fetching an iCalendar feed within size,
+//! time, and redirect limits. Errors never carry the link, because the link is the secret.
 
 use super::ics::MAX_CALENDAR_BYTES;
 use crate::error::{AppError, AppResult};
@@ -34,7 +34,7 @@ impl CalendarLink {
         }
         if trimmed.chars().count() > MAX_CALENDAR_LINK_LENGTH {
             return Err(AppError::Validation(
-                "That link is longer than DayPlan can store.".into(),
+                "That link is longer than Delve Planner can store.".into(),
             ));
         }
         let Some((scheme, rest)) = trimmed.split_once("://") else {
@@ -67,7 +67,7 @@ impl CalendarLink {
 
 fn insecure_link() -> AppError {
     AppError::Validation(
-        "Use the calendar's https link. DayPlan doesn't fetch private calendar links over \
+        "Use the calendar's https link. Delve Planner doesn't fetch private calendar links over \
          unencrypted connections."
             .into(),
     )
@@ -81,7 +81,7 @@ fn unsupported_link() -> AppError {
 
 pub fn http_client(app_version: &str) -> AppResult<Client> {
     Client::builder()
-        .user_agent(format!("DayPlan/{app_version}"))
+        .user_agent(format!("DelvePlanner/{app_version}"))
         .connect_timeout(Duration::from_secs(15))
         .timeout(Duration::from_secs(60))
         .redirect(redirect::Policy::custom(|attempt| {
@@ -94,12 +94,12 @@ pub fn http_client(app_version: &str) -> AppResult<Client> {
             }
         }))
         .build()
-        .map_err(|_| AppError::Internal("DayPlan couldn't prepare calendar requests.".into()))
+        .map_err(|_| AppError::Internal("Delve Planner couldn't prepare calendar requests.".into()))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Fetched {
-    /// The server confirmed the copy DayPlan already has.
+    /// The server confirmed the copy Delve Planner already has.
     Unchanged,
     Content {
         body: String,
@@ -274,7 +274,7 @@ mod tests {
         assert!(requests[1]
             .to_ascii_lowercase()
             .contains("if-none-match: \"v1\""));
-        assert!(requests[0].contains("DayPlan/0.3.0"));
+        assert!(requests[0].contains("DelvePlanner/0.3.0"));
     }
 
     #[tokio::test]

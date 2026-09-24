@@ -2,11 +2,13 @@
 //! schema Ollama compiles into a decoding grammar so every reply has the expected shape.
 
 use super::draft::DraftOperation;
+use super::grounding::asks_to_choose;
 use super::{Scope, SessionOutcome, SessionTurn};
 use crate::model::{
-    MilestoneStatus, PlanStatus, PlannerCandidates, TaskPriority, TaskStatus, MAX_OPERATIONS,
+    DayFacts, MilestoneStatus, PlanStatus, PlannerCandidates, TaskPriority, TaskStatus,
+    MAX_OPERATIONS,
 };
-use chrono::{DateTime, Duration, NaiveDate, Utc};
+use chrono::{DateTime, Duration, NaiveDate, Utc, Weekday};
 use chrono_tz::Tz;
 use serde::ser::{SerializeMap, SerializeSeq};
 use serde::{Serialize, Serializer};
@@ -16,14 +18,14 @@ const CALENDAR_DAYS: i64 = 21;
 const DAY_PATTERN: &str = "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$";
 const LOCAL_TIME_PATTERN: &str =
     "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]$";
-// Grammar bounds are looser than DayPlan's limits so a long value is caught by validation and
+// Grammar bounds are looser than Delve Planner's limits so a long value is caught by validation and
 // answered with a question instead of being silently truncated mid-word.
 const TITLE_GRAMMAR_LIMIT: u64 = 160;
 const NOTES_GRAMMAR_LIMIT: u64 = 900;
 const DESCRIPTION_GRAMMAR_LIMIT: u64 = 1_000;
 const TEXT_GRAMMAR_LIMIT: u64 = 280;
 
-const RULES: &str = r#"You are DayPlan's local planning assistant. You turn one request into JSON: a proposal that the user reviews before anything changes, or one clarifying question.
+const RULES: &str = r#"You are Delve Planner's local planning assistant. You turn one request into JSON: a proposal that the user reviews before anything changes, or one clarifying question.
 
 Reply with exactly one JSON object:
 {"kind":"proposal","summary":"<one short sentence>","operations":[...]}
@@ -66,7 +68,7 @@ create_milestone: type, plan, title, [description], [targetDate]
 update_milestone: type, milestoneId, [title], [description], [targetDate], [status]
 delete_milestone: type, milestoneId
   Deletes a milestone; its tasks stay in the plan.
-create_task: type, title, [description], [plan], [milestone], [doOn], [dueBy], [status], [priority]
+create_task: type, title, [description], [plan], [milestone], [workstream], [doOn], [dueBy], [status], [priority], [fromInbox]
   doOn is the day to work on the task ("tomorrow", "on Friday"). dueBy is its deadline ("by Friday", "due October 3").
   A new task needs a plan, doOn, or dueBy. If the request gives none of them, ask where the task belongs.
 update_task: type, taskId, [title], [description], [status], [priority], [takes]
@@ -81,12 +83,18 @@ Only pick a day, a due date, or a week yourself when the request asks you to ("w
 set_task_plan: type, taskId, plan, [milestone]
   Moves a task to another plan, or out of its plan with plan null. A milestone must belong to the new plan.
 delete_task: type, taskId
+create_workstream: type, plan, name
+  Adds a workstream, a named group of work inside a plan such as "Promotion" or "Logistics". Create one only when the request asks for it.
+set_task_workstream: type, taskId, workstream
+  Puts a task in one of its plan's workstreams, or takes it out of its workstream with workstream null.
 
-A plan is {"id":"<plan id>"} for a plan in the context, or {"newTitle":"<title>"} for a plan created earlier in the same proposal. A milestone works the same way.
+A plan is {"id":"<plan id>"} for a plan in the context, or {"newTitle":"<title>"} for a plan created earlier in the same proposal. A milestone works the same way, and so does a workstream, which must belong to the task's plan.
+inbox, when present, lists captured items. To turn one into a task, event, or plan, create it with fromInbox set to the item's id; the item leaves the inbox when the change is applied. Use the item's text as the title unless the request gives another.
+planningFacts, when present, lists the coming days that have working time, with spareMinutes, the working time left after events and planned work. When you choose a day yourself, choose one of these days, and prefer days with more spareMinutes.
 Status values. Plan: planning, active, on_hold, complete, cancelled; new plans start as planning. Milestone: pending, complete, skipped. Task: todo, in_progress, blocked, done; new tasks start as todo. Priority: low, normal, high, critical; the default is normal.
 activePlanId, when present, is the plan the user is looking at. New tasks, milestones, and events go in it unless the request names another plan.
 
-Not supported, so ask a question instead: deleting or archiving plans (events, milestones, and tasks can be deleted), recurring events or tasks, assigning people or owners, workstreams, locations, task reminders, sharing or syncing, and anything else these operations cannot do.
+Not supported, so ask a question instead: deleting or archiving plans (events, milestones, and tasks can be deleted), recurring events or tasks, checklists, assigning people or owners, renaming or deleting workstreams, locations, task reminders, sharing or syncing, and anything else these operations cannot do.
 "#;
 
 const SCHEDULE_UNSUPPORTED: &str = r#"
@@ -141,6 +149,10 @@ Request: printing the flyers takes about an hour, do it next week
 Request: add pick up dry cleaning to my tasks
 {"kind":"clarification","question":"Which day should “Pick up dry cleaning” go on, or which plan does it belong to?"}
 
+Context: {"today":"2026-03-02 (Monday)","plans":[{"id":"p-3","title":"Spring fair","status":"active"}],"workstreams":[{"id":"w-1","planId":"p-3","name":"Promotion"}],"tasks":[{"id":"t-42","title":"Call caterer","planId":"p-3","status":"todo"}],"inbox":[{"id":"i-5","text":"Print posters"}]}
+Request: add a Logistics workstream to the spring fair, put call caterer in it, and make print posters from my inbox a Promotion task for Friday
+{"kind":"proposal","summary":"Add a Logistics workstream, put Call caterer in it, and turn Print posters into a Promotion task for Friday.","operations":[{"type":"create_workstream","plan":{"id":"p-3"},"name":"Logistics"},{"type":"set_task_workstream","taskId":"t-42","workstream":{"newTitle":"Logistics"}},{"type":"create_task","title":"Print posters","plan":{"id":"p-3"},"workstream":{"id":"w-1"},"doOn":"2026-03-06","fromInbox":"i-5"}]}
+
 "#;
 
 static SCHEDULE_PROMPT: LazyLock<String> = LazyLock::new(|| {
@@ -183,6 +195,8 @@ pub(super) struct ContextInput<'a> {
     pub session: &'a [SessionTurn],
     /// The proposal that was still awaiting review when this request arrived.
     pub pending_proposal_id: Option<&'a str>,
+    /// The day the user's weeks start on.
+    pub week_start: Weekday,
 }
 
 #[derive(Serialize)]
@@ -191,8 +205,9 @@ struct RequestContext<'a> {
     request: &'a str,
     today: String,
     tomorrow: String,
-    /// The Monday of the week today falls in, and of the one after it. Working these out from a
-    /// date is exactly the kind of arithmetic the model gets wrong, so Rust hands them over.
+    /// The first day of the week today falls in, and of the one after it, as the user counts
+    /// weeks. Working these out from a date is exactly the kind of arithmetic the model gets
+    /// wrong, so Rust hands them over.
     this_week: String,
     next_week: String,
     time_zone: &'a str,
@@ -205,6 +220,12 @@ struct RequestContext<'a> {
     milestones: Option<Vec<MilestoneContext<'a>>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tasks: Option<Vec<TaskContext<'a>>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    workstreams: Option<Vec<WorkstreamContext<'a>>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    inbox: Option<Vec<InboxContext<'a>>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    planning_facts: Option<Vec<&'a DayFacts>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     active_plan_id: Option<&'a str>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -263,6 +284,24 @@ struct TaskContext<'a> {
     status: TaskStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     priority: Option<TaskPriority>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    workstream_id: Option<&'a str>,
+}
+
+/// A workstream by name only; its description stays behind like every other.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkstreamContext<'a> {
+    id: &'a str,
+    plan_id: &'a str,
+    name: &'a str,
+}
+
+/// A captured item's text; its notes stay behind.
+#[derive(Serialize)]
+struct InboxContext<'a> {
+    id: &'a str,
+    text: &'a str,
 }
 
 #[derive(Serialize)]
@@ -284,15 +323,15 @@ enum ReplyContext<'a> {
     },
 }
 
-/// The user message: the request plus everything the model may refer to, in local time.
-/// The Monday that starts a day's week, which is how a chosen week is written down.
-fn week_of(day: NaiveDate) -> String {
-    day.week(chrono::Weekday::Mon)
+/// The first day of a day's week, which is how a chosen week is written down.
+fn week_of(day: NaiveDate, starts_on: Weekday) -> String {
+    day.week(starts_on)
         .first_day()
         .format("%Y-%m-%d")
         .to_string()
 }
 
+/// The user message: the request plus everything the model may refer to, in local time.
 pub(super) fn request_context(input: &ContextInput<'_>) -> String {
     let planning = input.scope == Scope::Planning;
     let candidates = input.candidates;
@@ -301,8 +340,8 @@ pub(super) fn request_context(input: &ContextInput<'_>) -> String {
         request: input.command,
         today: label(input.today),
         tomorrow: label(input.today + Duration::days(1)),
-        this_week: week_of(input.today),
-        next_week: week_of(input.today + Duration::days(7)),
+        this_week: week_of(input.today, input.week_start),
+        next_week: week_of(input.today + Duration::days(7), input.week_start),
         time_zone: input.zone.name(),
         upcoming_weekdays: Weekdays(
             (1..=7)
@@ -373,9 +412,42 @@ pub(super) fn request_context(input: &ContextInput<'_>) -> String {
                     due_by: task.due_date.as_deref(),
                     status: task.status,
                     priority: (task.priority != TaskPriority::Normal).then_some(task.priority),
+                    workstream_id: task.workstream_id.as_deref().filter(|id| {
+                        candidates
+                            .workstreams
+                            .iter()
+                            .any(|workstream| workstream.id == *id)
+                    }),
                 })
                 .collect()
         }),
+        workstreams: (planning && !candidates.workstreams.is_empty()).then(|| {
+            candidates
+                .workstreams
+                .iter()
+                .map(|workstream| WorkstreamContext {
+                    id: &workstream.id,
+                    plan_id: &workstream.plan_id,
+                    name: &workstream.name,
+                })
+                .collect()
+        }),
+        inbox: (planning && !candidates.inbox_items.is_empty()).then(|| {
+            candidates
+                .inbox_items
+                .iter()
+                .map(|item| InboxContext {
+                    id: &item.id,
+                    text: &item.text,
+                })
+                .collect()
+        }),
+        // Spare time is only the model's business when the request asks it to pick the day.
+        planning_facts: candidates
+            .planning
+            .as_ref()
+            .filter(|_| planning && asks_to_choose(input.command))
+            .map(|facts| facts.days.iter().filter(|day| !day.off).collect()),
         active_plan_id: input.active_plan_id.filter(|_| planning),
         recent_turns: input
             .session
@@ -553,6 +625,11 @@ pub(super) fn output_format(scope: Scope, candidates: &PlannerCandidates) -> Sch
     let plan_ids = ids(candidates.plans.iter().map(|plan| &plan.id));
     let milestone_ids = ids(candidates.milestones.iter().map(|milestone| &milestone.id));
     let task_ids = ids(candidates.tasks.iter().map(|task| &task.id));
+    let workstream_ids = ids(candidates
+        .workstreams
+        .iter()
+        .map(|workstream| &workstream.id));
+    let inbox_ids = ids(candidates.inbox_items.iter().map(|item| &item.id));
     let day = || pattern(DAY_PATTERN);
     let local_time = || pattern(LOCAL_TIME_PATTERN);
     let title = || required_string(TITLE_GRAMMAR_LIMIT);
@@ -587,6 +664,9 @@ pub(super) fn output_format(scope: Scope, candidates: &PlannerCandidates) -> Sch
     ];
     if planning {
         create_event.push(("plan", one_of(reference(&plan_ids))));
+        if let Some(inbox_ids) = &inbox_ids {
+            create_event.push(("fromInbox", inbox_ids.clone()));
+        }
     }
     let mut operations = vec![object(create_event, &["type", "title", "start"])];
     if let Some(event_ids) = &event_ids {
@@ -638,17 +718,18 @@ pub(super) fn output_format(scope: Scope, candidates: &PlannerCandidates) -> Sch
             ));
         }
         let plan_status = || statuses(PlanStatus::ALL);
-        operations.push(object(
-            vec![
-                ("type", constant("create_plan")),
-                ("title", title()),
-                ("description", description()),
-                ("status", plan_status()),
-                ("startDate", day()),
-                ("targetDate", day()),
-            ],
-            &["type", "title"],
-        ));
+        let mut create_plan = vec![
+            ("type", constant("create_plan")),
+            ("title", title()),
+            ("description", description()),
+            ("status", plan_status()),
+            ("startDate", day()),
+            ("targetDate", day()),
+        ];
+        if let Some(inbox_ids) = &inbox_ids {
+            create_plan.push(("fromInbox", inbox_ids.clone()));
+        }
+        operations.push(object(create_plan, &["type", "title"]));
         if let Some(plan_ids) = &plan_ids {
             operations.push(object(
                 vec![
@@ -695,20 +776,30 @@ pub(super) fn output_format(scope: Scope, candidates: &PlannerCandidates) -> Sch
         }
         let task_status = || statuses(TaskStatus::ALL);
         let priority = || statuses(TaskPriority::ALL);
+        let mut create_task = vec![
+            ("type", constant("create_task")),
+            ("title", title()),
+            ("description", description()),
+            ("plan", one_of(reference(&plan_ids))),
+            ("milestone", one_of(reference(&milestone_ids))),
+            ("workstream", one_of(reference(&workstream_ids))),
+            ("doOn", day()),
+            ("dueBy", day()),
+            ("status", task_status()),
+            ("priority", priority()),
+        ];
+        if let Some(inbox_ids) = &inbox_ids {
+            create_task.push(("fromInbox", inbox_ids.clone()));
+        }
+        create_task.push(("reason", string(MAX_REASON)));
+        operations.push(object(create_task, &["type", "title"]));
         operations.push(object(
             vec![
-                ("type", constant("create_task")),
-                ("title", title()),
-                ("description", description()),
+                ("type", constant("create_workstream")),
                 ("plan", one_of(reference(&plan_ids))),
-                ("milestone", one_of(reference(&milestone_ids))),
-                ("doOn", day()),
-                ("dueBy", day()),
-                ("status", task_status()),
-                ("priority", priority()),
-                ("reason", string(MAX_REASON)),
+                ("name", title()),
             ],
-            &["type", "title"],
+            &["type", "plan", "name"],
         ));
         if let Some(task_ids) = &task_ids {
             let day_change = || {
@@ -769,6 +860,16 @@ pub(super) fn output_format(scope: Scope, candidates: &PlannerCandidates) -> Sch
                 ],
                 &["type", "taskId"],
             ));
+            let mut workstream_options = vec![null()];
+            workstream_options.extend(reference(&workstream_ids));
+            operations.push(object(
+                vec![
+                    ("type", constant("set_task_workstream")),
+                    ("taskId", task_ids.clone()),
+                    ("workstream", one_of(workstream_options)),
+                ],
+                &["type", "taskId", "workstream"],
+            ));
         }
     }
     one_of(vec![
@@ -801,7 +902,9 @@ pub(super) fn output_format(scope: Scope, candidates: &PlannerCandidates) -> Sch
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Milestone, Plan, ReminderStatus, ScheduleEvent, Task};
+    use crate::model::{
+        InboxItem, Milestone, Plan, PlanningFacts, ReminderStatus, ScheduleEvent, Task, Workstream,
+    };
     use serde_json::Value;
 
     fn operation_types(schema: &Schema) -> Vec<String> {
@@ -852,7 +955,8 @@ mod tests {
                 "create_event",
                 "create_plan",
                 "create_milestone",
-                "create_task"
+                "create_task",
+                "create_workstream"
             ]
         );
         let candidates = PlannerCandidates {
@@ -869,6 +973,7 @@ mod tests {
                 revision: 1,
                 created_at: String::new(),
                 updated_at: String::new(),
+                links: Vec::new(),
             }],
             ..PlannerCandidates::default()
         };
@@ -925,6 +1030,7 @@ mod tests {
             active_plan_id: None,
             session: &[],
             pending_proposal_id: None,
+            week_start: chrono::Weekday::Mon,
         });
         let context: Value = serde_json::from_str(&text).unwrap();
         assert_eq!(context["today"], "2026-08-12 (Wednesday)");
@@ -939,8 +1045,9 @@ mod tests {
         assert!(context.get("recentTurns").is_none());
     }
 
-    /// DayPlan's privacy docs promise the model never sees notes, descriptions, locations, owners,
-    /// or workstreams. The context types simply have no such fields; this keeps it that way.
+    /// Delve Planner's privacy docs promise the model never sees notes, descriptions, locations, or
+    /// people. Workstreams reach it by name and captured items by their text alone; the context
+    /// types have no field for anything else, and this keeps it that way.
     #[test]
     fn context_never_carries_notes_descriptions_locations_or_people() {
         let plan_id = "5d5a3e1c-2d67-4a7e-9d3c-6c9a1f0d8e21";
@@ -967,6 +1074,7 @@ mod tests {
                 revision: 1,
                 created_at: String::new(),
                 updated_at: String::new(),
+                links: Vec::new(),
             }],
             milestones: vec![Milestone {
                 id: "0b8f2a4c-6d1e-4f3a-9b7c-5e2d1a0f9c8b".into(),
@@ -1000,6 +1108,34 @@ mod tests {
                 revision: 1,
                 created_at: String::new(),
                 updated_at: String::new(),
+                checklist: Vec::new(),
+                recurrence: None,
+                waiting_on: Vec::new(),
+            }],
+            inbox_items: vec![InboxItem {
+                id: "2c4e6a8b-0d1f-4a3c-9e5b-7d9f1b3d5e7a".into(),
+                text: "Print posters".into(),
+                notes: "private-inbox-note".into(),
+                revision: 1,
+                created_at: String::new(),
+                updated_at: String::new(),
+            }],
+            planning: Some(PlanningFacts {
+                days: vec![DayFacts {
+                    day: "2026-08-13".into(),
+                    spare_minutes: Some(95),
+                    off: false,
+                }],
+            }),
+            workstreams: vec![Workstream {
+                id: workstream_id.into(),
+                plan_id: plan_id.into(),
+                name: "Production".into(),
+                description: "private-workstream-description".into(),
+                sort_order: 0,
+                revision: 1,
+                created_at: String::new(),
+                updated_at: String::new(),
             }],
         };
         let text = request_context(&ContextInput {
@@ -1011,8 +1147,16 @@ mod tests {
             active_plan_id: Some(plan_id),
             session: &[],
             pending_proposal_id: None,
+            week_start: chrono::Weekday::Mon,
         });
-        for offered in ["Gym", "Launch", "Venue booked", "Book venue"] {
+        for offered in [
+            "Gym",
+            "Launch",
+            "Venue booked",
+            "Book venue",
+            "Production",
+            "Print posters",
+        ] {
             assert!(text.contains(offered), "{offered} is missing: {text}");
         }
         for private in [
@@ -1021,13 +1165,57 @@ mod tests {
             "private-plan-description",
             "private-milestone-description",
             "private-task-description",
+            "private-workstream-description",
+            "private-inbox-note",
             owner_id,
-            workstream_id,
+            // Spare time only goes with a request that asks the planner to choose.
+            "spareMinutes",
         ] {
             assert!(
                 !text.contains(private),
                 "{private} reached the model: {text}"
             );
         }
+
+        let choosing = request_context(&ContextInput {
+            command: "when should I do book venue?",
+            today: NaiveDate::from_ymd_opt(2026, 8, 12).unwrap(),
+            zone: "America/New_York".parse().unwrap(),
+            scope: Scope::Planning,
+            candidates: &candidates,
+            active_plan_id: Some(plan_id),
+            session: &[],
+            pending_proposal_id: None,
+            week_start: chrono::Weekday::Mon,
+        });
+        let context: Value = serde_json::from_str(&choosing).unwrap();
+        assert_eq!(
+            context["planningFacts"],
+            serde_json::json!([{"day": "2026-08-13", "spareMinutes": 95}])
+        );
+    }
+
+    #[test]
+    fn weeks_in_the_context_start_on_the_users_day() {
+        let context = |week_start| {
+            let text = request_context(&ContextInput {
+                command: "put it in next week",
+                today: NaiveDate::from_ymd_opt(2026, 8, 12).unwrap(),
+                zone: "America/New_York".parse().unwrap(),
+                scope: Scope::Planning,
+                candidates: &PlannerCandidates::default(),
+                active_plan_id: None,
+                session: &[],
+                pending_proposal_id: None,
+                week_start,
+            });
+            serde_json::from_str::<Value>(&text).unwrap()
+        };
+        let monday = context(chrono::Weekday::Mon);
+        assert_eq!(monday["thisWeek"], "2026-08-10");
+        assert_eq!(monday["nextWeek"], "2026-08-17");
+        let sunday = context(chrono::Weekday::Sun);
+        assert_eq!(sunday["thisWeek"], "2026-08-09");
+        assert_eq!(sunday["nextWeek"], "2026-08-16");
     }
 }

@@ -1,8 +1,60 @@
 # Changelog
 
+Delve Planner was called DayPlan until v0.4.0.
+
+## v0.4.0
+
+Plans that start from a template, work that repeats without being re-entered, and a planner that can do more of what you ask — including workstreams, your inbox, and picking a day around the time you actually have.
+
+### New name
+
+DayPlan is now Delve Planner. Your plans, settings, calendar connections, and downloaded models carry over.
+
+- **macOS:** the new Delve Planner.app sits beside DayPlan.app. Once it opens with your data, delete DayPlan.app.
+- **Windows:** Delve Planner installs as a separate app. Afterwards, uninstall DayPlan from **Settings → Apps** and leave **Delete the application data** unchecked, because both apps share that data.
+
+### Plans
+
+- **Templates.** Start a plan from Event, Trip, Move, Research or school project, Job search, or Personal project. Each comes with a few workstreams, ready to rename or remove. Before your first plan, the Plans page offers them as cards.
+- **Duplicate a plan.** Copies its workstreams, milestones, and open tasks into a new plan. Pick a new start date and every date moves by the same number of days. Finished work, events, and time blocks stay with the original.
+- **Links.** A plan keeps a short list of titled links — bookings, documents, tickets — that open in your browser. They're exported with the plan and never sent to the planner.
+
+### Tasks
+
+- **Repeating tasks.** A task on a day can repeat daily, on weekdays, weekly on the days you choose, or monthly, every so many days, weeks, or months. Finishing it brings the next occurrence. A missed one waits with unfinished work until you move it, skip it to its next date, or finish it — there's only ever one open occurrence.
+- **Checklists.** Steps inside a task, ticked in the editor or straight from the task's row, with progress shown beside it. They're not tasks of their own.
+- **Waits on.** A task can wait on other open tasks. It's a hint shown beside the task, never a lock, and there's no dependency chart.
+
+### The planner
+
+- Creates workstreams and puts tasks in them, including in a workstream it creates in the same proposal.
+- Turns inbox items into tasks, events, or plans when your request mentions your inbox. The item leaves the inbox when you apply the change.
+- A suggestion's title, day, time, length, or estimate can be edited before you apply it. What it changes and where it goes stay as proposed, and Rust checks both again.
+- When you ask it to choose a day, it sees how much spare time each of the next 14 days has, after events, busy calendar time, and work already planned, within your working hours, days off, and daily limit. A day it picks with no working time moves to the next day that has some.
+- “This week” and “next week” follow the week start you choose.
+- Fixed: a suggestion that named a new plan or milestone with different capitalization wasn't marked as depending on it, so rejecting the plan could leave a suggestion that couldn't apply.
+
+### Everywhere else
+
+- **Quick capture from any app.** Record a shortcut in Settings — it's off until you do — and it opens the capture box even while Delve Planner is in the background or closed to the tray. The tray menu has **Quick Capture…** too.
+- **Keyboard.** ⌘N adds a task for the day, week, or plan in view; ⇧⌘N starts a plan; ⌘← and ⌘→ move between days, or weeks in Week; ⌘↩ saves an editor or sends a planner request; ⌘, opens Settings. Settings lists every shortcut. (Ctrl instead of ⌘ on Windows.)
+- **Weeks start on the day you choose** in Settings, instead of always following the system.
+- **Today and Week remember their plan filter** across restarts, and an empty day now says when the filter is what's hiding things, with a way to show all plans.
+- **What Delve Planner knows** notices two more things: open work that keeps moving off its day, and the plan whose work slips most. **What a day holds** now counts blocked time on the local day it happened rather than the UTC date.
+- Onboarding moves focus to each step's heading, for keyboard and screen reader users.
+
+### Data
+
+- Database schema 8 adds repeat rules, checklists, and waits to tasks, and links to plans. Export format 7 carries them; older exports still import.
+- The quick-capture shortcut is kept in `shortcuts.json` beside the database, and the week start and plan filter in the window's own storage. None of them is exported.
+
+### Privacy
+
+- The planner's context now includes workstream names; the text, never the notes, of up to 20 inbox items when your request mentions the inbox; and — only when you ask it to choose a day — one spare-time number per day. It still never sees notes, descriptions, locations, people, individual estimates, or other calendars' events.
+
 ## v0.3.5
 
-A new screen holds everything DayPlan knows about how you plan — what you told it, and what it worked out from your own records — and lets you change, switch off, or forget any of it.
+A new screen holds everything Delve Planner knows about how you plan — what you told it, and what it worked out from your own records — and lets you change, switch off, or forget any of it.
 
 ### What you've told it
 
@@ -12,7 +64,7 @@ A new screen holds everything DayPlan knows about how you plan — what you told
 
 ### What it noticed
 
-- DayPlan works out how long your work really takes against your estimates, when you usually start blocked work, what a day you block work on usually holds, and which weekday work most often moves off.
+- Delve Planner works out how long your work really takes against your estimates, when you usually start blocked work, what a day you block work on usually holds, and which weekday work most often moves off.
 - Each observation says what it rests on, and none appears until at least five records support it. They're computed fresh from local records each time the screen opens, never stored.
 - Any observation can be switched off, which stops it being computed at all, and switched back on later.
 - The only history kept for this is when a task moves off a day it was already on: the two days and the moment, and nothing about the work itself. It starts empty in this version, and **Forget the history behind these** clears it.
@@ -45,42 +97,42 @@ The planner's suggestions are now reviewed one by one, it can estimate how long 
 
 ## v0.3.1
 
-DayPlan now plans with whichever local model you already have, and its AI runtime only runs while it's actually working.
+Delve Planner now plans with whichever local model you already have, and its AI runtime only runs while it's actually working.
 
 ### Use the model you already have
 
-- Settings and onboarding list every local model DayPlan can find: the ones it downloaded and the ones already installed with Ollama. Choosing one takes effect immediately.
-- DayPlan reads your Ollama model folder and never writes to it. Its own downloads stay with DayPlan, so removing DayPlan's AI model data can't delete a model you installed.
-- `qwen3:8b` is the model DayPlan is tested against and is marked as such. Any other model is asked one small question in DayPlan's reply format before it's used; if it can't answer in that format, DayPlan says so at the picker instead of failing halfway through planning a week.
+- Settings and onboarding list every local model Delve Planner can find: the ones it downloaded and the ones already installed with Ollama. Choosing one takes effect immediately.
+- Delve Planner reads your Ollama model folder and never writes to it. Its own downloads stay with Delve Planner, so removing Delve Planner's AI model data can't delete a model you installed.
+- `qwen3:8b` is the model Delve Planner is tested against and is marked as such. Any other model is asked one small question in Delve Planner's reply format before it's used; if it can't answer in that format, Delve Planner says so at the picker instead of failing halfway through planning a week.
 
 ### Nothing running in the background
 
-- **Quitting DayPlan now stops the model.** Ollama runs a model in a second process, and DayPlan used to end only the server, leaving several gigabytes resident. It now ends both together.
-- If DayPlan is force-quit or crashes, the next launch ends the model server the old one left behind, so they stop piling up.
-- Opening DayPlan no longer starts the AI runtime. It starts when you ask the planner something, download a model, or check one, and stops again after five minutes with nothing to do.
+- **Quitting Delve Planner now stops the model.** Ollama runs a model in a second process, and Delve Planner used to end only the server, leaving several gigabytes resident. It now ends both together.
+- If Delve Planner is force-quit or crashes, the next launch ends the model server the old one left behind, so they stop piling up.
+- Opening Delve Planner no longer starts the AI runtime. It starts when you ask the planner something, download a model, or check one, and stops again after five minutes with nothing to do.
 - The model is released from memory when you close the window, and shortly after each reply rather than five minutes later.
 
 ## v0.3.0
 
-Google Calendar and Outlook connect directly now. Sign in once in your browser, choose which calendars DayPlan should show, and they stay up to date beside your plans. Everything stays read-only: DayPlan asks only for permission to read, so it can't change, create, or delete anything in your calendars.
+Google Calendar and Outlook connect directly now. Sign in once in your browser, choose which calendars Delve Planner should show, and they stay up to date beside your plans. Everything stays read-only: Delve Planner asks only for permission to read, so it can't change, create, or delete anything in your calendars.
 
 ### Connected accounts
 
-- **Connect Google** and **Connect Outlook** on the Calendars screen (⌘6, or Ctrl+6 on Windows) sign in through your browser. DayPlan never sees your password.
-- Connecting adds nothing by itself. DayPlan lists that account's calendars with your main one already ticked, and shows only the ones you pick. **Add calendars…** on the account reopens the list later.
-- Each calendar you add behaves like any other: rename, recolor, hide, refresh, or remove it on its own. Accounts and links both refresh every 30 minutes while DayPlan runs.
+- **Connect Google** and **Connect Outlook** on the Calendars screen (⌘6, or Ctrl+6 on Windows) sign in through your browser. Delve Planner never sees your password.
+- Connecting adds nothing by itself. Delve Planner lists that account's calendars with your main one already ticked, and shows only the ones you pick. **Add calendars…** on the account reopens the list later.
+- Each calendar you add behaves like any other: rename, recolor, hide, refresh, or remove it on its own. Accounts and links both refresh every 30 minutes while Delve Planner runs.
 - If a sign-in expires or is withdrawn, the account says so and keeps showing its last copy of your events until you **Sign in again**.
-- **Disconnect account** withdraws DayPlan's access where the provider supports it, then deletes the sign-in along with every calendar and event cached for that account.
+- **Disconnect account** withdraws Delve Planner's access where the provider supports it, then deletes the sign-in along with every calendar and event cached for that account.
 - Sign-ins live in the macOS Keychain or Windows Credential Manager, never in the planner database, exports, backups, diagnostics, or the app's own window.
 
 ### Docs
 
-- [CALENDAR_ACCOUNTS.md](https://github.com/Von-Van/DayPlan/blob/v0.3.0/CALENDAR_ACCOUNTS.md) covers the OAuth clients DayPlan ships with and how to point a build at your own, and [CALENDAR_SYNC.md](https://github.com/Von-Van/DayPlan/blob/v0.3.0/CALENDAR_SYNC.md) documents how accounts are stored, refreshed, and revoked.
+- [CALENDAR_ACCOUNTS.md](https://github.com/Von-Van/DelvePlanner/blob/v0.3.0/CALENDAR_ACCOUNTS.md) covers the OAuth clients Delve Planner ships with and how to point a build at your own, and [CALENDAR_SYNC.md](https://github.com/Von-Van/DelvePlanner/blob/v0.3.0/CALENDAR_SYNC.md) documents how accounts are stored, refreshed, and revoked.
 
 ### Known limitations
 
-- Google shows an "unverified app" warning until DayPlan finishes Google's review, and work or school Outlook accounts often need an administrator to approve it. Subscribing by link still works for any calendar an account connection can't reach.
-- These builds aren't code-signed, so after each update macOS asks once for every subscribed calendar and connected account before DayPlan can read it from the Keychain. Choose **Always Allow**.
+- Google shows an "unverified app" warning until Delve Planner finishes Google's review, and work or school Outlook accounts often need an administrator to approve it. Subscribing by link still works for any calendar an account connection can't reach.
+- These builds aren't code-signed, so after each update macOS asks once for every subscribed calendar and connected account before Delve Planner can read it from the Keychain. Choose **Always Allow**.
 
 ## v0.2.9
 
@@ -88,7 +140,7 @@ Calendars from Google, Outlook, and other apps without signing in, time blocks f
 
 ### Calendars
 
-- A new Calendars screen (⌘6, or Ctrl+6 on Windows) subscribes to a calendar's iCalendar link, such as Google Calendar's secret address or an Outlook published calendar, and refreshes it every 30 minutes while DayPlan runs.
+- A new Calendars screen (⌘6, or Ctrl+6 on Windows) subscribes to a calendar's iCalendar link, such as Google Calendar's secret address or an Outlook published calendar, and refreshes it every 30 minutes while Delve Planner runs.
 - An exported `.ics` file can be imported as a read-only calendar and later replaced with a newer file.
 - Today and Week show calendar events in a distinct read-only style, including all-day events and recurring events with moved, cancelled, or excluded occurrences.
 - Calendars can be hidden, renamed, recolored, refreshed, or removed. When a link stops working, Today says so and the calendar keeps its last copy until a new link is pasted.
@@ -108,15 +160,15 @@ Calendars from Google, Outlook, and other apps without signing in, time blocks f
 ### Data and docs
 
 - Database schema 6 adds time blocks and working hours. Export format 6 includes time blocks, and formats 1–5 still import.
-- [CALENDAR_SYNC.md](https://github.com/Von-Van/DayPlan/blob/v0.2.9/CALENDAR_SYNC.md) describes the calendar design, and [CALENDAR_ACCOUNTS.md](https://github.com/Von-Van/DayPlan/blob/v0.2.9/CALENDAR_ACCOUNTS.md) walks through creating the Google and Microsoft OAuth clients.
+- [CALENDAR_SYNC.md](https://github.com/Von-Van/DelvePlanner/blob/v0.2.9/CALENDAR_SYNC.md) describes the calendar design, and [CALENDAR_ACCOUNTS.md](https://github.com/Von-Van/DelvePlanner/blob/v0.2.9/CALENDAR_ACCOUNTS.md) walks through creating the Google and Microsoft OAuth clients.
 
 ### Also in this release
 
-v0.2.5 wasn't published on its own, so this is the first build with its planning workflow: the Inbox and quick capture (⌘I), task estimates, Plan the Week and Plan Today, and carry-forward of unfinished tasks. See [v0.2.5 in the changelog](https://github.com/Von-Van/DayPlan/blob/v0.2.9/CHANGELOG.md#v025).
+v0.2.5 wasn't published on its own, so this is the first build with its planning workflow: the Inbox and quick capture (⌘I), task estimates, Plan the Week and Plan Today, and carry-forward of unfinished tasks. See [v0.2.5 in the changelog](https://github.com/Von-Van/DelvePlanner/blob/v0.2.9/CHANGELOG.md#v025).
 
 ### Known limitations
 
-- These builds aren't code-signed, so after each update macOS asks once for every subscribed calendar before DayPlan can read its link from the Keychain. Choose **Always Allow**.
+- These builds aren't code-signed, so after each update macOS asks once for every subscribed calendar before Delve Planner can read its link from the Keychain. Choose **Always Allow**.
 
 ## v0.2.5
 
@@ -146,7 +198,7 @@ The core planning workflow: capture anything, choose a week's work, plan each da
 
 ## v0.2.0
 
-The first published DayPlan build, released as an unsigned pre-release for macOS and Windows.
+The first published Delve Planner build, released as an unsigned pre-release for macOS and Windows.
 
 ### Plans, tasks, and teams
 
@@ -170,7 +222,7 @@ The first published DayPlan build, released as an unsigned pre-release for macOS
 
 ### Data
 
-- Database schema 4. Existing databases are backed up and migrated when DayPlan opens, and export, import, and restore cover plans, milestones, tasks, workstreams, and people.
+- Database schema 4. Existing databases are backed up and migrated when Delve Planner opens, and export, import, and restore cover plans, milestones, tasks, workstreams, and people.
 
 ### Security
 

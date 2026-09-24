@@ -23,6 +23,9 @@ coverage/
 *.sqlite3
 *.sqlite3-shm
 *.sqlite3-wal
+delve-planner-export*.json
+delve-planner-diagnostics*.zip
+# The same files as named before the rename from DayPlan
 dayplan-export*.json
 dayplan-diagnostics*.zip
 *.log
@@ -35,6 +38,9 @@ backups/
 *.db
 *.db-shm
 *.db-wal
+
+# Worktrees that coding assistants create inside the checkout
+.claude/worktrees/
 
 # Editors / OS
 .idea/

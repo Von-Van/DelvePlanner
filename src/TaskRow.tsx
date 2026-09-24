@@ -1,10 +1,22 @@
-import type { Milestone, Person, Plan, Task, Workstream } from "./api";
+import { useState } from "react";
+import type {
+  ChecklistItem,
+  Milestone,
+  Person,
+  Plan,
+  Task,
+  Workstream,
+} from "./api";
 import { Glyph, Mark } from "./Geometry";
 import { Menu, MenuItem } from "./Menu";
+import { useOpenTasks } from "./openTasks";
 import { PlanChip } from "./PlanControls";
 import {
+  checklistProgress,
   estimateLabel,
   isOverdue,
+  openWaits,
+  recurrenceLabel,
   shortDate,
   taskPriorityLabels,
   taskStatusLabels,
@@ -27,6 +39,7 @@ export function TaskRow({
   onOpen,
   onDelete,
   onScheduleHere,
+  onChecklistChange,
 }: {
   task: Task;
   today: string;
@@ -46,12 +59,21 @@ export function TaskRow({
   onOpen: () => void;
   onDelete?: () => void;
   onScheduleHere?: () => void;
+  /** Saves the checklist after an item is ticked in the row; without it, ticking needs the editor. */
+  onChecklistChange?: (checklist: ChecklistItem[]) => void;
 }) {
   const done = task.status === "done";
   const flagged = task.priority === "high" || task.priority === "critical";
   const moving = task.status === "in_progress" || task.status === "blocked";
+  const openTasks = useOpenTasks();
+  const [expanded, setExpanded] = useState(false);
+  const progress = checklistProgress(task);
+  const waits = done ? [] : openWaits(task, openTasks);
+  const checklistOpen = expanded && progress !== null && !!onChecklistChange;
   return (
-    <div className={`task-row ${done ? "done" : ""}`}>
+    <div
+      className={`task-row ${done ? "done" : ""} ${checklistOpen ? "expanded" : ""}`}
+    >
       <button
         onClick={onToggle}
         className="check-box"
@@ -78,6 +100,31 @@ export function TaskRow({
           {task.estimatedMinutes !== null && (
             <small className="task-estimate">
               {estimateLabel(task.estimatedMinutes)}
+            </small>
+          )}
+          {task.recurrence && (
+            <small
+              className="task-repeat"
+              title={recurrenceLabel(task.recurrence)}
+            >
+              <Glyph>↻</Glyph> {recurrenceLabel(task.recurrence)}
+            </small>
+          )}
+          {progress && (
+            <small
+              className={`task-checklist ${progress.done === progress.total ? "complete" : ""}`}
+              aria-label={`${progress.done} of ${progress.total} checklist items done`}
+            >
+              {progress.done}/{progress.total}
+            </small>
+          )}
+          {waits.length > 0 && (
+            <small
+              className="task-waiting"
+              title={waits.map((wait) => wait.title).join(", ")}
+            >
+              Waiting on{" "}
+              {waits.length === 1 ? waits[0].title : `${waits.length} tasks`}
             </small>
           )}
           {milestone && (
@@ -114,6 +161,17 @@ export function TaskRow({
           <PlanChip plan={plan} />
         </span>
       </button>
+      {progress && onChecklistChange && (
+        <button
+          className="task-action task-expand"
+          onClick={() => setExpanded(!expanded)}
+          aria-expanded={checklistOpen}
+          aria-label={`${checklistOpen ? "Hide" : "Show"} the checklist for ${task.title}`}
+          title={checklistOpen ? "Hide checklist" : "Show checklist"}
+        >
+          <Glyph>{checklistOpen ? "▾" : "▸"}</Glyph>
+        </button>
+      )}
       {onScheduleHere && (
         <button
           className="task-action"
@@ -143,6 +201,34 @@ export function TaskRow({
         >
           <Glyph>✕</Glyph>
         </button>
+      )}
+      {checklistOpen && (
+        <ul
+          className="task-checklist-items"
+          aria-label={`${task.title} checklist`}
+        >
+          {task.checklist.map((item, index) => (
+            <li key={index}>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={item.done}
+                  disabled={busy}
+                  onChange={() =>
+                    onChecklistChange(
+                      task.checklist.map((current, position) =>
+                        position === index
+                          ? { ...current, done: !current.done }
+                          : current,
+                      ),
+                    )
+                  }
+                />
+                <span>{item.text}</span>
+              </label>
+            </li>
+          ))}
+        </ul>
       )}
     </div>
   );

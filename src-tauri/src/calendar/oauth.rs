@@ -1,5 +1,5 @@
 //! Read-only OAuth for calendar accounts. Sign-in happens in the system browser with PKCE and a
-//! loopback redirect; DayPlan never sees the password and never asks for a scope that could
+//! loopback redirect; Delve Planner never sees the password and never asks for a scope that could
 //! change a calendar. Tokens are handled here and stored in the system keychain.
 
 use crate::error::{AppError, AppResult};
@@ -29,24 +29,24 @@ const fn overridden(value: Option<&'static str>, default: &'static str) -> &'sta
 }
 
 /// Public client identifiers: they appear in every sign-in URL, so they aren't secrets. A build
-/// can point DayPlan at different clients.
+/// can point Delve Planner at different clients.
 const GOOGLE_CLIENT_ID: &str = overridden(
-    option_env!("DAYPLAN_GOOGLE_CLIENT_ID"),
+    option_env!("DELVE_PLANNER_GOOGLE_CLIENT_ID"),
     "783077374407-nlg8h3hsa1b5kj2fhd3dmbj8nemk4aq3.apps.googleusercontent.com",
 );
 const MICROSOFT_CLIENT_ID: &str = overridden(
-    option_env!("DAYPLAN_MICROSOFT_CLIENT_ID"),
+    option_env!("DELVE_PLANNER_MICROSOFT_CLIENT_ID"),
     "33ce6dba-0b7e-4fe2-8578-bd84dd1318f9",
 );
 /// Google lists the client secret as optional for installed apps, which can't keep one private, so
-/// DayPlan sends none by default. A build whose own client needs one passes it in; it is never
-/// committed.
-const GOOGLE_CLIENT_SECRET: Option<&str> = match option_env!("DAYPLAN_GOOGLE_CLIENT_SECRET") {
+/// Delve Planner sends none by default. A build whose own client needs one passes it in; it is
+/// never committed.
+const GOOGLE_CLIENT_SECRET: Option<&str> = match option_env!("DELVE_PLANNER_GOOGLE_CLIENT_SECRET") {
     Some(secret) if !secret.is_empty() => Some(secret),
     _ => None,
 };
 
-/// The only scopes DayPlan ever requests. Both are read-only; `offline_access` just keeps the
+/// The only scopes Delve Planner ever requests. Both are read-only; `offline_access` just keeps the
 /// sign-in alive and grants no access of its own.
 const GOOGLE_SCOPES: &str = "https://www.googleapis.com/auth/calendar.readonly";
 const MICROSOFT_SCOPES: &str = "offline_access Calendars.Read";
@@ -121,10 +121,10 @@ pub async fn sign_in(
     // Microsoft's `localhost` callback to ::1 first falls back to 127.0.0.1 when that is refused.
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
-        .map_err(|_| AppError::Internal("DayPlan couldn't open a sign-in port.".into()))?;
+        .map_err(|_| AppError::Internal("Delve Planner couldn't open a sign-in port.".into()))?;
     let port = listener
         .local_addr()
-        .map_err(|_| AppError::Internal("DayPlan couldn't open a sign-in port.".into()))?
+        .map_err(|_| AppError::Internal("Delve Planner couldn't open a sign-in port.".into()))?
         .port();
     let redirect_uri = config.redirect_uri(port);
     let verifier = random_secret();
@@ -203,7 +203,7 @@ async fn wait_for_code(listener: TcpListener, state: &str) -> AppResult<String> 
             let _ = reply(
                 &mut socket,
                 "200 OK",
-                "DayPlan didn't get access. You can close this window.",
+                "Delve Planner didn't get access. You can close this window.",
             )
             .await;
             return Err(AppError::Validation(if error == "access_denied" {
@@ -226,7 +226,7 @@ async fn wait_for_code(listener: TcpListener, state: &str) -> AppResult<String> 
         let _ = reply(
             &mut socket,
             "200 OK",
-            "DayPlan is connected. You can close this window.",
+            "Delve Planner is connected. You can close this window.",
         )
         .await;
         return Ok(code);
@@ -236,7 +236,7 @@ async fn wait_for_code(listener: TcpListener, state: &str) -> AppResult<String> 
 async fn reply(socket: &mut tokio::net::TcpStream, status: &str, message: &str) -> AppResult<()> {
     let body = format!(
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
-         <title>DayPlan</title></head><body style=\"font-family:system-ui;padding:3rem\">\
+         <title>Delve Planner</title></head><body style=\"font-family:system-ui;padding:3rem\">\
          <p>{message}</p></body></html>"
     );
     let response = format!(
@@ -535,7 +535,7 @@ mod tests {
         let config = config(&token_url);
         let visited: Arc<std::sync::Mutex<Option<String>>> = Arc::new(std::sync::Mutex::new(None));
         let seen = visited.clone();
-        // Stands in for the system browser: follows the redirect back to DayPlan with a code.
+        // Stands in for the system browser: follows the redirect back to Delve Planner with a code.
         let open = move |url: &str| -> AppResult<()> {
             let url = url.to_string();
             *seen.lock().unwrap() = Some(url.clone());

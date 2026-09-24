@@ -11,13 +11,13 @@ if (!mac || !windows) throw new Error("Universal macOS and Windows updater artif
 
 const platform = (file) => ({
   signature: fs.readFileSync(path.join(directory, `${file}.sig`), "utf8").trim(),
-  url: `https://github.com/Von-Van/DayPlan/releases/download/${tag}/${file}`,
+  url: `https://github.com/Von-Van/DelvePlanner/releases/download/${tag}/${file}`,
 });
 const macEntry = platform(mac);
 const windowsEntry = platform(windows);
 const notes = notesFile
   ? fs.readFileSync(notesFile, "utf8").trim()
-  : `DayPlan ${tag} public beta. See the GitHub release for complete notes.`;
+  : `Delve Planner ${tag} public beta. See the GitHub release for complete notes.`;
 const metadata = {
   version,
   notes,

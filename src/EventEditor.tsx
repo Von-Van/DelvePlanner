@@ -1,4 +1,5 @@
 import { FormEvent, useRef, useState } from "react";
+import { submitOnCommandEnter } from "./shortcuts";
 import {
   api,
   InboxItem,
@@ -111,6 +112,7 @@ export function EventEditor({
         ref={dialogRef}
         className="editor-dialog"
         onSubmit={submit}
+        onKeyDown={submitOnCommandEnter}
         role="dialog"
         aria-modal="true"
         aria-label={
@@ -231,7 +233,7 @@ export function EventEditor({
             ))}
           </select>
           <span>
-            DayPlan must remain running in the tray to deliver desktop
+            Delve Planner must remain running in the tray to deliver desktop
             reminders.
           </span>
         </label>

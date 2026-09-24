@@ -920,7 +920,7 @@
       }
     },
     {
-      "id": "unsupported-workstream",
+      "id": "missing-workstream",
       "command": "put book venue in the Production workstream",
       "day": "2026-09-15",
       "timeZone": "America/New_York",
@@ -1132,6 +1132,188 @@
       "uses": "charity",
       "expected": {
         "kind": "clarification"
+      }
+    },
+    {
+      "id": "create-workstream",
+      "command": "add a Promotion workstream to charity week",
+      "day": "2026-09-15",
+      "timeZone": "America/New_York",
+      "uses": "charity",
+      "expected": {
+        "kind": "proposal",
+        "operations": [
+          {
+            "type": "create_workstream",
+            "plan": "Streamer Charity Week",
+            "name": "Promotion"
+          }
+        ]
+      }
+    },
+    {
+      "id": "assign-existing-workstream",
+      "command": "put book venue in the logistics workstream",
+      "day": "2026-09-15",
+      "timeZone": "America/New_York",
+      "uses": "charity",
+      "workstreams": [
+        {
+          "plan": "Streamer Charity Week",
+          "name": "Logistics"
+        }
+      ],
+      "expected": {
+        "kind": "proposal",
+        "operations": [
+          {
+            "type": "set_task_workstream",
+            "task": "Book venue",
+            "workstream": "Logistics"
+          }
+        ]
+      }
+    },
+    {
+      "id": "task-into-new-workstream",
+      "command": "add a Production workstream to charity week and put test stream overlay in it",
+      "day": "2026-09-15",
+      "timeZone": "America/New_York",
+      "uses": "charity",
+      "expected": {
+        "kind": "proposal",
+        "operations": [
+          {
+            "type": "create_workstream",
+            "plan": "Streamer Charity Week",
+            "name": "Production"
+          },
+          {
+            "type": "set_task_workstream",
+            "task": "Test stream overlay",
+            "workstream": "Production"
+          }
+        ]
+      }
+    },
+    {
+      "id": "new-task-in-workstream",
+      "command": "add a Book photographer task due October 9 to the charity week logistics workstream",
+      "day": "2026-09-15",
+      "timeZone": "America/New_York",
+      "uses": "charity",
+      "workstreams": [
+        {
+          "plan": "Streamer Charity Week",
+          "name": "Logistics"
+        }
+      ],
+      "expected": {
+        "kind": "proposal",
+        "operations": [
+          {
+            "type": "create_task",
+            "title": "Book photographer",
+            "plan": "Streamer Charity Week",
+            "workstream": "Logistics",
+            "dueDate": "2026-10-09"
+          }
+        ]
+      }
+    },
+    {
+      "id": "inbox-item-to-task",
+      "command": "turn renew passport in my inbox into a task for friday",
+      "day": "2026-09-15",
+      "timeZone": "America/New_York",
+      "uses": "charity",
+      "inbox": [
+        {
+          "text": "Renew passport",
+          "notes": "Photos first"
+        }
+      ],
+      "expected": {
+        "kind": "proposal",
+        "operations": [
+          {
+            "type": "create_task",
+            "title": "Renew passport",
+            "scheduledDay": "2026-09-18",
+            "fromInbox": "Renew passport"
+          }
+        ]
+      }
+    },
+    {
+      "id": "inbox-item-to-event",
+      "command": "make the dentist checkup from my inbox an event on thursday at 3 pm",
+      "day": "2026-09-15",
+      "timeZone": "America/New_York",
+      "uses": "charity",
+      "inbox": [
+        {
+          "text": "Dentist checkup"
+        },
+        {
+          "text": "Call the bank"
+        }
+      ],
+      "expected": {
+        "kind": "proposal",
+        "operations": [
+          {
+            "type": "create_event",
+            "title": "Dentist checkup",
+            "startAtUtc": "2026-09-17T19:00:00.000Z",
+            "fromInbox": "Dentist checkup"
+          }
+        ]
+      }
+    },
+    {
+      "id": "inbox-untouched-without-mention",
+      "command": "add a renew passport task for friday",
+      "day": "2026-09-15",
+      "timeZone": "America/New_York",
+      "uses": "charity",
+      "inbox": [
+        {
+          "text": "Renew passport"
+        }
+      ],
+      "expected": {
+        "kind": "proposal",
+        "operations": [
+          {
+            "type": "create_task",
+            "title": "Renew passport",
+            "scheduledDay": "2026-09-18",
+            "fromInbox": null
+          }
+        ]
+      }
+    },
+    {
+      "id": "choose-day-around-days-off",
+      "command": "when should I do pick paint colors?",
+      "day": "2026-09-15",
+      "timeZone": "America/New_York",
+      "uses": "charity",
+      "daysOff": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "expected": {
+        "kind": "proposal",
+        "operations": [
+          {
+            "type": "schedule_task",
+            "task": "Pick paint colors"
+          }
+        ]
       }
     }
   ]

@@ -5,6 +5,11 @@ import { check, Update } from "@tauri-apps/plugin-updater";
 import { api, DatabaseStatus, ImportSelection, OllamaStatus } from "./api";
 import { Glyph } from "./Geometry";
 import { ModelPicker, TESTED_MODEL } from "./ModelPicker";
+import {
+  KeyboardShortcutList,
+  QuickCaptureSetting,
+  WeekStartSetting,
+} from "./PlanningSettings";
 
 type Props = {
   status: OllamaStatus | null;
@@ -106,7 +111,7 @@ export function SettingsModal({
   async function restore(name: string) {
     if (
       !window.confirm(
-        "Restore this backup? DayPlan creates a backup of the current database first.",
+        "Restore this backup? Delve Planner creates a backup of the current database first.",
       )
     )
       return;
@@ -124,8 +129,8 @@ export function SettingsModal({
       setUpdate(next);
       setUpdateState(
         next
-          ? `DayPlan ${next.version} is available.`
-          : "DayPlan is up to date.",
+          ? `Delve Planner ${next.version} is available.`
+          : "Delve Planner is up to date.",
       );
     });
   }
@@ -134,7 +139,7 @@ export function SettingsModal({
     if (
       !update ||
       !window.confirm(
-        `Install DayPlan ${update.version}? The signed package will be downloaded, installed, and DayPlan will restart.`,
+        `Install Delve Planner ${update.version}? The signed package will be downloaded, installed, and Delve Planner will restart.`,
       )
     )
       return;
@@ -163,7 +168,7 @@ export function SettingsModal({
       >
         <header>
           <div>
-            <p>DAYPLAN / LOCAL DESKTOP</p>
+            <p>DELVE PLANNER / LOCAL DESKTOP</p>
             <h2 id="settings-title">Settings & recovery</h2>
           </div>
           <button onClick={onClose} aria-label="Close settings">
@@ -177,7 +182,7 @@ export function SettingsModal({
             title="Local model"
             subtitle={
               status?.phase === "stopped"
-                ? "Idle. DayPlan starts the model only while it answers you."
+                ? "Idle. Delve Planner starts the model only while it answers you."
                 : (status?.detail ?? "Checking the local runtime…")
             }
           >
@@ -218,7 +223,7 @@ export function SettingsModal({
                   onClick={() => {
                     if (
                       !window.confirm(
-                        `Remove ${TESTED_MODEL} and all model data DayPlan downloaded? Models in your own Ollama folder and your schedule are not affected.`,
+                        `Remove ${TESTED_MODEL} and all model data Delve Planner downloaded? Models in your own Ollama folder and your schedule are not affected.`,
                       )
                     )
                       return;
@@ -246,18 +251,35 @@ export function SettingsModal({
 
           <SettingsBlock
             index="02"
+            title="Planning"
+            subtitle="Preferences kept on this computer, not in exports."
+          >
+            <WeekStartSetting onMessage={onMessage} />
+            <QuickCaptureSetting onMessage={onMessage} />
+          </SettingsBlock>
+
+          <SettingsBlock
+            index="03"
+            title="Keyboard"
+            subtitle="Shortcuts that work anywhere in the window."
+          >
+            <KeyboardShortcutList />
+          </SettingsBlock>
+
+          <SettingsBlock
+            index="04"
             title="Event reminders"
             subtitle="One optional reminder per timed event."
           >
             <p>
               Permission is requested only when a reminder is first enabled.
-              Keep DayPlan running in the tray; choosing Quit stops reminder
-              delivery.
+              Keep Delve Planner running in the tray; choosing Quit stops
+              reminder delivery.
             </p>
           </SettingsBlock>
 
           <SettingsBlock
-            index="03"
+            index="05"
             title="Data & recovery"
             subtitle={
               database?.ready
@@ -332,7 +354,7 @@ export function SettingsModal({
           </SettingsBlock>
 
           <SettingsBlock
-            index="04"
+            index="06"
             title="Private diagnostics"
             subtitle="Export only when you choose to share troubleshooting data."
           >
@@ -357,8 +379,8 @@ export function SettingsModal({
           </SettingsBlock>
 
           <SettingsBlock
-            index="05"
-            title={`DayPlan ${version}`}
+            index="07"
+            title={`Delve Planner ${version}`}
             subtitle={updateState}
           >
             {update?.body && (

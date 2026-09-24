@@ -255,7 +255,7 @@ describe("calendar status", () => {
       ...calendar,
       problem: {
         code: "unreachable" as const,
-        message: "DayPlan couldn't reach the calendar service.",
+        message: "Delve Planner couldn't reach the calendar service.",
         retryable: true,
       },
     };

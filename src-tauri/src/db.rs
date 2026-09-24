@@ -4,6 +4,7 @@ mod horizons;
 mod planning;
 mod profile;
 mod proposals;
+mod task_details;
 mod team;
 
 use crate::error::{AppError, AppResult};
@@ -33,17 +34,23 @@ use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use task_details::{
+    ensure_task_details_schema, has_circular_waits, recurrence_json, to_json, validate_checklist,
+    validate_plan_links, validate_waiting_on,
+};
 use team::{
     validate_links, validate_person_shape, validate_workstream_shape, workstream_plan_mismatch,
 };
 use uuid::Uuid;
 
 pub use availability::CapacityFacts;
-pub use proposals::{accepted_operations, validate_model_response, CandidateRequest};
+pub use proposals::{
+    accepted_operations, edited_proposal, mentions_inbox, validate_model_response, CandidateRequest,
+};
 pub(crate) use proposals::{fold, planning_tokens, title_matches};
 
-pub const CURRENT_SCHEMA_VERSION: u32 = 7;
-pub const EXPORT_FORMAT_VERSION: u32 = 6;
+pub const CURRENT_SCHEMA_VERSION: u32 = 8;
+pub const EXPORT_FORMAT_VERSION: u32 = 7;
 const BACKUP_RETENTION: usize = 5;
 const REMINDER_DELIVERY_GRACE_MINUTES: i64 = 15;
 const MAX_IMPORT_RECORDS: usize = 100_000;
@@ -210,8 +217,8 @@ impl PlannerDatabase {
             transaction.execute(
                 "INSERT INTO plans
                  (id, title, description, status, start_date, target_date, color, archived,
-                  revision, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                  links, revision, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                 params![
                     plan.id,
                     plan.title.trim(),
@@ -221,6 +228,7 @@ impl PlannerDatabase {
                     plan.target_date,
                     plan.color.map(PlanColor::as_str),
                     plan.archived as i64,
+                    to_json(&plan.links)?,
                     plan.revision,
                     plan.created_at,
                     plan.updated_at
@@ -304,9 +312,10 @@ impl PlannerDatabase {
                 "INSERT INTO tasks
                  (id, title, description, plan_id, milestone_id, workstream_id, owner_id,
                   due_date, scheduled_day, planned_week, estimated_minutes, status, priority,
-                  completed_at, sort_order, revision, created_at, updated_at)
+                  completed_at, recurrence, checklist, sort_order, revision, created_at,
+                  updated_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
-                         ?17, ?18)",
+                         ?17, ?18, ?19, ?20)",
                 params![
                     task.id,
                     task.title.trim(),
@@ -322,12 +331,25 @@ impl PlannerDatabase {
                     task.status.as_str(),
                     task.priority.as_str(),
                     task.completed_at,
+                    recurrence_json(task.recurrence.as_ref())?,
+                    to_json(&task.checklist)?,
                     task.sort_order,
                     task.revision,
                     task.created_at,
                     task.updated_at
                 ],
             )?;
+        }
+        // Waits go in once every task exists, since either end may come later in the file.
+        for task in &bundle.tasks {
+            for (position, prerequisite) in task.waiting_on.iter().enumerate() {
+                transaction.execute(
+                    "INSERT INTO task_dependencies
+                     (task_id, depends_on_task_id, position, created_at)
+                     VALUES (?1, ?2, ?3, ?4)",
+                    params![task.id, prerequisite, position as i64, task.updated_at],
+                )?;
+            }
         }
         for item in &bundle.inbox_items {
             transaction.execute(
@@ -1051,6 +1073,12 @@ fn validate_time(start_at_utc: &str, time_zone: &str) -> AppResult<(String, Stri
 fn utc_string(value: DateTime<Utc>) -> String {
     value.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
+/// Today's date on this device. Delve Planner runs where its user is, so the device's zone is the
+/// user's; repeating tasks use it to keep a late finish from creating an overdue occurrence.
+fn local_today() -> NaiveDate {
+    chrono::Local::now().date_naive()
+}
+
 fn now() -> String {
     utc_string(Utc::now())
 }
@@ -1073,6 +1101,7 @@ fn migrate(connection: &Connection, from_version: u32) -> AppResult<()> {
         ensure_horizon_schema(connection)?;
         ensure_availability_schema(connection)?;
         ensure_profile_schema(connection)?;
+        ensure_task_details_schema(connection)?;
         connection.pragma_update(None, "user_version", CURRENT_SCHEMA_VERSION)?;
         Ok::<(), AppError>(())
     })();
@@ -1348,6 +1377,7 @@ fn create_backup_file(path: &Path, schema: u32, reason: &str) -> AppResult<Backu
         .take(24)
         .collect::<String>();
     let timestamp = Utc::now().format("%Y%m%dT%H%M%SZ");
+    // Keeps the app's former name, DayPlan: existing backups and the listing below use it.
     let name = format!("dayplan-v{schema}-{timestamp}-{safe_reason}.sqlite3");
     let destination = backup_directory(path)?.join(&name);
     fs::copy(path, &destination)?;
@@ -1440,7 +1470,7 @@ pub fn parse_export_bundle(contents: &str) -> AppResult<ExportBundle> {
     }
     match serde_json::from_str::<FormatHeader>(contents)?.format_version {
         1 | 2 => Ok(upgrade_legacy_bundle(serde_json::from_str(contents)?)),
-        3..=5 | EXPORT_FORMAT_VERSION => {
+        3..=6 | EXPORT_FORMAT_VERSION => {
             let bundle: ExportBundle = serde_json::from_str(contents)?;
             Ok(ExportBundle {
                 format_version: EXPORT_FORMAT_VERSION,
@@ -1448,7 +1478,7 @@ pub fn parse_export_bundle(contents: &str) -> AppResult<ExportBundle> {
             })
         }
         other => Err(AppError::Validation(format!(
-            "Unsupported DayPlan export format {other}."
+            "Unsupported Delve Planner export format {other}."
         ))),
     }
 }
@@ -1498,6 +1528,9 @@ fn upgrade_legacy_bundle(legacy: LegacyExportBundle) -> ExportBundle {
                 },
                 priority: TaskPriority::Normal,
                 completed_at: task.completed_at,
+                recurrence: None,
+                checklist: Vec::new(),
+                waiting_on: Vec::new(),
                 sort_order: task.sort_order,
                 revision: 1,
                 created_at: task.created_at,
@@ -1511,7 +1544,7 @@ fn upgrade_legacy_bundle(legacy: LegacyExportBundle) -> ExportBundle {
 fn validate_export_bundle(bundle: &ExportBundle) -> AppResult<()> {
     if bundle.format_version != EXPORT_FORMAT_VERSION {
         return Err(AppError::Validation(format!(
-            "Unsupported DayPlan export format {}.",
+            "Unsupported Delve Planner export format {}.",
             bundle.format_version
         )));
     }
@@ -1566,6 +1599,11 @@ fn validate_export_bundle(bundle: &ExportBundle) -> AppResult<()> {
         )?;
         if dates != (plan.start_date.clone(), plan.target_date.clone()) {
             return Err(non_canonical_dates());
+        }
+        if validate_plan_links(&plan.links)? != plan.links {
+            return Err(AppError::Validation(
+                "An imported plan link must be a trimmed web address.".into(),
+            ));
         }
         validate_record_metadata(plan.revision, &plan.created_at, &plan.updated_at)?;
     }
@@ -1723,7 +1761,44 @@ fn validate_export_bundle(bundle: &ExportBundle) -> AppResult<()> {
         if let Some(completed_at) = &task.completed_at {
             validate_timestamp(completed_at)?;
         }
+        if validate_checklist(&task.checklist)? != task.checklist {
+            return Err(AppError::Validation(
+                "An imported checklist item must be trimmed.".into(),
+            ));
+        }
+        if let Some(rule) = &task.recurrence {
+            let Some(day) = task.scheduled_day.as_deref() else {
+                return Err(AppError::Validation(
+                    "An imported repeating task has no day to repeat from.".into(),
+                ));
+            };
+            if task.status == TaskStatus::Done
+                || crate::recurrence::normalized(rule, parse_day(day)?)? != *rule
+            {
+                return Err(AppError::Validation(
+                    "An imported repeat rule is not in the form Delve Planner saves.".into(),
+                ));
+            }
+        }
+        validate_waiting_on(&task.waiting_on)?;
         validate_record_metadata(task.revision, &task.created_at, &task.updated_at)?;
+    }
+    let mut waits = HashMap::new();
+    for task in &bundle.tasks {
+        for prerequisite in &task.waiting_on {
+            if prerequisite == &task.id {
+                return Err(AppError::Validation("A task can't wait on itself.".into()));
+            }
+            if !task_ids.contains(prerequisite) {
+                return Err(missing_reference("A task's wait"));
+            }
+        }
+        waits.insert(task.id.as_str(), task.waiting_on.as_slice());
+    }
+    if has_circular_waits(&waits) {
+        return Err(AppError::Validation(
+            "The export has tasks that wait on each other in a circle.".into(),
+        ));
     }
     let mut inbox_ids = HashSet::new();
     for item in &bundle.inbox_items {
@@ -1858,6 +1933,7 @@ mod tests {
             start_date: None,
             target_date: Some("2026-10-16".into()),
             color: Some(PlanColor::Clay),
+            links: Vec::new(),
         }
     }
 
@@ -1875,6 +1951,9 @@ mod tests {
             estimated_minutes: None,
             status: TaskStatus::Todo,
             priority: TaskPriority::Normal,
+            checklist: Vec::new(),
+            recurrence: None,
+            waiting_on: Vec::new(),
         }
     }
 
@@ -1915,6 +1994,7 @@ mod tests {
                     duration_minutes: 60,
                     reminder_minutes_before: None,
                     plan: None,
+                    from_inbox: None,
                 },
                 MutationOperation::RescheduleEvent {
                     event_id: existing.id,
@@ -2692,14 +2772,586 @@ mod tests {
         let migrated = PlannerDatabase::open(&path).unwrap();
 
         assert_eq!(migrated.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
-        // The profile arrives empty: DayPlan assumes nothing about how anyone plans.
+        // The profile arrives empty: Delve Planner assumes nothing about how anyone plans.
         let profile = migrated.planning_profile().unwrap();
         assert_eq!(profile.preferred_start_minute, None);
         assert_eq!(profile.max_planned_minutes, None);
         assert!(profile.no_work_days.is_empty());
         assert!(profile.muted_observations.is_empty());
-        // And with no history behind it, DayPlan has noticed nothing about an existing database.
+        // And with no history behind it, Delve Planner has noticed nothing about an existing
+        // database.
         assert!(migrated.observations().unwrap().is_empty());
+    }
+
+    fn local_day(offset: i64) -> String {
+        (local_today() + ChronoDuration::days(offset))
+            .format("%Y-%m-%d")
+            .to_string()
+    }
+
+    fn every_day() -> crate::model::Recurrence {
+        crate::model::Recurrence {
+            frequency: crate::model::RecurrenceFrequency::Daily,
+            interval: 1,
+            weekdays: Vec::new(),
+            month_day: None,
+        }
+    }
+
+    fn open_tasks(database: &PlannerDatabase) -> Vec<Task> {
+        database
+            .all_tasks()
+            .unwrap()
+            .into_iter()
+            .filter(|task| task.status != TaskStatus::Done)
+            .collect()
+    }
+
+    #[test]
+    fn finishing_a_repeating_task_creates_the_next_occurrence_once() {
+        use crate::model::{ChecklistItem, UpdateTaskInput};
+        let mut database = database();
+        let task = database
+            .create_task(crate::model::CreateTaskInput {
+                scheduled_day: Some(local_day(0)),
+                due_date: Some(local_day(2)),
+                estimated_minutes: Some(20),
+                recurrence: Some(every_day()),
+                checklist: vec![ChecklistItem {
+                    text: "Water the ferns".into(),
+                    done: true,
+                }],
+                ..task_input("Water plants")
+            })
+            .unwrap();
+
+        let finished = database
+            .update_task(UpdateTaskInput {
+                status: TaskStatus::Done,
+                ..UpdateTaskInput::keeping(&task)
+            })
+            .unwrap();
+
+        assert_eq!(finished.recurrence, None, "the rule moves to the next one");
+        let [next] = open_tasks(&database).try_into().unwrap();
+        assert_eq!(next.title, "Water plants");
+        assert_eq!(next.scheduled_day.as_deref(), Some(local_day(1).as_str()));
+        assert_eq!(
+            next.due_date.as_deref(),
+            Some(local_day(3).as_str()),
+            "the due date keeps its distance from the day"
+        );
+        assert_eq!(
+            (next.recurrence.clone(), next.estimated_minutes),
+            (Some(every_day()), Some(20))
+        );
+        assert!(!next.checklist[0].done, "the checklist starts over");
+
+        // Reopening the finished one and finishing it again makes no second copy.
+        let reopened = database
+            .update_task(UpdateTaskInput {
+                status: TaskStatus::Todo,
+                ..UpdateTaskInput::keeping(&finished)
+            })
+            .unwrap();
+        database
+            .update_task(UpdateTaskInput {
+                status: TaskStatus::Done,
+                ..UpdateTaskInput::keeping(&reopened)
+            })
+            .unwrap();
+        assert_eq!(database.all_tasks().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn a_repeating_task_finished_through_a_move_also_comes_back() {
+        let mut database = database();
+        let task = database
+            .create_task(crate::model::CreateTaskInput {
+                scheduled_day: Some(local_day(-3)),
+                recurrence: Some(every_day()),
+                ..task_input("Stretch")
+            })
+            .unwrap();
+        database
+            .move_tasks(vec![crate::model::TaskMove {
+                id: task.id.clone(),
+                revision: task.revision,
+                scheduled_day: crate::model::DayChange::Unchanged,
+                planned_week: crate::model::DayChange::Unchanged,
+                status: Some(TaskStatus::Done),
+            }])
+            .unwrap();
+        let [next] = open_tasks(&database).try_into().unwrap();
+        assert_eq!(
+            next.scheduled_day.as_deref(),
+            Some(local_day(1).as_str()),
+            "finished late, it comes back tomorrow rather than already overdue"
+        );
+    }
+
+    #[test]
+    fn skipping_moves_a_missed_occurrence_past_today() {
+        use chrono::{Datelike, Weekday};
+        let mut database = database();
+        let mut monday = local_today() - ChronoDuration::days(14);
+        while monday.weekday() != Weekday::Mon {
+            monday -= ChronoDuration::days(1);
+        }
+        let task = database
+            .create_task(crate::model::CreateTaskInput {
+                scheduled_day: Some(monday.format("%Y-%m-%d").to_string()),
+                recurrence: Some(crate::model::Recurrence {
+                    frequency: crate::model::RecurrenceFrequency::Weekly,
+                    weekdays: vec![1],
+                    ..every_day()
+                }),
+                ..task_input("Weekly review")
+            })
+            .unwrap();
+
+        let skipped = database.skip_occurrence(&task.id, task.revision).unwrap();
+
+        let day = parse_day(skipped.scheduled_day.as_deref().unwrap()).unwrap();
+        assert!(day > local_today());
+        assert_eq!(day.weekday(), Weekday::Mon);
+        assert_eq!(skipped.recurrence, task.recurrence);
+        assert_eq!(
+            database.all_tasks().unwrap().len(),
+            1,
+            "skipping adds no copy"
+        );
+        let once = database
+            .create_task(crate::model::CreateTaskInput {
+                scheduled_day: Some(local_day(0)),
+                ..task_input("Once")
+            })
+            .unwrap();
+        assert!(matches!(
+            database.skip_occurrence(&once.id, once.revision),
+            Err(AppError::Validation(_))
+        ));
+    }
+
+    #[test]
+    fn repeat_rules_need_an_open_task_with_a_day() {
+        let mut database = database();
+        let without_a_day = database.create_task(crate::model::CreateTaskInput {
+            due_date: Some(local_day(3)),
+            recurrence: Some(every_day()),
+            ..task_input("Pay rent")
+        });
+        assert!(matches!(without_a_day, Err(AppError::Validation(_))));
+        let finished = database.create_task(crate::model::CreateTaskInput {
+            scheduled_day: Some(local_day(0)),
+            status: TaskStatus::Done,
+            recurrence: Some(every_day()),
+            ..task_input("Pay rent")
+        });
+        assert!(matches!(finished, Err(AppError::Validation(_))));
+        let bad_interval = database.create_task(crate::model::CreateTaskInput {
+            scheduled_day: Some(local_day(0)),
+            recurrence: Some(crate::model::Recurrence {
+                interval: 0,
+                ..every_day()
+            }),
+            ..task_input("Pay rent")
+        });
+        assert!(matches!(bad_interval, Err(AppError::Validation(_))));
+    }
+
+    #[test]
+    fn waits_keep_their_order_refuse_circles_and_follow_their_tasks() {
+        use crate::model::UpdateTaskInput;
+        fn make(database: &mut PlannerDatabase, title: &str, waiting_on: Vec<String>) -> Task {
+            database
+                .create_task(crate::model::CreateTaskInput {
+                    scheduled_day: Some(local_day(1)),
+                    waiting_on,
+                    ..task_input(title)
+                })
+                .unwrap()
+        }
+        let mut database = database();
+        let venue = make(&mut database, "Book venue", Vec::new());
+        let caterer = make(&mut database, "Book caterer", Vec::new());
+        let invites = make(
+            &mut database,
+            "Send invites",
+            vec![venue.id.clone(), caterer.id.clone()],
+        );
+        assert_eq!(invites.waiting_on, [venue.id.clone(), caterer.id.clone()]);
+
+        let circle = database.update_task(UpdateTaskInput {
+            waiting_on: vec![invites.id.clone()],
+            ..UpdateTaskInput::keeping(&venue)
+        });
+        assert!(matches!(circle, Err(AppError::Validation(_))));
+        let itself = database.update_task(UpdateTaskInput {
+            waiting_on: vec![venue.id.clone()],
+            ..UpdateTaskInput::keeping(&venue)
+        });
+        assert!(matches!(itself, Err(AppError::Validation(_))));
+
+        // Deleting a task something waits on removes the wait and leaves the waiting task alone.
+        database.delete_task(&caterer.id, caterer.revision).unwrap();
+        let refreshed = database
+            .all_tasks()
+            .unwrap()
+            .into_iter()
+            .find(|task| task.id == invites.id)
+            .unwrap();
+        assert_eq!(refreshed.waiting_on, std::slice::from_ref(&venue.id));
+        assert_eq!(refreshed.revision, invites.revision);
+
+        // An editor opened before the deletion can still save; the missing wait is dropped.
+        let stale = Task {
+            waiting_on: vec![venue.id.clone(), caterer.id.clone()],
+            ..refreshed
+        };
+        let saved = database
+            .update_task(UpdateTaskInput {
+                title: "Send the invites".into(),
+                ..UpdateTaskInput::keeping(&stale)
+            })
+            .unwrap();
+        assert_eq!(saved.waiting_on, [venue.id]);
+    }
+
+    #[test]
+    fn plans_keep_web_links_only() {
+        use crate::model::{PlanLink, UpdatePlanInput};
+        let mut database = database();
+        let plan = database
+            .create_plan(crate::model::CreatePlanInput {
+                links: vec![PlanLink {
+                    title: " Venue contract ".into(),
+                    url: "https://example.com/contract".into(),
+                }],
+                ..plan_input("Charity week")
+            })
+            .unwrap();
+        assert_eq!(plan.links[0].title, "Venue contract");
+        assert_eq!(plan.links[0].url, "https://example.com/contract");
+        let local_file = database.update_plan(UpdatePlanInput {
+            links: vec![PlanLink {
+                title: String::new(),
+                url: "file:///etc/hosts".into(),
+            }],
+            ..UpdatePlanInput::keeping(&plan)
+        });
+        assert!(matches!(local_file, Err(AppError::Validation(_))));
+    }
+
+    #[test]
+    fn migrates_schema_seven_to_task_details_and_plan_links() {
+        let directory = tempdir().unwrap().keep();
+        let path = directory.join("dayplan.sqlite3");
+        let connection = Connection::open(&path).unwrap();
+        connection.execute_batch(SCHEMA_TWO_TABLES).unwrap();
+        ensure_reminder_columns(&connection).unwrap();
+        ensure_planning_schema(&connection).unwrap();
+        ensure_team_schema(&connection).unwrap();
+        ensure_horizon_schema(&connection).unwrap();
+        ensure_availability_schema(&connection).unwrap();
+        ensure_profile_schema(&connection).unwrap();
+        connection.pragma_update(None, "user_version", 7).unwrap();
+        let stamp = "2026-09-14T12:00:00.000Z";
+        let plan_id = Uuid::new_v4().to_string();
+        let task_id = Uuid::new_v4().to_string();
+        connection
+            .execute(
+                "INSERT INTO plans (id, title, revision, created_at, updated_at)
+                 VALUES (?1, 'Move', 2, ?2, ?2)",
+                params![plan_id, stamp],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO tasks (id, title, plan_id, status, revision, created_at, updated_at)
+                 VALUES (?1, 'Pack books', ?2, 'todo', 3, ?3, ?3)",
+                params![task_id, plan_id, stamp],
+            )
+            .unwrap();
+        drop(connection);
+
+        let migrated = PlannerDatabase::open(&path).unwrap();
+
+        assert_eq!(migrated.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+        assert!(migrated.list_backups().unwrap()[0]
+            .name
+            .starts_with("dayplan-v7-"));
+        let workspace = migrated.plan_workspace(&plan_id).unwrap();
+        assert!(workspace.plan.links.is_empty());
+        let task = &workspace.tasks[0];
+        assert_eq!(
+            (
+                task.revision,
+                task.recurrence.is_none(),
+                task.checklist.len(),
+                task.waiting_on.len()
+            ),
+            (3, true, 0, 0),
+            "existing records gain empty details and keep their revisions"
+        );
+    }
+
+    #[test]
+    fn export_round_trips_task_details_and_reads_format_six() {
+        use crate::model::{ChecklistItem, PlanLink};
+        let mut database = database();
+        let plan = database
+            .create_plan(crate::model::CreatePlanInput {
+                links: vec![PlanLink {
+                    title: "Floor plan".into(),
+                    url: "https://example.com/plan.pdf".into(),
+                }],
+                ..plan_input("Move")
+            })
+            .unwrap();
+        let boxes = database
+            .create_task(crate::model::CreateTaskInput {
+                plan_id: Some(plan.id.clone()),
+                ..task_input("Buy boxes")
+            })
+            .unwrap();
+        database
+            .create_task(crate::model::CreateTaskInput {
+                plan_id: Some(plan.id.clone()),
+                scheduled_day: Some("2030-09-16".into()),
+                recurrence: Some(every_day()),
+                checklist: vec![ChecklistItem {
+                    text: "Kitchen".into(),
+                    done: false,
+                }],
+                waiting_on: vec![boxes.id.clone()],
+                ..task_input("Pack a room")
+            })
+            .unwrap();
+
+        let bundle = database.export_bundle().unwrap();
+        let json = serde_json::to_value(&bundle).unwrap();
+        let parsed = parse_export_bundle(&json.to_string()).unwrap();
+        assert_eq!(parsed, bundle);
+        database.import_bundle(&parsed).unwrap();
+        let reexported = database.export_bundle().unwrap();
+        assert_eq!(reexported.tasks, bundle.tasks);
+        assert_eq!(reexported.plans, bundle.plans);
+
+        // A format 6 file has none of these fields; its records import with none.
+        let mut format_six = json.clone();
+        format_six["formatVersion"] = serde_json::json!(6);
+        for task in format_six["tasks"].as_array_mut().unwrap() {
+            let task = task.as_object_mut().unwrap();
+            for field in ["recurrence", "checklist", "waitingOn"] {
+                task.remove(field);
+            }
+        }
+        for plan in format_six["plans"].as_array_mut().unwrap() {
+            plan.as_object_mut().unwrap().remove("links");
+        }
+        let upgraded = parse_export_bundle(&format_six.to_string()).unwrap();
+        assert_eq!(upgraded.format_version, EXPORT_FORMAT_VERSION);
+        assert!(upgraded.tasks.iter().all(|task| task.waiting_on.is_empty()));
+        PlannerDatabase::preview_import(&upgraded).unwrap();
+
+        let mut circular = bundle.clone();
+        let first = circular.tasks[0].id.clone();
+        let second = circular.tasks[1].id.clone();
+        circular.tasks[0].waiting_on = vec![second];
+        circular.tasks[1].waiting_on = vec![first];
+        assert!(matches!(
+            PlannerDatabase::preview_import(&circular),
+            Err(AppError::Validation(_))
+        ));
+        let mut unsorted = bundle;
+        if let Some(rule) = unsorted.tasks[1].recurrence.as_mut() {
+            rule.interval = 0;
+        }
+        assert!(matches!(
+            PlannerDatabase::preview_import(&unsorted),
+            Err(AppError::Validation(_))
+        ));
+    }
+
+    #[test]
+    fn templates_start_a_plan_with_their_workstreams() {
+        use crate::model::PlanTemplate;
+        let mut database = database();
+        let gala = database
+            .create_plan_from_template(plan_input("Spring gala"), PlanTemplate::Event)
+            .unwrap();
+        let names = database
+            .plan_workspace(&gala.id)
+            .unwrap()
+            .workstreams
+            .into_iter()
+            .map(|workstream| workstream.name)
+            .collect::<Vec<_>>();
+        assert_eq!(names, PlanTemplate::Event.workstreams());
+        for template in [
+            PlanTemplate::Trip,
+            PlanTemplate::Move,
+            PlanTemplate::Research,
+            PlanTemplate::JobSearch,
+            PlanTemplate::PersonalProject,
+        ] {
+            let plan = database
+                .create_plan_from_template(plan_input("Another plan"), template)
+                .unwrap();
+            assert_eq!(
+                database.plan_workspace(&plan.id).unwrap().workstreams.len(),
+                template.workstreams().len()
+            );
+        }
+        let invalid = database.create_plan_from_template(plan_input("   "), PlanTemplate::Trip);
+        assert!(matches!(invalid, Err(AppError::Validation(_))));
+        assert_eq!(
+            database.list_plans("2030-01-01").unwrap().len(),
+            6,
+            "a refused template leaves nothing behind"
+        );
+    }
+
+    #[test]
+    fn duplicating_a_plan_copies_its_shape_and_open_work_with_dates_moved() {
+        use crate::model::{
+            ChecklistItem, CreateMilestoneInput, CreateWorkstreamInput, DuplicatePlanInput,
+            MilestoneStatus, PlanLink, PlanStatus, UpdateTaskInput,
+        };
+        let mut database = database();
+        let source = database
+            .create_plan(crate::model::CreatePlanInput {
+                start_date: Some("2030-09-01".into()),
+                target_date: Some("2030-09-30".into()),
+                links: vec![PlanLink {
+                    title: "Venue".into(),
+                    url: "https://example.com/venue".into(),
+                }],
+                ..plan_input("Autumn fair")
+            })
+            .unwrap();
+        let venue = database
+            .create_workstream(CreateWorkstreamInput {
+                plan_id: source.id.clone(),
+                name: "Venue".into(),
+                description: String::new(),
+            })
+            .unwrap();
+        let booked = database
+            .create_milestone(CreateMilestoneInput {
+                plan_id: source.id.clone(),
+                title: "Venue booked".into(),
+                description: String::new(),
+                target_date: Some("2030-09-20".into()),
+                status: MilestoneStatus::Complete,
+                workstream_id: Some(venue.id.clone()),
+            })
+            .unwrap();
+        let tour = database
+            .create_task(crate::model::CreateTaskInput {
+                plan_id: Some(source.id.clone()),
+                milestone_id: Some(booked.id.clone()),
+                workstream_id: Some(venue.id.clone()),
+                scheduled_day: Some("2030-09-10".into()),
+                due_date: Some("2030-09-12".into()),
+                status: TaskStatus::InProgress,
+                checklist: vec![ChecklistItem {
+                    text: "Measure the hall".into(),
+                    done: true,
+                }],
+                ..task_input("Tour the venue")
+            })
+            .unwrap();
+        database
+            .create_task(crate::model::CreateTaskInput {
+                plan_id: Some(source.id.clone()),
+                waiting_on: vec![tour.id.clone()],
+                ..task_input("Sign the contract")
+            })
+            .unwrap();
+        let finished = database
+            .create_task(crate::model::CreateTaskInput {
+                plan_id: Some(source.id.clone()),
+                ..task_input("Shortlist venues")
+            })
+            .unwrap();
+        database
+            .update_task(UpdateTaskInput {
+                status: TaskStatus::Done,
+                ..UpdateTaskInput::keeping(&finished)
+            })
+            .unwrap();
+        database
+            .create_event(CreateEventInput {
+                plan_id: Some(source.id.clone()),
+                ..event_input("Walkthrough", "2030-09-10T14:00:00Z")
+            })
+            .unwrap();
+        let before = database.plan_workspace(&source.id).unwrap();
+
+        let copy = database
+            .duplicate_plan(DuplicatePlanInput {
+                id: source.id.clone(),
+                title: "Autumn fair 2031".into(),
+                shift_days: 7,
+            })
+            .unwrap();
+
+        assert_eq!(copy.status, PlanStatus::Planning);
+        assert_eq!(
+            (copy.start_date.as_deref(), copy.target_date.as_deref()),
+            (Some("2030-09-08"), Some("2030-10-07"))
+        );
+        assert_eq!(copy.links, source.links);
+        let workspace = database.plan_workspace(&copy.id).unwrap();
+        let [new_venue] = workspace.workstreams.try_into().unwrap();
+        assert_eq!(new_venue.name, "Venue");
+        let [milestone] = workspace.milestones.try_into().unwrap();
+        assert_eq!(milestone.status, MilestoneStatus::Pending);
+        assert_eq!(milestone.target_date.as_deref(), Some("2030-09-27"));
+        assert_eq!(
+            milestone.workstream_id.as_deref(),
+            Some(new_venue.id.as_str())
+        );
+        assert_eq!(
+            workspace
+                .tasks
+                .iter()
+                .map(|task| task.title.as_str())
+                .collect::<Vec<_>>(),
+            ["Tour the venue", "Sign the contract"],
+            "finished work stays with the original"
+        );
+        let new_tour = &workspace.tasks[0];
+        assert_eq!(
+            (
+                new_tour.status,
+                new_tour.scheduled_day.as_deref(),
+                new_tour.due_date.as_deref(),
+                new_tour.milestone_id.as_deref(),
+                new_tour.workstream_id.as_deref(),
+                new_tour.checklist[0].done,
+            ),
+            (
+                TaskStatus::Todo,
+                Some("2030-09-17"),
+                Some("2030-09-19"),
+                Some(milestone.id.as_str()),
+                Some(new_venue.id.as_str()),
+                false,
+            )
+        );
+        assert_eq!(
+            workspace.tasks[1].waiting_on,
+            std::slice::from_ref(&new_tour.id)
+        );
+        assert!(workspace.events.is_empty(), "events stay with the original");
+        assert_eq!(
+            serde_json::to_value(database.plan_workspace(&source.id).unwrap()).unwrap(),
+            serde_json::to_value(before).unwrap(),
+            "the original is untouched"
+        );
     }
 
     #[test]

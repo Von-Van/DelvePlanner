@@ -149,30 +149,7 @@ impl PlannerDatabase {
     }
 
     pub fn create_workstream(&mut self, input: CreateWorkstreamInput) -> AppResult<Workstream> {
-        validate_workstream_shape(&input.name, &input.description)?;
-        ensure_plan_exists(&self.connection, &input.plan_id)?;
-        ensure_unique_workstream_name(&self.connection, &input.plan_id, &input.name, None)?;
-        let id = Uuid::new_v4().to_string();
-        let timestamp = now();
-        let next_order: i64 = self.connection.query_row(
-            "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM workstreams WHERE plan_id = ?1",
-            params![input.plan_id],
-            |row| row.get(0),
-        )?;
-        self.connection.execute(
-            "INSERT INTO workstreams
-             (id, plan_id, name, description, sort_order, revision, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6, ?6)",
-            params![
-                id,
-                input.plan_id,
-                input.name.trim(),
-                input.description.trim(),
-                next_order,
-                timestamp
-            ],
-        )?;
-        workstream_by_id(&self.connection, &id)?.ok_or(AppError::NotFound)
+        insert_workstream(&self.connection, &input)
     }
 
     pub fn update_workstream(&mut self, input: UpdateWorkstreamInput) -> AppResult<Workstream> {
@@ -255,12 +232,51 @@ impl PlannerDatabase {
     }
 
     pub(super) fn workstreams_for_plan(&self, plan_id: &str) -> AppResult<Vec<Workstream>> {
-        let mut statement = self.connection.prepare(&format!(
-            "{WORKSTREAM_SELECT} WHERE plan_id = ?1 ORDER BY sort_order ASC, created_at ASC"
-        ))?;
-        let rows = statement.query_map(params![plan_id], workstream_from_row)?;
-        collect(rows)
+        workstreams_in_plan(&self.connection, plan_id)
     }
+}
+
+/// Adds a workstream to a plan, for callers that may be inside a transaction. Names are unique
+/// within a plan, ignoring case.
+pub(super) fn insert_workstream<C: SqlConnection>(
+    connection: &C,
+    input: &CreateWorkstreamInput,
+) -> AppResult<Workstream> {
+    validate_workstream_shape(&input.name, &input.description)?;
+    ensure_plan_exists(connection, &input.plan_id)?;
+    ensure_unique_workstream_name(connection, &input.plan_id, &input.name, None)?;
+    let id = Uuid::new_v4().to_string();
+    let timestamp = now();
+    let next_order: i64 = connection.connection().query_row(
+        "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM workstreams WHERE plan_id = ?1",
+        params![input.plan_id],
+        |row| row.get(0),
+    )?;
+    connection.connection().execute(
+        "INSERT INTO workstreams
+         (id, plan_id, name, description, sort_order, revision, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6, ?6)",
+        params![
+            id,
+            input.plan_id,
+            input.name.trim(),
+            input.description.trim(),
+            next_order,
+            timestamp
+        ],
+    )?;
+    workstream_by_id(connection, &id)?.ok_or(AppError::NotFound)
+}
+
+pub(super) fn workstreams_in_plan<C: SqlConnection>(
+    connection: &C,
+    plan_id: &str,
+) -> AppResult<Vec<Workstream>> {
+    let mut statement = connection.connection().prepare(&format!(
+        "{WORKSTREAM_SELECT} WHERE plan_id = ?1 ORDER BY sort_order ASC, created_at ASC"
+    ))?;
+    let rows = statement.query_map(params![plan_id], workstream_from_row)?;
+    collect(rows)
 }
 
 /// Validates optional plan-scoped links shared by tasks, milestones, and events: a workstream must
@@ -474,6 +490,7 @@ mod tests {
                 start_date: None,
                 target_date: None,
                 color: None,
+                links: Vec::new(),
             })
             .unwrap()
     }
@@ -513,6 +530,9 @@ mod tests {
             estimated_minutes: None,
             status: TaskStatus::Todo,
             priority: TaskPriority::Normal,
+            checklist: Vec::new(),
+            recurrence: None,
+            waiting_on: Vec::new(),
         }
     }
 
@@ -770,6 +790,9 @@ mod tests {
             estimated_minutes: None,
             status: approved.status,
             priority: approved.priority,
+            checklist: Vec::new(),
+            recurrence: None,
+            waiting_on: Vec::new(),
         });
         assert!(matches!(
             moved_without_clearing,
@@ -896,6 +919,7 @@ mod tests {
                 target_date: None,
                 color: None,
                 archived: true,
+                links: Vec::new(),
             })
             .unwrap();
         let deletion = database

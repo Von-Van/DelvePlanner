@@ -1,6 +1,6 @@
 //! The calendar cache: read-only calendars and their events in a SQLite file kept apart from the
 //! planner database, so it is never exported, backed up, or restored with planner data. Events
-//! here never get DayPlan event IDs. Removing a calendar removes everything cached for it.
+//! here never get Delve Planner event IDs. Removing a calendar removes everything cached for it.
 
 use super::ics::{CalendarRead, EventTime, SyncWindow};
 use crate::error::{AppError, AppResult};
@@ -201,7 +201,7 @@ impl CalendarStore {
             transaction.query_row("SELECT COUNT(*) FROM calendars", [], |row| row.get(0))?;
         if count as usize >= MAX_CALENDARS {
             return Err(AppError::Validation(format!(
-                "DayPlan can show up to {MAX_CALENDARS} calendars. Remove one to add another."
+                "Delve Planner can show up to {MAX_CALENDARS} calendars. Remove one to add another."
             )));
         }
         let now = timestamp(Utc::now());

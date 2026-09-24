@@ -1,14 +1,15 @@
-use chrono::{SecondsFormat, Utc};
-use dayplan_desktop::agent::{PlannerAgent, PlannerRequest, MODEL_NAME};
-use dayplan_desktop::db::{CandidateRequest, PlannerDatabase};
-use dayplan_desktop::error::AppError;
-use dayplan_desktop::model::{
-    CreateEventInput, CreateMilestoneInput, CreatePlanInput, CreateTaskInput, ExportBundle,
-    LinkChange, MilestoneStatus, PlanStatus, PlannerResponse, ProposalReference, RecordKind,
-    ReminderChange, TaskPriority, TaskStatus, UpdateEventInput, UpdateMilestoneInput,
-    UpdatePlanInput, UpdateTaskInput,
+use chrono::{Days, NaiveDate, SecondsFormat, Utc};
+use delve_planner_desktop::agent::{asks_to_choose, PlannerAgent, PlannerRequest, MODEL_NAME};
+use delve_planner_desktop::db::{CandidateRequest, PlannerDatabase};
+use delve_planner_desktop::error::AppError;
+use delve_planner_desktop::model::{
+    CreateEventInput, CreateInboxItemInput, CreateMilestoneInput, CreatePlanInput, CreateTaskInput,
+    CreateWorkstreamInput, ExportBundle, LinkChange, MilestoneStatus, PlanStatus, PlannerResponse,
+    PlanningFacts, ProposalReference, RecordKind, ReminderChange, TaskPriority, TaskStatus,
+    UpdateEventInput, UpdateMilestoneInput, UpdatePlanInput, UpdatePlanningProfileInput,
+    UpdateTaskInput,
 };
-use dayplan_desktop::runtime::OllamaRuntimeManager;
+use delve_planner_desktop::runtime::OllamaRuntimeManager;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::HashMap;
@@ -41,6 +42,10 @@ struct FixtureRecords {
     tasks: Vec<FixtureTask>,
     #[serde(default)]
     events: Vec<FixtureEvent>,
+    #[serde(default)]
+    workstreams: Vec<FixtureWorkstream>,
+    #[serde(default)]
+    inbox: Vec<FixtureInboxItem>,
 }
 
 #[derive(Deserialize)]
@@ -60,6 +65,13 @@ struct EvalCase {
     tasks: Vec<FixtureTask>,
     #[serde(default)]
     events: Vec<FixtureEvent>,
+    #[serde(default)]
+    workstreams: Vec<FixtureWorkstream>,
+    #[serde(default)]
+    inbox: Vec<FixtureInboxItem>,
+    /// ISO weekdays the planning profile marks as days off, Monday = 1.
+    #[serde(default)]
+    days_off: Vec<u8>,
     /// The plan the request is made from, by title.
     #[serde(default)]
     active_plan: Option<String>,
@@ -113,8 +125,26 @@ struct FixtureTask {
     status: Option<TaskStatus>,
     #[serde(default)]
     priority: Option<TaskPriority>,
+    /// A workstream of the task's plan, by name.
+    #[serde(default)]
+    workstream: Option<String>,
     #[serde(default)]
     deleted: bool,
+}
+
+#[derive(Deserialize, Clone)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct FixtureWorkstream {
+    plan: String,
+    name: String,
+}
+
+#[derive(Deserialize, Clone)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct FixtureInboxItem {
+    text: String,
+    #[serde(default)]
+    notes: String,
 }
 
 #[derive(Deserialize, Clone)]
@@ -227,6 +257,8 @@ async fn main() {
                         prepend(&mut case.milestones, &shared.milestones);
                         prepend(&mut case.tasks, &shared.tasks);
                         prepend(&mut case.events, &shared.events);
+                        prepend(&mut case.workstreams, &shared.workstreams);
+                        prepend(&mut case.inbox, &shared.inbox);
                     }
                     cases.push(case);
                 }
@@ -246,7 +278,7 @@ async fn main() {
         eval_data_directory(),
     )
     .unwrap_or_else(|error| {
-        eprintln!("Live evaluation cannot initialize DayPlan's bundled runtime: {error}");
+        eprintln!("Live evaluation cannot initialize Delve Planner's bundled runtime: {error}");
         std::process::exit(2)
     });
     let agent = PlannerAgent::new(runtime.endpoint(), MODEL_NAME);
@@ -254,7 +286,9 @@ async fn main() {
     let status = runtime.started_status(&agent).await;
     if !status.running || !status.model_installed {
         eprintln!("Live evaluation cannot start: {}", status.detail);
-        eprintln!("The gate runs against {MODEL_NAME}; install it in DayPlan or Ollama first.");
+        eprintln!(
+            "The gate runs against {MODEL_NAME}; install it in Delve Planner or Ollama first."
+        );
         std::process::exit(2);
     }
     let mut runs = Vec::new();
@@ -301,18 +335,18 @@ fn prepend<T: Clone>(target: &mut Vec<T>, shared: &[T]) {
     target.extend(own);
 }
 
-/// Where the evaluation keeps its own runtime state. Never the app's own directory: DayPlan
+/// Where the evaluation keeps its own runtime state. Never the app's own directory: Delve Planner
 /// records the process ID of the server it started there, and a second runtime reading that
 /// record would stop the running app's model as a leftover.
 fn eval_data_directory() -> PathBuf {
-    if let Some(path) = env::var_os("DAYPLAN_EVAL_DATA_DIR") {
+    if let Some(path) = env::var_os("DELVE_PLANNER_EVAL_DATA_DIR") {
         return PathBuf::from(path);
     }
-    env::temp_dir().join("dayplan-eval-data")
+    env::temp_dir().join("delve-planner-eval-data")
 }
 
 /// The evaluation reads models from wherever the machine keeps them, so it doesn't need its own
-/// copy of a five-gigabyte download. DayPlan's own folder is offered to the runtime as the
+/// copy of a five-gigabyte download. Delve Planner's own folder is offered to the runtime as the
 /// machine's model folder, which it only ever reads from.
 fn point_at_installed_models() {
     if env::var_os("OLLAMA_MODELS").is_some() {
@@ -399,6 +433,7 @@ fn seed(database: &mut PlannerDatabase, case: &EvalCase) -> HashMap<String, Stri
                 start_date: fixture.start_date.clone(),
                 target_date: fixture.target_date.clone(),
                 color: None,
+                links: Vec::new(),
             })
             .expect("valid fixture plan");
         if fixture.deleted {
@@ -426,6 +461,41 @@ fn seed(database: &mut PlannerDatabase, case: &EvalCase) -> HashMap<String, Stri
             .expect("valid fixture milestone");
         milestone_ids.insert((fixture.plan.clone(), fixture.title.clone()), milestone.id);
     }
+    let mut workstream_ids = HashMap::new();
+    for fixture in &case.workstreams {
+        let workstream = database
+            .create_workstream(CreateWorkstreamInput {
+                plan_id: plan_id(&fixture.plan),
+                name: fixture.name.clone(),
+                description: String::new(),
+            })
+            .expect("valid fixture workstream");
+        workstream_ids.insert((fixture.plan.clone(), fixture.name.clone()), workstream.id);
+    }
+    for fixture in &case.inbox {
+        database
+            .create_inbox_item(CreateInboxItemInput {
+                text: fixture.text.clone(),
+                notes: fixture.notes.clone(),
+            })
+            .expect("valid fixture inbox item");
+    }
+    if !case.days_off.is_empty() {
+        let profile = database.planning_profile().expect("profile");
+        database
+            .update_planning_profile(UpdatePlanningProfileInput {
+                revision: profile.revision,
+                preferred_start_minute: None,
+                preferred_end_minute: None,
+                max_planned_minutes: None,
+                focus_minutes: None,
+                break_minutes: None,
+                no_work_days: case.days_off.clone(),
+                energy: None,
+                muted_observations: Vec::new(),
+            })
+            .expect("fixture days off");
+    }
     for fixture in &case.tasks {
         let task = database
             .create_task(CreateTaskInput {
@@ -439,7 +509,13 @@ fn seed(database: &mut PlannerDatabase, case: &EvalCase) -> HashMap<String, Stri
                         .cloned()
                         .unwrap_or_else(|| panic!("{}: unknown fixture milestone {title}", case.id))
                 }),
-                workstream_id: None,
+                workstream_id: fixture.workstream.as_ref().map(|name| {
+                    let plan = fixture.plan.clone().expect("a workstream task has a plan");
+                    workstream_ids
+                        .get(&(plan, name.clone()))
+                        .cloned()
+                        .unwrap_or_else(|| panic!("{}: unknown fixture workstream {name}", case.id))
+                }),
                 owner_id: None,
                 due_date: fixture.due_date.clone(),
                 scheduled_day: fixture.scheduled_day.clone(),
@@ -447,6 +523,9 @@ fn seed(database: &mut PlannerDatabase, case: &EvalCase) -> HashMap<String, Stri
                 estimated_minutes: None,
                 status: fixture.status.unwrap_or(TaskStatus::Todo),
                 priority: fixture.priority.unwrap_or(TaskPriority::Normal),
+                checklist: Vec::new(),
+                recurrence: None,
+                waiting_on: Vec::new(),
             })
             .expect("valid fixture task");
         if fixture.deleted {
@@ -496,6 +575,7 @@ fn delete_plan(database: &mut PlannerDatabase, id: &str) {
             target_date: plan.target_date,
             color: plan.color,
             archived: true,
+            links: Vec::new(),
         })
         .expect("archive plan");
     database
@@ -521,7 +601,44 @@ fn titles(database: &PlannerDatabase) -> HashMap<String, String> {
             .into_iter()
             .map(|event| (event.id, event.title)),
     );
+    titles.extend(
+        bundle
+            .workstreams
+            .into_iter()
+            .map(|workstream| (workstream.id, workstream.name)),
+    );
+    titles.extend(
+        bundle
+            .inbox_items
+            .into_iter()
+            .map(|item| (item.id, item.text)),
+    );
     titles
+}
+
+/// Spare time on the coming days, as the app gives it to requests that hand over the timing.
+/// The evaluation has no calendars, so only Delve Planner's own events and planned work take time.
+fn planning_facts(database: &PlannerDatabase, case: &EvalCase) -> PlanningFacts {
+    const DAYS: u32 = 14;
+    let first = NaiveDate::parse_from_str(&case.day, "%Y-%m-%d").expect("fixture day");
+    let end = first
+        .checked_add_days(Days::new(u64::from(DAYS)))
+        .expect("day in range")
+        .to_string();
+    let facts = database
+        .capacity_facts(&case.day, &end, &case.time_zone, None)
+        .expect("capacity facts");
+    let profile = database.planning_profile().expect("profile");
+    let capacity = delve_planner_desktop::capacity::capacity(
+        first,
+        DAYS,
+        case.time_zone.parse().expect("fixture time zone"),
+        facts,
+        &[],
+        false,
+        &profile,
+    );
+    PlanningFacts::from_capacity(&capacity)
 }
 
 async fn propose(
@@ -532,13 +649,16 @@ async fn propose(
     active_plan_id: Option<&str>,
 ) -> Result<PlannerResponse, AppError> {
     let referenced_ids = agent.referenced_ids();
-    let candidates = database.planner_candidates(&CandidateRequest {
+    let mut candidates = database.planner_candidates(&CandidateRequest {
         command,
         selected_day: &case.day,
         time_zone: &case.time_zone,
         referenced_ids: &referenced_ids,
         active_plan_id,
     })?;
+    if asks_to_choose(command) {
+        candidates.planning = Some(planning_facts(database, case));
+    }
     agent
         .propose(PlannerRequest {
             command,
@@ -546,6 +666,7 @@ async fn propose(
             time_zone: &case.time_zone,
             active_plan_id,
             candidates: &candidates,
+            week_start: chrono::Weekday::Mon,
         })
         .await
 }
@@ -608,6 +729,7 @@ fn disturb(database: &mut PlannerDatabase, references: &[ProposalReference], aft
                         target_date: plan.target_date,
                         color: plan.color,
                         archived: false,
+                        links: Vec::new(),
                     })
                     .expect("edit plan");
             }
@@ -664,6 +786,9 @@ fn disturb(database: &mut PlannerDatabase, references: &[ProposalReference], aft
                         estimated_minutes: task.estimated_minutes,
                         status: task.status,
                         priority: task.priority,
+                        checklist: Vec::new(),
+                        recurrence: None,
+                        waiting_on: Vec::new(),
                     })
                     .expect("edit task");
             }
@@ -677,6 +802,8 @@ fn disturb(database: &mut PlannerDatabase, references: &[ProposalReference], aft
                     .delete_task(&task.id, task.revision)
                     .expect("delete task");
             }
+            // Only events, plans, milestones, and tasks are disturbed after a proposal.
+            (RecordKind::Workstream | RecordKind::InboxItem, _) => {}
         }
     }
 }
@@ -820,7 +947,7 @@ async fn evaluate_run(run: usize, cases: &[EvalCase], endpoint: &str) -> RunRepo
 }
 
 fn print_run(result: &RunReport, case_count: usize) {
-    println!("DayPlan qwen3:8b evaluation — run {}", result.run);
+    println!("Delve Planner qwen3:8b evaluation — run {}", result.run);
     println!(
         "Schema valid: {}/{} ({:.1}%) | exact: {}/{} ({:.1}%) | fields: {}/{} ({:.1}%) | safety: {}/{}",
         result.schema_valid,
@@ -926,7 +1053,7 @@ fn expected_operation(operation: &Map<String, Value>) -> Map<String, Value> {
 
 /// A proposal operation in the fixtures' vocabulary: IDs become titles and revisions are dropped.
 fn actual_operation(
-    operation: &dayplan_desktop::model::MutationOperation,
+    operation: &delve_planner_desktop::model::MutationOperation,
     titles: &HashMap<String, String>,
 ) -> Map<String, Value> {
     let Value::Object(mut value) = serde_json::to_value(operation).expect("operation serializes")
@@ -950,7 +1077,14 @@ fn actual_operation(
             value.insert(name_key.into(), Value::String(title(&id)));
         }
     }
-    for key in ["plan", "milestone"] {
+    if let Some(Value::Object(source)) = value.get("fromInbox") {
+        let text = match source.get("itemId") {
+            Some(Value::String(id)) => title(id),
+            _ => "<invalid>".into(),
+        };
+        value.insert("fromInbox".into(), Value::String(text));
+    }
+    for key in ["plan", "milestone", "workstream"] {
         if let Some(Value::Object(reference)) = value.get(key) {
             let name = match (reference.get("id"), reference.get("newTitle")) {
                 (Some(Value::String(id)), _) => title(id),
@@ -974,6 +1108,8 @@ fn operation_key(operation: &Map<String, Value>) -> String {
     let kind = field("type");
     if kind == "create_event" {
         format!("create_event:{}:{}", field("title"), field("startAtUtc"))
+    } else if kind == "create_workstream" {
+        format!("{kind}:{}", field("name"))
     } else if kind.starts_with("create_") {
         format!("{kind}:{}", field("title"))
     } else {

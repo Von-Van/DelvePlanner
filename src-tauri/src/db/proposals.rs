@@ -6,7 +6,7 @@ use super::planning::{
     remove_task, replace_milestone, replace_plan, replace_task, task_by_id, validate_description,
     validate_milestone_shape, validate_plan_shape,
 };
-use super::team::validate_links;
+use super::team::{insert_workstream, validate_links, workstreams_in_plan};
 use super::{
     apply_reminder_change, event_by_id, insert_event, normalize_day, now, parse_day,
     parse_time_zone, reminder_outbox_values, reminder_status_string, validate_duration,
@@ -17,8 +17,9 @@ use super::{
 use crate::error::{AppError, AppResult};
 use crate::model::{
     AppliedProposal, CreateEventInput, CreateMilestoneInput, CreatePlanInput, CreateTaskInput,
-    DayChange, EstimateChange, Milestone, MilestoneStatus, ModelResponse, MutationOperation, Plan,
-    PlannerCandidates, ProposedOperation, RecordRef, ReminderChange, ScheduleEvent, Task,
+    CreateWorkstreamInput, DayChange, EstimateChange, InboxSource, Milestone, MilestoneStatus,
+    ModelResponse, MutationOperation, NewRef, Plan, PlannerCandidates, ProposedOperation,
+    RecordKind, RecordRef, ReminderChange, ScheduleEvent, SuggestionEdit, Task,
     UpdateMilestoneInput, UpdatePlanInput, UpdateTaskInput, MAX_OPERATIONS,
 };
 use chrono::{DateTime, TimeZone, Utc};
@@ -30,6 +31,8 @@ const EVENT_CANDIDATE_LIMIT: usize = 40;
 const PLAN_CANDIDATE_LIMIT: usize = 12;
 const MILESTONE_CANDIDATE_LIMIT: usize = 20;
 const TASK_CANDIDATE_LIMIT: usize = 30;
+const WORKSTREAM_CANDIDATE_LIMIT: usize = 40;
+const INBOX_CANDIDATE_LIMIT: usize = 20;
 
 const REFERENCED_SCORE: usize = 100_000;
 const ACTIVE_PLAN_SCORE: usize = 50_000;
@@ -204,6 +207,20 @@ impl PlannerDatabase {
         tasks.retain(|(score, _)| *score >= NEARBY_DAY_SCORE);
         tasks.truncate(TASK_CANDIDATE_LIMIT);
 
+        // Only names: a workstream's description stays out of the request like every other one.
+        let mut workstreams = Vec::new();
+        for (_, plan) in &plans {
+            workstreams.extend(workstreams_in_plan(&self.connection, &plan.id)?);
+        }
+        workstreams.truncate(WORKSTREAM_CANDIDATE_LIMIT);
+        let inbox_items = if mentions_inbox(request.command) {
+            let mut items = self.list_inbox_items()?;
+            items.truncate(INBOX_CANDIDATE_LIMIT);
+            items
+        } else {
+            Vec::new()
+        };
+
         Ok(PlannerCandidates {
             events,
             plans: plans.into_iter().map(|(_, plan)| plan).collect(),
@@ -212,12 +229,16 @@ impl PlannerDatabase {
                 .map(|(_, milestone)| milestone)
                 .collect(),
             tasks: tasks.into_iter().map(|(_, task)| task).collect(),
+            workstreams,
+            inbox_items,
+            planning: None,
         })
     }
 
-    /// Applies every operation of an approved proposal or none of them. Plans are created first
-    /// and milestones second so later operations can refer to them by title; milestone deletions
-    /// run last so detaching their tasks cannot invalidate an earlier edit in the same proposal.
+    /// Applies every operation of an approved proposal or none of them. Plans are created first,
+    /// then milestones and workstreams, so later operations can refer to them by title; milestone
+    /// deletions run last so detaching their tasks cannot invalidate an earlier edit in the same
+    /// proposal.
     pub fn apply_proposal(&mut self, proposal: &ModelResponse) -> AppResult<AppliedProposal> {
         let ModelResponse::Proposal { operations, .. } = proposal else {
             return Err(AppError::Validation(
@@ -233,6 +254,7 @@ impl PlannerDatabase {
             applied: AppliedProposal::default(),
             new_plans: HashMap::new(),
             new_milestones: HashMap::new(),
+            new_workstreams: HashMap::new(),
             revisions: HashMap::new(),
         };
         for operation in operations {
@@ -246,10 +268,16 @@ impl PlannerDatabase {
             }
         }
         for operation in operations {
+            if let MutationOperation::CreateWorkstream { .. } = operation {
+                writer.apply(operation)?;
+            }
+        }
+        for operation in operations {
             if !matches!(
                 operation,
                 MutationOperation::CreatePlan { .. }
                     | MutationOperation::CreateMilestone { .. }
+                    | MutationOperation::CreateWorkstream { .. }
                     | MutationOperation::DeleteMilestone { .. }
             ) {
                 writer.apply(operation)?;
@@ -332,6 +360,139 @@ pub fn accepted_operations(
     Ok(ModelResponse::proposal(summary.clone(), kept))
 }
 
+/// The values a suggestion may be edited in before it is applied, by operation type. Everything
+/// else it carries — the record it targets, the plan or milestone it links to, the inbox item it
+/// comes from, and the revision it was proposed against — must arrive exactly as proposed.
+fn editable_fields(kind: &str) -> &'static [&'static str] {
+    match kind {
+        "create_event" => &[
+            "title",
+            "notes",
+            "startAtUtc",
+            "timeZone",
+            "durationMinutes",
+            "reminderMinutesBefore",
+        ],
+        "update_event" => &["title", "notes", "durationMinutes", "reminderChange"],
+        "reschedule_event" => &[
+            "title",
+            "notes",
+            "startAtUtc",
+            "timeZone",
+            "durationMinutes",
+            "reminderChange",
+        ],
+        "create_plan" | "update_plan" => {
+            &["title", "description", "status", "startDate", "targetDate"]
+        }
+        "create_milestone" => &["title", "description", "targetDate"],
+        "update_milestone" => &["title", "description", "targetDate", "status"],
+        "create_task" => &[
+            "title",
+            "description",
+            "scheduledDay",
+            "dueDate",
+            "status",
+            "priority",
+        ],
+        "update_task" => &["title", "description", "status", "priority", "estimate"],
+        "schedule_task" => &["scheduledDay", "dueDate", "plannedWeek"],
+        "create_workstream" => &["name"],
+        _ => &[],
+    }
+}
+
+/// An operation with its editable values removed: what an edit must leave untouched.
+fn fixed_part(operation: &MutationOperation) -> AppResult<serde_json::Value> {
+    let mut value = serde_json::to_value(operation)?;
+    let kind = value["type"].as_str().unwrap_or_default().to_string();
+    if let Some(fields) = value.as_object_mut() {
+        for field in editable_fields(&kind) {
+            fields.remove(*field);
+        }
+    }
+    Ok(value)
+}
+
+/// Replaces suggestions with the user's edits of them, checking each edit changes only values.
+/// Renaming a plan, milestone, or workstream the proposal creates carries the new name to the
+/// suggestions that refer to it. The result is checked like any proposal before it is applied.
+pub fn edited_proposal(
+    proposal: &ModelResponse,
+    edits: &[SuggestionEdit],
+) -> AppResult<ModelResponse> {
+    let ModelResponse::Proposal {
+        summary,
+        operations,
+    } = proposal
+    else {
+        return Err(AppError::Validation(
+            "Clarifications cannot be applied as changes.".into(),
+        ));
+    };
+    if edits.is_empty() {
+        return Ok(proposal.clone());
+    }
+    let mut operations = operations.clone();
+    let mut edited = HashSet::new();
+    let mut renames: Vec<(RecordKind, String, String)> = Vec::new();
+    for edit in edits {
+        if !edited.insert(edit.id.as_str()) {
+            return Err(AppError::Validation(
+                "Each change can be edited only once.".into(),
+            ));
+        }
+        let index = (0..operations.len())
+            .find(|index| ProposedOperation::handle(*index) == edit.id)
+            .ok_or_else(|| {
+                AppError::Validation(format!(
+                    "“{}” is not one of this proposal's changes.",
+                    edit.id
+                ))
+            })?;
+        let original = &operations[index];
+        if fixed_part(original)? != fixed_part(&edit.change)? {
+            return Err(AppError::Validation(
+                "An edit can change a suggestion's details, not what it changes or where it goes."
+                    .into(),
+            ));
+        }
+        if let (Some((kind, before)), Some((_, after))) =
+            (original.creates(), edit.change.creates())
+        {
+            if fold(before) != fold(after) {
+                renames.push((kind, fold(before), after.to_string()));
+            }
+        }
+        operations[index] = edit.change.clone();
+    }
+    for (kind, before, after) in &renames {
+        for operation in &mut operations {
+            for (reference_kind, reference) in operation.references_mut() {
+                if reference_kind != *kind {
+                    continue;
+                }
+                if let RecordRef::New(NewRef { new_title }) = reference {
+                    if fold(new_title) == *before {
+                        *new_title = after.clone();
+                    }
+                }
+            }
+        }
+    }
+    let edited = ModelResponse::proposal(summary.clone(), operations);
+    validate_model_response(&edited)?;
+    Ok(edited)
+}
+
+/// Whether a request talks about the inbox, the only time captured items are offered to the model.
+pub fn mentions_inbox(command: &str) -> bool {
+    command
+        .to_lowercase()
+        .split(|character: char| !character.is_alphanumeric())
+        .any(|word| matches!(word, "inbox" | "inboxes" | "captured"))
+}
+
 /// Sorts records by descending score, keeping the database order for ties.
 fn ranked<T>(records: Vec<T>, score: impl Fn(&T) -> usize) -> Vec<(usize, T)> {
     let mut scored = records
@@ -349,6 +510,8 @@ struct ProposalWriter<'a, 'connection> {
     new_plans: HashMap<String, String>,
     /// Milestones created by this proposal, keyed by plan ID and folded title.
     new_milestones: HashMap<(String, String), String>,
+    /// Workstreams created by this proposal, keyed by plan ID and folded name.
+    new_workstreams: HashMap<(String, String), String>,
     /// For records this proposal already changed: the revision it was proposed against and the
     /// revision it has now, so a second operation on the same record is not seen as stale.
     revisions: HashMap<String, (i64, i64)>,
@@ -366,11 +529,13 @@ impl ProposalWriter<'_, '_> {
                 duration_minutes,
                 reminder_minutes_before,
                 plan,
+                from_inbox,
             } => {
                 let plan_id = plan
                     .as_ref()
                     .map(|reference| self.plan_id(reference))
                     .transpose()?;
+                self.consume_inbox(from_inbox.as_ref())?;
                 let input = CreateEventInput {
                     title: title.clone(),
                     notes: notes.clone(),
@@ -480,7 +645,9 @@ impl ProposalWriter<'_, '_> {
                 status,
                 start_date,
                 target_date,
+                from_inbox,
             } => {
+                self.consume_inbox(from_inbox.as_ref())?;
                 let plan = insert_plan(
                     connection,
                     &CreatePlanInput {
@@ -490,6 +657,7 @@ impl ProposalWriter<'_, '_> {
                         start_date: start_date.clone(),
                         target_date: target_date.clone(),
                         color: None,
+                        links: Vec::new(),
                     },
                 )?;
                 if self
@@ -520,15 +688,15 @@ impl ProposalWriter<'_, '_> {
                 let updated = replace_plan(
                     connection,
                     &UpdatePlanInput {
-                        id: plan.id,
                         revision,
-                        title: title.clone().unwrap_or(plan.title),
-                        description: description.clone().unwrap_or(plan.description),
+                        title: title.clone().unwrap_or_else(|| plan.title.clone()),
+                        description: description
+                            .clone()
+                            .unwrap_or_else(|| plan.description.clone()),
                         status: status.unwrap_or(plan.status),
-                        start_date: start_date.clone().or(plan.start_date),
-                        target_date: target_date.clone().or(plan.target_date),
-                        color: plan.color,
-                        archived: plan.archived,
+                        start_date: start_date.clone().or_else(|| plan.start_date.clone()),
+                        target_date: target_date.clone().or_else(|| plan.target_date.clone()),
+                        ..UpdatePlanInput::keeping(&plan)
                     },
                 )?;
                 self.record(plan_id, *expected_revision, updated.revision);
@@ -607,6 +775,8 @@ impl ProposalWriter<'_, '_> {
                 due_date,
                 status,
                 priority,
+                workstream,
+                from_inbox,
             } => {
                 let plan_id = plan
                     .as_ref()
@@ -616,6 +786,11 @@ impl ProposalWriter<'_, '_> {
                     .as_ref()
                     .map(|reference| self.milestone_id(reference, plan_id.as_deref()))
                     .transpose()?;
+                let workstream_id = workstream
+                    .as_ref()
+                    .map(|reference| self.workstream_id(reference, plan_id.as_deref()))
+                    .transpose()?;
+                self.consume_inbox(from_inbox.as_ref())?;
                 let task = insert_task(
                     connection,
                     &CreateTaskInput {
@@ -623,7 +798,7 @@ impl ProposalWriter<'_, '_> {
                         description: description.clone(),
                         plan_id,
                         milestone_id,
-                        workstream_id: None,
+                        workstream_id,
                         owner_id: None,
                         due_date: due_date.clone(),
                         scheduled_day: scheduled_day.clone(),
@@ -631,6 +806,9 @@ impl ProposalWriter<'_, '_> {
                         estimated_minutes: None,
                         status: *status,
                         priority: *priority,
+                        recurrence: None,
+                        checklist: Vec::new(),
+                        waiting_on: Vec::new(),
                     },
                 )?;
                 self.applied.task_ids.push(task.id);
@@ -706,8 +884,95 @@ impl ProposalWriter<'_, '_> {
                 remove_task(connection, task_id, revision)?;
                 self.applied.task_ids.push(task_id.clone());
             }
+            MutationOperation::CreateWorkstream { plan, name } => {
+                let plan_id = self.plan_id(plan)?;
+                let workstream = insert_workstream(
+                    connection,
+                    &CreateWorkstreamInput {
+                        plan_id: plan_id.clone(),
+                        name: name.clone(),
+                        description: String::new(),
+                    },
+                )?;
+                self.new_workstreams
+                    .insert((plan_id, fold(name)), workstream.id.clone());
+                self.applied.workstream_ids.push(workstream.id);
+            }
+            MutationOperation::SetTaskWorkstream {
+                task_id,
+                expected_revision,
+                workstream,
+            } => {
+                // The task's plan as this proposal has left it so far, which a move earlier in the
+                // same proposal may have changed.
+                let plan_id = task_by_id(connection, task_id)?
+                    .ok_or(AppError::NotFound)?
+                    .plan_id;
+                let workstream_id = match workstream {
+                    Some(reference) => {
+                        if plan_id.is_none() {
+                            return Err(AppError::Validation(
+                                "A task needs a plan before it can join a workstream.".into(),
+                            ));
+                        }
+                        Some(self.workstream_id(reference, plan_id.as_deref())?)
+                    }
+                    None => None,
+                };
+                self.edit_task(task_id, *expected_revision, |_, input| {
+                    input.workstream_id = workstream_id;
+                    Ok(())
+                })?;
+            }
         }
         Ok(())
+    }
+
+    /// Removes the inbox item a new record is made from, as long as it is unchanged since the
+    /// proposal was made.
+    fn consume_inbox(&mut self, source: Option<&InboxSource>) -> AppResult<()> {
+        let Some(source) = source else {
+            return Ok(());
+        };
+        let removed = self.transaction.execute(
+            "DELETE FROM inbox_items WHERE id = ?1 AND revision = ?2",
+            params![source.item_id, source.expected_revision],
+        )?;
+        if removed == 1 {
+            return Ok(());
+        }
+        let exists: bool = self.transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM inbox_items WHERE id = ?1)",
+            params![source.item_id],
+            |row| row.get(0),
+        )?;
+        Err(if exists {
+            AppError::Conflict
+        } else {
+            AppError::NotFound
+        })
+    }
+
+    fn workstream_id(&self, reference: &RecordRef, plan_id: Option<&str>) -> AppResult<String> {
+        let Some(plan_id) = plan_id else {
+            return Err(AppError::Validation(
+                "A task needs a plan before it can join a workstream.".into(),
+            ));
+        };
+        match reference {
+            // Whether it belongs to the task's plan is checked when the task is written.
+            RecordRef::Existing(existing) => Ok(existing.id.clone()),
+            RecordRef::New(new) => self
+                .new_workstreams
+                .get(&(plan_id.to_string(), fold(&new.new_title)))
+                .cloned()
+                .ok_or_else(|| {
+                    AppError::Validation(
+                        "The proposal refers to a workstream it does not create in that plan."
+                            .into(),
+                    )
+                }),
+        }
     }
 
     /// The revision a record must still have for this operation to apply.
@@ -798,20 +1063,8 @@ impl ProposalWriter<'_, '_> {
             return Err(AppError::Conflict);
         }
         let mut input = UpdateTaskInput {
-            id: current.id.clone(),
             revision,
-            title: current.title.clone(),
-            description: current.description.clone(),
-            plan_id: current.plan_id.clone(),
-            milestone_id: current.milestone_id.clone(),
-            workstream_id: current.workstream_id.clone(),
-            owner_id: current.owner_id.clone(),
-            due_date: current.due_date.clone(),
-            scheduled_day: current.scheduled_day.clone(),
-            planned_week: current.planned_week.clone(),
-            estimated_minutes: current.estimated_minutes,
-            status: current.status,
-            priority: current.priority,
+            ..UpdateTaskInput::keeping(&current)
         };
         change(&current, &mut input)?;
         let updated = replace_task(self.transaction, &input)?;
@@ -886,6 +1139,18 @@ fn validate_operations(operations: &[MutationOperation]) -> AppResult<()> {
             "A proposal must contain between 1 and 12 operations.".into(),
         ));
     }
+    let mut inbox_items = HashSet::new();
+    for source in operations
+        .iter()
+        .filter_map(MutationOperation::inbox_source)
+    {
+        validate_target(&source.item_id, source.expected_revision)?;
+        if !inbox_items.insert(source.item_id.as_str()) {
+            return Err(AppError::Validation(
+                "A proposal can't turn one inbox item into two records.".into(),
+            ));
+        }
+    }
     for operation in operations {
         match operation {
             MutationOperation::CreateEvent {
@@ -896,6 +1161,7 @@ fn validate_operations(operations: &[MutationOperation]) -> AppResult<()> {
                 duration_minutes,
                 reminder_minutes_before,
                 plan,
+                ..
             } => {
                 validate_title(title)?;
                 validate_notes(notes)?;
@@ -1031,15 +1297,22 @@ fn validate_operations(operations: &[MutationOperation]) -> AppResult<()> {
                 milestone,
                 scheduled_day,
                 due_date,
+                workstream,
                 ..
             } => {
                 validate_title(title)?;
                 validate_description(description)?;
                 validate_optional_reference(plan.as_ref())?;
                 validate_optional_reference(milestone.as_ref())?;
+                validate_optional_reference(workstream.as_ref())?;
                 validate_optional_days([scheduled_day, due_date])?;
                 if milestone.is_some() && plan.is_none() {
                     return Err(super::planning::milestone_plan_mismatch());
+                }
+                if workstream.is_some() && plan.is_none() {
+                    return Err(AppError::Validation(
+                        "A task needs a plan before it can join a workstream.".into(),
+                    ));
                 }
                 if plan.is_none() && scheduled_day.is_none() && due_date.is_none() {
                     return Err(AppError::Validation(
@@ -1102,6 +1375,18 @@ fn validate_operations(operations: &[MutationOperation]) -> AppResult<()> {
                 if milestone.is_some() && plan.is_none() {
                     return Err(super::planning::milestone_plan_mismatch());
                 }
+            }
+            MutationOperation::CreateWorkstream { plan, name } => {
+                validate_reference(plan)?;
+                super::team::validate_workstream_shape(name, "")?;
+            }
+            MutationOperation::SetTaskWorkstream {
+                task_id,
+                expected_revision,
+                workstream,
+            } => {
+                validate_target(task_id, *expected_revision)?;
+                validate_optional_reference(workstream.as_ref())?;
             }
         }
     }
@@ -1346,6 +1631,7 @@ mod tests {
                 start_date: None,
                 target_date: None,
                 color: None,
+                links: Vec::new(),
             })
             .unwrap()
     }
@@ -1365,6 +1651,9 @@ mod tests {
                 estimated_minutes: None,
                 status: TaskStatus::Todo,
                 priority: TaskPriority::Normal,
+                checklist: Vec::new(),
+                recurrence: None,
+                waiting_on: Vec::new(),
             })
             .unwrap()
     }
@@ -1394,6 +1683,8 @@ mod tests {
                     due_date: Some("2026-10-03".into()),
                     status: TaskStatus::Todo,
                     priority: TaskPriority::High,
+                    from_inbox: None,
+                    workstream: None,
                 },
                 MutationOperation::CreateEvent {
                     title: "Planning call".into(),
@@ -1403,6 +1694,7 @@ mod tests {
                     duration_minutes: 30,
                     reminder_minutes_before: None,
                     plan: Some(RecordRef::new_title("charity WEEK")),
+                    from_inbox: None,
                 },
                 MutationOperation::CreateMilestone {
                     plan: RecordRef::new_title("Charity week"),
@@ -1416,6 +1708,7 @@ mod tests {
                     status: PlanStatus::Planning,
                     start_date: None,
                     target_date: Some("2026-10-16".into()),
+                    from_inbox: None,
                 },
             ],
         );
@@ -1450,6 +1743,7 @@ mod tests {
                     status: PlanStatus::Planning,
                     start_date: None,
                     target_date: None,
+                    from_inbox: None,
                 },
                 MutationOperation::CreateTask {
                     title: "Buy flour".into(),
@@ -1460,6 +1754,8 @@ mod tests {
                     due_date: Some("2026-10-01".into()),
                     status: TaskStatus::Todo,
                     priority: TaskPriority::Normal,
+                    from_inbox: None,
+                    workstream: None,
                 },
             ],
         )
@@ -1571,6 +1867,9 @@ mod tests {
                 estimated_minutes: None,
                 status: TaskStatus::Todo,
                 priority: TaskPriority::Normal,
+                checklist: Vec::new(),
+                recurrence: None,
+                waiting_on: Vec::new(),
             })
             .unwrap();
         let proposal = ModelResponse::proposal(
@@ -1663,6 +1962,7 @@ mod tests {
                     status: PlanStatus::Planning,
                     start_date: None,
                     target_date: None,
+                    from_inbox: None,
                 },
                 MutationOperation::UpdateTask {
                     task_id: gone.id.clone(),
@@ -1690,6 +1990,8 @@ mod tests {
                 due_date: None,
                 status: TaskStatus::Todo,
                 priority: TaskPriority::Normal,
+                from_inbox: None,
+                workstream: None,
             }],
         );
         assert!(matches!(
@@ -1710,6 +2012,8 @@ mod tests {
             due_date: None,
             status: TaskStatus::Todo,
             priority: TaskPriority::Normal,
+            from_inbox: None,
+            workstream: None,
         };
         let empty_update = MutationOperation::UpdateTask {
             task_id: Uuid::new_v4().to_string(),
@@ -1814,6 +2118,7 @@ mod tests {
                 target_date: None,
                 color: None,
                 archived: true,
+                links: Vec::new(),
             })
             .unwrap();
         task(&mut database, "Charity archive task", Some(&archived.id));
@@ -1850,5 +2155,301 @@ mod tests {
         assert_eq!(title_matches("Order banners", &tokens), 2);
         assert_eq!(title_matches("Streamer Charity Week", &tokens), 1);
         assert_eq!(title_matches("Plan the week", &tokens), 0);
+    }
+
+    fn new_task(title: &str, plan: Option<RecordRef>) -> MutationOperation {
+        task_op(title, plan, None, None, None)
+    }
+
+    fn task_op(
+        title: &str,
+        plan: Option<RecordRef>,
+        workstream: Option<RecordRef>,
+        from_inbox: Option<InboxSource>,
+        scheduled_day: Option<&str>,
+    ) -> MutationOperation {
+        MutationOperation::CreateTask {
+            title: title.into(),
+            description: String::new(),
+            plan,
+            milestone: None,
+            scheduled_day: scheduled_day.map(Into::into),
+            due_date: Some("2026-10-01".into()),
+            status: TaskStatus::Todo,
+            priority: TaskPriority::Normal,
+            workstream,
+            from_inbox,
+        }
+    }
+
+    fn source(item_id: &str, expected_revision: i64) -> Option<InboxSource> {
+        Some(InboxSource {
+            item_id: item_id.into(),
+            expected_revision,
+        })
+    }
+
+    #[test]
+    fn a_review_matches_new_titles_the_way_applying_does() {
+        let operations = vec![
+            MutationOperation::CreatePlan {
+                title: "Charity week".into(),
+                description: String::new(),
+                status: PlanStatus::Planning,
+                start_date: None,
+                target_date: None,
+                from_inbox: None,
+            },
+            new_task("Book venue", Some(RecordRef::new_title("charity   WEEK"))),
+        ];
+        let review = ProposedOperation::review(&operations, &[]);
+        assert_eq!(review[1].depends_on, vec!["op-0".to_string()]);
+    }
+
+    #[test]
+    fn a_proposal_creates_a_workstream_and_puts_tasks_in_it() {
+        let mut database = database();
+        let wedding = plan(&mut database, "Wedding");
+        let caterer = task(&mut database, "Call caterer", Some(&wedding.id));
+        let proposal = ModelResponse::proposal(
+            "Add Logistics",
+            vec![
+                MutationOperation::SetTaskWorkstream {
+                    task_id: caterer.id.clone(),
+                    expected_revision: caterer.revision,
+                    workstream: Some(RecordRef::new_title("logistics")),
+                },
+                task_op(
+                    "Book shuttle",
+                    Some(RecordRef::existing(wedding.id.clone())),
+                    Some(RecordRef::new_title("Logistics")),
+                    None,
+                    None,
+                ),
+                MutationOperation::CreateWorkstream {
+                    plan: RecordRef::existing(wedding.id.clone()),
+                    name: "Logistics".into(),
+                },
+            ],
+        );
+        let ModelResponse::Proposal { operations, .. } = &proposal else {
+            unreachable!()
+        };
+        let review = ProposedOperation::review(operations, &[]);
+        assert_eq!(review[0].depends_on, vec!["op-2".to_string()]);
+        assert_eq!(review[1].depends_on, vec!["op-2".to_string()]);
+
+        let applied = database.apply_proposal(&proposal).unwrap();
+        assert_eq!(applied.workstream_ids.len(), 1);
+        let workspace = database.plan_workspace(&wedding.id).unwrap();
+        assert_eq!(workspace.workstreams[0].name, "Logistics");
+        assert!(workspace
+            .tasks
+            .iter()
+            .all(|task| task.workstream_id.as_deref() == Some(applied.workstream_ids[0].as_str())));
+    }
+
+    #[test]
+    fn a_workstream_from_another_plan_is_refused_without_writing() {
+        let mut database = database();
+        let wedding = plan(&mut database, "Wedding");
+        let move_plan = plan(&mut database, "Move");
+        let boxes = database
+            .create_workstream(CreateWorkstreamInput {
+                plan_id: move_plan.id.clone(),
+                name: "Packing".into(),
+                description: String::new(),
+            })
+            .unwrap();
+        let caterer = task(&mut database, "Call caterer", Some(&wedding.id));
+        let loose = task(&mut database, "Buy milk", None);
+        let refused = |database: &mut PlannerDatabase, operations| {
+            database
+                .apply_proposal(&ModelResponse::proposal("Group it", operations))
+                .is_err()
+        };
+        assert!(refused(
+            &mut database,
+            vec![MutationOperation::SetTaskWorkstream {
+                task_id: caterer.id.clone(),
+                expected_revision: caterer.revision,
+                workstream: Some(RecordRef::existing(boxes.id.clone())),
+            }]
+        ));
+        assert!(refused(
+            &mut database,
+            vec![MutationOperation::SetTaskWorkstream {
+                task_id: loose.id.clone(),
+                expected_revision: loose.revision,
+                workstream: Some(RecordRef::existing(boxes.id.clone())),
+            }]
+        ));
+        let workspace = database.plan_workspace(&wedding.id).unwrap();
+        assert_eq!(workspace.tasks[0].workstream_id, None);
+        assert_eq!(workspace.tasks[0].revision, caterer.revision);
+    }
+
+    #[test]
+    fn turning_an_inbox_item_into_a_task_removes_it_in_the_same_change() {
+        let mut database = database();
+        let item = database
+            .create_inbox_item(crate::model::CreateInboxItemInput {
+                text: "Renew passport".into(),
+                notes: "Photos first".into(),
+            })
+            .unwrap();
+        let converting = |revision: i64| {
+            ModelResponse::proposal(
+                "From the inbox",
+                vec![task_op(
+                    "Renew passport",
+                    None,
+                    None,
+                    source(&item.id, revision),
+                    None,
+                )],
+            )
+        };
+        // An item edited since the proposal was made refuses the change and writes nothing.
+        assert!(matches!(
+            database.apply_proposal(&converting(item.revision + 1)),
+            Err(AppError::Conflict)
+        ));
+        assert_eq!(database.list_inbox_items().unwrap().len(), 1);
+        assert!(database.all_tasks().unwrap().is_empty());
+
+        database.apply_proposal(&converting(item.revision)).unwrap();
+        assert!(database.list_inbox_items().unwrap().is_empty());
+        assert_eq!(database.all_tasks().unwrap()[0].title, "Renew passport");
+        // Gone now, so a second use of the same proposal fails too.
+        assert!(matches!(
+            database.apply_proposal(&converting(item.revision)),
+            Err(AppError::NotFound)
+        ));
+
+        let twice = ModelResponse::proposal(
+            "Twice",
+            vec![
+                task_op("One", None, None, source(&item.id, 1), None),
+                task_op("Two", None, None, source(&item.id, 1), None),
+            ],
+        );
+        assert!(matches!(
+            validate_model_response(&twice),
+            Err(AppError::Validation(_))
+        ));
+    }
+
+    #[test]
+    fn only_inbox_requests_carry_inbox_items() {
+        let mut database = database();
+        database
+            .create_inbox_item(crate::model::CreateInboxItemInput {
+                text: "Renew passport".into(),
+                notes: String::new(),
+            })
+            .unwrap();
+        let quiet = database
+            .planner_candidates(&request("add renew passport tomorrow", &[]))
+            .unwrap();
+        assert!(quiet.inbox_items.is_empty());
+        let asked = database
+            .planner_candidates(&request("turn my inbox into tasks for tomorrow", &[]))
+            .unwrap();
+        assert_eq!(asked.inbox_items.len(), 1);
+    }
+
+    #[test]
+    fn an_edit_changes_values_and_never_what_a_suggestion_targets() {
+        let mut database = database();
+        let wedding = plan(&mut database, "Wedding");
+        let proposal = ModelResponse::proposal(
+            "Start the fair",
+            vec![
+                MutationOperation::CreatePlan {
+                    title: "Spring fair".into(),
+                    description: String::new(),
+                    status: PlanStatus::Planning,
+                    start_date: None,
+                    target_date: None,
+                    from_inbox: None,
+                },
+                new_task("Book tables", Some(RecordRef::new_title("Spring fair"))),
+            ],
+        );
+        let edit = |id: &str, change: MutationOperation| SuggestionEdit {
+            id: id.into(),
+            change,
+        };
+
+        // A new day and title are the user's to give.
+        let edited = edited_proposal(
+            &proposal,
+            &[edit(
+                "op-1",
+                task_op(
+                    "Book the tables",
+                    Some(RecordRef::new_title("Spring fair")),
+                    None,
+                    None,
+                    Some("2026-09-30"),
+                ),
+            )],
+        )
+        .unwrap();
+        let ModelResponse::Proposal { operations, .. } = &edited else {
+            unreachable!()
+        };
+        assert!(matches!(
+            &operations[1],
+            MutationOperation::CreateTask { title, scheduled_day: Some(day), .. }
+                if title == "Book the tables" && day == "2026-09-30"
+        ));
+
+        // Moving it into another plan is a different suggestion, not an edit of this one.
+        assert!(edited_proposal(
+            &proposal,
+            &[edit(
+                "op-1",
+                new_task("Book tables", Some(RecordRef::existing(wedding.id.clone())))
+            )]
+        )
+        .is_err());
+        // Nor can an edit turn one kind of change into another, or name a change that isn't there.
+        assert!(edited_proposal(
+            &proposal,
+            &[edit(
+                "op-1",
+                MutationOperation::CreateWorkstream {
+                    plan: RecordRef::new_title("Spring fair"),
+                    name: "Tables".into(),
+                }
+            )]
+        )
+        .is_err());
+        assert!(
+            edited_proposal(&proposal, &[edit("op-9", new_task("Book tables", None))]).is_err()
+        );
+
+        // Renaming the new plan carries the name to the task that goes in it.
+        let renamed = edited_proposal(
+            &proposal,
+            &[edit(
+                "op-0",
+                MutationOperation::CreatePlan {
+                    title: "Summer fair".into(),
+                    description: String::new(),
+                    status: PlanStatus::Planning,
+                    start_date: None,
+                    target_date: None,
+                    from_inbox: None,
+                },
+            )],
+        )
+        .unwrap();
+        let applied = database.apply_proposal(&renamed).unwrap();
+        let workspace = database.plan_workspace(&applied.plan_ids[0]).unwrap();
+        assert_eq!(workspace.plan.title, "Summer fair");
+        assert_eq!(workspace.tasks[0].title, "Book tables");
     }
 }

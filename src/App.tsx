@@ -14,6 +14,7 @@ import {
   Calendar,
   CalendarAgenda,
   Capacity,
+  ChecklistItem,
   ExternalEvent,
   InboxItem,
   messageFor,
@@ -25,10 +26,13 @@ import {
   PlanningBoard,
   PersonSummary,
   PlanSummary,
+  PlanTemplate,
   ScheduledBlock,
   ScheduleEvent,
+  SuggestionEdit,
   Task,
   TaskInput,
+  TaskReference,
 } from "./api";
 import {
   AgendaItem,
@@ -60,7 +64,7 @@ import { ensureNotificationPermission, reminderShortLabel } from "./events";
 import { Glyph, Mark, MarkShape, Spinner } from "./Geometry";
 import { InboxConversionKind, InboxView, QuickCapture } from "./InboxView";
 import { PlannerCard } from "./PlannerCard";
-import { proposalEnablesReminder } from "./proposals";
+import { proposalEnablesReminder, withEdits } from "./proposals";
 import { Onboarding } from "./Onboarding";
 import { PeopleView } from "./PeopleView";
 import { PlanChip, PlanDot } from "./PlanControls";
@@ -68,6 +72,7 @@ import { PlanEditor } from "./PlanEditor";
 import {
   inWeek,
   matchesPlanFilter,
+  plural,
   newTask,
   paddedCount,
   planColor,
@@ -85,7 +90,14 @@ import { TaskEditor } from "./TaskEditor";
 import { TaskRow } from "./TaskRow";
 import { useHeadingFocus } from "./useHeadingFocus";
 import { KnowledgeView } from "./KnowledgeView";
+import { OpenTasksContext } from "./openTasks";
 import { taskMoveItems, useTaskMover } from "./useTaskMover";
+import {
+  commandKey,
+  commandShortcutText,
+  isTextEntry,
+  shortcutPlatform,
+} from "./shortcuts";
 import { WeekView } from "./WeekView";
 
 type View =
@@ -110,10 +122,21 @@ const emptyAgenda: AgendaData = {
   blocks: [],
 };
 
-const isMac = /Mac|iPhone|iPad/.test(navigator.userAgent);
-const shortcutLabel = (key: string) => `${isMac ? "⌘" : "Ctrl+"}${key}`;
+const isMac = shortcutPlatform === "mac";
+const shortcutLabel = (key: string) => commandShortcutText(key);
+// Stored keys keep the app's former name, DayPlan, so existing settings carry over.
 const promptStorageKey = "dayplan-planning-prompts";
 const keptBlocksStorageKey = "dayplan-kept-blocks";
+const planFilterStorageKey = "dayplan-plan-filter";
+
+/** The plan filter Today and Week last used on this computer. */
+function readPlanFilter(): PlanFilter {
+  try {
+    return localStorage.getItem(planFilterStorageKey) || "all";
+  } catch {
+    return "all";
+  }
+}
 
 /** Future blocks of finished tasks the user chose to keep; kept per device. */
 function readKeptBlocks(): Set<string> {
@@ -160,6 +183,7 @@ export default function App() {
   const [weekBoard, setWeekBoard] = useState<PlanningBoard | null>(null);
   const [board, setBoard] = useState<PlanningBoard | null>(null);
   const [inbox, setInbox] = useState<InboxItem[]>([]);
+  const [openTaskList, setOpenTaskList] = useState<TaskReference[]>([]);
   const [dataVersion, setDataVersion] = useState(0);
   const [converting, setConverting] = useState<{
     item: InboxItem;
@@ -168,14 +192,19 @@ export default function App() {
   const [captureOpen, setCaptureOpen] = useState(false);
   const [promptState, setPromptState] = useState(readPromptState);
   const [summaries, setSummaries] = useState<PlanSummary[]>([]);
+  // A remembered plan filter is only checked against the plans once they've loaded.
+  const [plansLoaded, setPlansLoaded] = useState(false);
   const [peopleSummaries, setPeopleSummaries] = useState<PersonSummary[]>([]);
-  const [planFilter, setPlanFilter] = useState<PlanFilter>("all");
+  const [planFilter, setPlanFilter] = useState<PlanFilter>(readPlanFilter);
   const [status, setStatus] = useState<OllamaStatus | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [editor, setEditor] = useState<ScheduleEvent | "new" | null>(null);
   const [taskEditor, setTaskEditor] = useState<TaskEditorState | null>(null);
-  const [planEditorOpen, setPlanEditorOpen] = useState(false);
+  // The new-plan editor, blank or starting from a template.
+  const [newPlan, setNewPlan] = useState<{
+    template: PlanTemplate | null;
+  } | null>(null);
   const [busyTaskId, setBusyTaskId] = useState<string | null>(null);
   const [taskTitle, setTaskTitle] = useState("");
   const [command, setCommand] = useState("");
@@ -187,6 +216,7 @@ export default function App() {
   const [appliedProposals, setAppliedProposals] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [restoredDataVersion, setRestoredDataVersion] = useState(0);
+  // The key keeps the app's former name, DayPlan, so finished onboarding stays finished.
   const [onboardingOpen, setOnboardingOpen] = useState(
     () => localStorage.getItem("dayplan-onboarding") !== "complete",
   );
@@ -279,6 +309,15 @@ export default function App() {
   const refreshPlans = useCallback(async () => {
     try {
       setSummaries(await api.listPlans(todayDay()));
+      setPlansLoaded(true);
+    } catch (cause) {
+      setError(messageFor(cause));
+    }
+  }, []);
+
+  const refreshOpenTasks = useCallback(async () => {
+    try {
+      setOpenTaskList(await api.listOpenTaskReferences());
     } catch (cause) {
       setError(messageFor(cause));
     }
@@ -311,7 +350,14 @@ export default function App() {
     void refreshPeople();
     void refreshInbox();
     void refreshReleasable();
-  }, [refreshPlans, refreshPeople, refreshInbox, refreshReleasable]);
+    void refreshOpenTasks();
+  }, [
+    refreshPlans,
+    refreshPeople,
+    refreshInbox,
+    refreshReleasable,
+    refreshOpenTasks,
+  ]);
 
   // Background calendar refreshes announce themselves; reload whatever shows calendar time.
   const viewKind = view.kind;
@@ -340,13 +386,71 @@ export default function App() {
     void refreshStatus();
   }, [refreshStatus]);
 
+  // The system-wide shortcut and the tray ask for quick capture; whatever dialog is already open
+  // stays in front instead.
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let active = true;
+    listen("quick-capture", () => {
+      if (!document.querySelector('[aria-modal="true"]')) setCaptureOpen(true);
+    })
+      .then((stop) => {
+        if (active) unlisten = stop;
+        else stop();
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+      unlisten?.();
+    };
+  }, []);
+
+  const viewKindForKeys = view.kind;
+  const filterPlanIdForKeys =
+    planFilter === "all" || planFilter === "none" ? null : planFilter;
+  const keyWeekStart = weekStartDay(day, weekStartsOn);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (!(isMac ? event.metaKey : event.ctrlKey) || event.altKey) return;
+      if (!commandKey(event) || event.altKey) return;
       if (document.querySelector('[aria-modal="true"]')) return;
-      if (event.key.toLowerCase() === "i" && !event.shiftKey) {
+      const key = event.key.toLowerCase();
+      if (key === "i" && !event.shiftKey) {
         event.preventDefault();
         setCaptureOpen(true);
+        return;
+      }
+      if (key === "," && !event.shiftKey) {
+        event.preventDefault();
+        setSettingsOpen(true);
+        return;
+      }
+      if (key === "n") {
+        // A plan's own view adds the task to that plan.
+        if (viewKindForKeys === "plan" && !event.shiftKey) return;
+        event.preventDefault();
+        if (event.shiftKey) setNewPlan({ template: null });
+        else
+          setTaskEditor({
+            defaults:
+              viewKindForKeys === "today"
+                ? { scheduledDay: day, planId: filterPlanIdForKeys }
+                : viewKindForKeys === "week"
+                  ? { plannedWeek: keyWeekStart, planId: filterPlanIdForKeys }
+                  : {},
+          });
+        return;
+      }
+      if (
+        (event.key === "ArrowLeft" || event.key === "ArrowRight") &&
+        !event.shiftKey &&
+        !isTextEntry(event.target) &&
+        (viewKindForKeys === "today" || viewKindForKeys === "week")
+      ) {
+        event.preventDefault();
+        const step = event.key === "ArrowLeft" ? -1 : 1;
+        setDay((current) =>
+          offsetDay(current, viewKindForKeys === "week" ? step * 7 : step),
+        );
         return;
       }
       const target = {
@@ -364,7 +468,7 @@ export default function App() {
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [navigate]);
+  }, [navigate, viewKindForKeys, day, keyWeekStart, filterPlanIdForKeys]);
 
   const plans = useMemo(
     () => summaries.map((summary) => summary.plan),
@@ -378,6 +482,10 @@ export default function App() {
     () => peopleSummaries.map((summary) => summary.person),
     [peopleSummaries],
   );
+  const openTasks = useMemo(
+    () => new Map(openTaskList.map((reference) => [reference.id, reference])),
+    [openTaskList],
+  );
   const personById = useMemo(
     () => new Map(people.map((person) => [person.id, person])),
     [people],
@@ -387,12 +495,20 @@ export default function App() {
 
   useEffect(() => {
     if (
+      plansLoaded &&
       planFilter !== "all" &&
       planFilter !== "none" &&
       planById.get(planFilter)?.archived !== false
     )
       setPlanFilter("all");
-  }, [planById, planFilter]);
+  }, [planById, planFilter, plansLoaded]);
+  useEffect(() => {
+    try {
+      localStorage.setItem(planFilterStorageKey, planFilter);
+    } catch {
+      // Remembering the filter is a convenience; the filter itself still works.
+    }
+  }, [planFilter]);
 
   const filterPlanId =
     planFilter === "all" || planFilter === "none" ? null : planFilter;
@@ -437,6 +553,7 @@ export default function App() {
       refreshInbox(),
       refreshBoard(),
       refreshReleasable(),
+      refreshOpenTasks(),
       view.kind === "week" ? refreshWeek() : Promise.resolve(),
     ]);
     setDataVersion((version) => version + 1);
@@ -479,6 +596,7 @@ export default function App() {
       move: (tasks, target) => void mover.move(tasks, target),
       pickDay: mover.pickDay,
       blockTime: mover.blockTime,
+      skip: mover.skip,
     });
 
   function recordPrompt(change: Partial<PlanningPromptState>) {
@@ -538,6 +656,8 @@ export default function App() {
         status: task.status === "done" ? "todo" : "done",
       }),
     );
+  const saveChecklist = (task: Task, checklist: ChecklistItem[]) =>
+    changeTask(task, () => api.updateTask({ ...taskUpdate(task), checklist }));
   const scheduleTaskHere = (task: Task) =>
     changeTask(task, () =>
       api.updateTask({ ...taskUpdate(task), scheduledDay: day }),
@@ -557,8 +677,14 @@ export default function App() {
     try {
       setAgentResponse(
         view.kind === "plan"
-          ? await api.propose(command, today, localTimeZone, view.planId)
-          : await api.propose(command, day, localTimeZone),
+          ? await api.propose(
+              command,
+              today,
+              localTimeZone,
+              view.planId,
+              weekStartsOn,
+            )
+          : await api.propose(command, day, localTimeZone, null, weekStartsOn),
       );
     } catch (cause) {
       setError(messageFor(cause));
@@ -567,20 +693,24 @@ export default function App() {
     }
   }
 
-  async function applyProposal(accepted: string[]) {
+  async function applyProposal(accepted: string[], edits: SuggestionEdit[]) {
     if (!agentResponse || agentResponse.kind !== "proposal") return;
     setIsApplying(true);
     try {
       // Only ask for notification permission when an accepted change actually needs it.
+      const edited = withEdits(
+        agentResponse,
+        new Map(edits.map((edit) => [edit.id, edit.change])),
+      );
       const applied = {
-        ...agentResponse,
-        operations: agentResponse.operations.filter((operation) =>
+        ...edited,
+        operations: edited.operations.filter((operation) =>
           accepted.includes(operation.id),
         ),
       };
       if (proposalEnablesReminder(applied))
         await ensureNotificationPermission();
-      await api.apply(agentResponse.proposalId, accepted);
+      await api.apply(agentResponse.proposalId, accepted, edits);
       setAgentResponse(null);
       setCommand("");
       setAppliedProposals((count) => count + 1);
@@ -640,6 +770,13 @@ export default function App() {
     : [];
 
   const filterPlan = filterPlanId ? planById.get(filterPlanId) : undefined;
+  // What the plan filter hides on this day, so an empty list can say why it's empty.
+  const hiddenTasks = agenda.tasks.length - visibleTasks.length;
+  const agendaHiddenByFilter =
+    planFilter !== "all" &&
+    (agenda.events.length > visibleEvents.length ||
+      agenda.blocks.length > visibleBlocks.length ||
+      (filterPlanId !== null && (calendarDay?.events.length ?? 0) > 0));
   const planFilterControl = (
     <label className="plan-filter">
       Show
@@ -701,619 +838,586 @@ export default function App() {
   );
 
   return (
-    <main className="app-shell">
-      <aside className="rail">
-        <div className="brand">
-          <span className="brand-mark" aria-hidden="true">
-            <i />
-          </span>
-          <span className="brand-name">DAYPLAN</span>
-        </div>
-        <div className="rail-date">
-          <span>LOCAL AGENDA</span>
-          <strong>{dayMonthShort(day)}</strong>
-          <i aria-hidden="true" />
-        </div>
-        <nav aria-label="Workspace sections">
-          {navLink(
-            { kind: "inbox" },
-            "Inbox",
-            { shape: "rhombus", dashed: true },
-            {
-              active: view.kind === "inbox",
-              shortcut: "5",
-              count: inbox.length,
-            },
-          )}
-          {navLink(
-            { kind: "today" },
-            "Today",
-            { shape: "rhombus" },
-            {
-              active: view.kind === "today" || view.kind === "plan-today",
-              shortcut: "1",
-            },
-          )}
-          {navLink(
-            { kind: "week" },
-            "Week",
-            { shape: "rule" },
-            {
-              active: view.kind === "week" || view.kind === "plan-week",
-              shortcut: "2",
-            },
-          )}
-          {navLink(
-            { kind: "plans", archived: false },
-            "Plans",
-            { shape: "square" },
-            {
-              active: view.kind === "plans" && !view.archived,
-              shortcut: "3",
-              count: activePlans.length,
-            },
-          )}
-          <div className="rail-plans">
-            {activePlans.map((plan) => {
-              const selected = view.kind === "plan" && view.planId === plan.id;
-              return (
-                <button
-                  key={plan.id}
-                  className={`rail-plan ${selected ? "active" : ""}`}
-                  aria-current={selected ? "page" : undefined}
-                  onClick={() =>
-                    navigate({ kind: "plan", planId: plan.id, tab: "overview" })
-                  }
-                >
-                  <PlanDot plan={plan} />
-                  <span>{plan.title}</span>
-                </button>
-              );
-            })}
-            <button
-              className="rail-plan new-plan"
-              onClick={() => setPlanEditorOpen(true)}
-            >
-              <Glyph>+</Glyph> New plan
-            </button>
+    <OpenTasksContext.Provider value={openTasks}>
+      <main className="app-shell">
+        <aside className="rail">
+          <div className="brand">
+            <span className="brand-mark" aria-hidden="true">
+              <i />
+            </span>
+            <span className="brand-name">DELVE PLANNER</span>
           </div>
-          {navLink(
-            { kind: "plans", archived: true },
-            "Archived",
-            { shape: "circle" },
-            {
-              active: view.kind === "plans" && view.archived,
-              count: archivedCount,
-            },
-          )}
-          {navLink(
-            { kind: "people" },
-            "People",
-            { shape: "ring", size: 7 },
-            {
-              active: view.kind === "people",
-              shortcut: "4",
-              count: people.length,
-            },
-          )}
-          {navLink(
-            { kind: "calendars" },
-            "Calendars",
-            { shape: "square", dashed: true },
-            {
-              active: view.kind === "calendars",
-              shortcut: "6",
-              count: calendars.length,
-            },
-          )}
-          {navLink(
-            { kind: "knowledge" },
-            "What it knows",
-            { shape: "rhombus", dashed: true },
-            { active: view.kind === "knowledge", shortcut: "7" },
-          )}
-          <button className="rail-link" onClick={() => setSettingsOpen(true)}>
-            <Mark size={7} />
-            Settings
-          </button>
-        </nav>
-        <section className="privacy-note">
-          <span className="privacy-dot" />
-          <div>
-            <strong>Private by design</strong>
-            <p>Your plans and schedule stay on this device.</p>
+          <div className="rail-date">
+            <span>LOCAL AGENDA</span>
+            <strong>{dayMonthShort(day)}</strong>
+            <i aria-hidden="true" />
           </div>
-        </section>
-        <div className="rail-footer">
-          DAYPLAN / DESKTOP
-          <br />
-          LOCAL-FIRST PLANNER
-        </div>
-      </aside>
-
-      <section className="workspace">
-        {view.kind === "inbox" && (
-          <InboxView
-            items={inbox}
-            headingRef={inboxHeading}
-            captureShortcut={shortcutLabel("I")}
-            onConvert={(item, kind) => setConverting({ item, kind })}
-            onChanged={dataChanged}
-            onMessage={setError}
-          />
-        )}
-        {view.kind === "plan-week" && (
-          <PlanWeekView
-            today={today}
-            plans={plans}
-            planById={planById}
-            personById={personById}
-            dataVersion={dataVersion}
-            focusToken={focusToken}
-            onChanged={dataChanged}
-            onOpenTask={(task) => setTaskEditor({ task })}
-            onMessage={setError}
-            onDone={(plannedWeek) => {
-              if (plannedWeek >= currentWeekStart)
-                recordPrompt({
-                  week:
-                    promptState.week && promptState.week > plannedWeek
-                      ? promptState.week
-                      : plannedWeek,
-                });
-              navigate({ kind: "today" });
-            }}
-          />
-        )}
-        {view.kind === "plan-today" && (
-          <PlanTodayView
-            today={today}
-            planById={planById}
-            personById={personById}
-            dataVersion={dataVersion}
-            focusToken={focusToken}
-            onChanged={dataChanged}
-            onOpenTask={(task) => setTaskEditor({ task })}
-            onMessage={setError}
-            onDone={() => {
-              recordPrompt({ day: today });
-              setDay(today);
-              navigate({ kind: "today" });
-            }}
-          />
-        )}
-        {view.kind === "plans" && (
-          <PlansView
-            summaries={summaries}
-            archived={view.archived}
-            today={today}
-            focusToken={focusToken}
-            onOpenPlan={(planId) =>
-              navigate({ kind: "plan", planId, tab: "overview" })
-            }
-            onNewPlan={() => setPlanEditorOpen(true)}
-            onShowArchived={(archived) => navigate({ kind: "plans", archived })}
-            onChanged={dataChanged}
-            onMessage={setError}
-          />
-        )}
-        {view.kind === "plan" && (
-          <PlanView
-            planId={view.planId}
-            plans={plans}
-            people={people}
-            today={today}
-            reloadToken={restoredDataVersion + appliedProposals}
-            focusToken={focusToken}
-            planner={plannerCard(planById.get(view.planId)?.title)}
-            tab={view.tab}
-            onTab={(tab) => setViewState({ ...view, tab })}
-            onBack={() => navigate({ kind: "plans", archived: false })}
-            onPlansChanged={dataChanged}
-            onMessage={setError}
-          />
-        )}
-        {view.kind === "knowledge" && (
-          <KnowledgeView
-            headingRef={knowledgeHeading}
-            focusToken={focusToken}
-            onChanged={dataChanged}
-            onMessage={setError}
-          />
-        )}
-        {view.kind === "calendars" && (
-          <CalendarsView
-            version={calendarVersion}
-            headingRef={calendarsHeading}
-            focusToken={focusToken}
-            onChanged={async () => {
-              await Promise.all([refreshCalendarDay(), refreshWeek()]);
-              setDataVersion((version) => version + 1);
-            }}
-            onMessage={setError}
-          />
-        )}
-        {view.kind === "people" && (
-          <PeopleView
-            summaries={peopleSummaries}
-            planById={planById}
-            today={today}
-            headingRef={peopleHeading}
-            focusToken={focusToken}
-            onChanged={dataChanged}
-            onOpenTask={(task) => setTaskEditor({ task })}
-            onOpenEvent={setEditor}
-            onMessage={setError}
-          />
-        )}
-        {view.kind === "week" && (
-          <WeekView
-            startDay={weekStart}
-            today={today}
-            agenda={week}
-            plannedTasks={
-              weekBoard?.tasks.filter(
-                (task) =>
-                  task.scheduledDay === null &&
-                  inWeek(task.plannedWeek, weekStart),
-              ) ?? []
-            }
-            onPlanWeek={() => navigate({ kind: "plan-week" })}
-            loading={week === null}
-            planFilter={planFilter}
-            filterControl={planFilterControl}
-            planById={planById}
-            personById={personById}
-            busyTaskId={busyTaskId}
-            headingRef={weekHeading}
-            onShiftWeek={(weeks) => setDay(offsetDay(day, weeks * 7))}
-            onThisWeek={() => setDay(todayDay())}
-            onOpenDay={(nextDay) => {
-              setDay(nextDay);
-              navigate({ kind: "today" });
-            }}
-            calendar={calendarWeek}
-            capacity={weekCapacity}
-            onOpenEvent={setEditor}
-            onOpenBlock={mover.editBlock}
-            onOpenCalendars={() => navigate({ kind: "calendars" })}
-            onOpenTask={(task) => setTaskEditor({ task })}
-            onToggleTask={(task) => void toggleTask(task)}
-            onOpenMilestone={openMilestone}
-          />
-        )}
-        {view.kind === "today" && (
-          <>
-            <header className="topbar">
-              <div className="date-heading">
-                <p>YOUR DAY</p>
-                <h1 ref={todayHeading} tabIndex={-1}>
-                  {dayLabel(day)}
-                </h1>
-              </div>
-              <div className="date-controls">
-                <button
-                  className="icon-button"
-                  aria-label="Previous day"
-                  onClick={() => setDay(offsetDay(day, -1))}
-                >
-                  <Glyph>←</Glyph>
-                </button>
-                <button
-                  className="secondary-button"
-                  onClick={() => setDay(todayDay())}
-                >
-                  Today
-                </button>
-                <button
-                  className="icon-button"
-                  aria-label="Next day"
-                  onClick={() => setDay(offsetDay(day, 1))}
-                >
-                  <Glyph>→</Glyph>
-                </button>
-                <button
-                  className="secondary-button"
-                  onClick={() => {
-                    setDay(today);
-                    navigate({ kind: "plan-today" });
-                  }}
-                >
-                  Plan today
-                </button>
-                <button
-                  className="primary-button"
-                  onClick={() => setEditor("new")}
-                >
-                  <Mark filled />
-                  New event
-                </button>
-              </div>
-            </header>
-
-            <div className="week-strip" aria-label="Date picker">
-              {visibleDays.map((candidate) => (
-                <button
-                  key={candidate}
-                  className={`day-chip ${candidate === day ? "selected" : ""} ${candidate === today ? "today" : ""}`}
-                  aria-pressed={candidate === day}
-                  aria-label={dayLabel(candidate)}
-                  onClick={() => setDay(candidate)}
-                >
-                  <span>
-                    {candidate === today
-                      ? "TODAY"
-                      : weekdayShort(candidate).toUpperCase()}
-                  </span>
-                  <strong>{candidate.slice(-2)}</strong>
-                </button>
-              ))}
-              {planFilterControl}
+          <nav aria-label="Workspace sections">
+            {navLink(
+              { kind: "inbox" },
+              "Inbox",
+              { shape: "rhombus", dashed: true },
+              {
+                active: view.kind === "inbox",
+                shortcut: "5",
+                count: inbox.length,
+              },
+            )}
+            {navLink(
+              { kind: "today" },
+              "Today",
+              { shape: "rhombus" },
+              {
+                active: view.kind === "today" || view.kind === "plan-today",
+                shortcut: "1",
+              },
+            )}
+            {navLink(
+              { kind: "week" },
+              "Week",
+              { shape: "rule" },
+              {
+                active: view.kind === "week" || view.kind === "plan-week",
+                shortcut: "2",
+              },
+            )}
+            {navLink(
+              { kind: "plans", archived: false },
+              "Plans",
+              { shape: "square" },
+              {
+                active: view.kind === "plans" && !view.archived,
+                shortcut: "3",
+                count: activePlans.length,
+              },
+            )}
+            <div className="rail-plans">
+              {activePlans.map((plan) => {
+                const selected =
+                  view.kind === "plan" && view.planId === plan.id;
+                return (
+                  <button
+                    key={plan.id}
+                    className={`rail-plan ${selected ? "active" : ""}`}
+                    aria-current={selected ? "page" : undefined}
+                    onClick={() =>
+                      navigate({
+                        kind: "plan",
+                        planId: plan.id,
+                        tab: "overview",
+                      })
+                    }
+                  >
+                    <PlanDot plan={plan} />
+                    <span>{plan.title}</span>
+                  </button>
+                );
+              })}
               <button
-                className="calendar-jump"
-                title="Jump to today"
-                aria-label="Jump to today"
-                onClick={() => setDay(todayDay())}
+                className="rail-plan new-plan"
+                onClick={() => setNewPlan({ template: null })}
               >
-                <i aria-hidden="true" />
+                <Glyph>+</Glyph> New plan
               </button>
             </div>
-
-            {day === today && prompt && (
-              <section className="planning-prompt" aria-label="Planning">
-                <span className="planner-orb" aria-hidden="true">
-                  <i />
-                </span>
-                <div>
-                  <p>{prompt === "week" ? "A NEW WEEK" : "A NEW DAY"}</p>
-                  <strong>
-                    {prompt === "week" ? "Plan this week" : "Plan today"}
-                  </strong>
-                  <small>
-                    {prompt === "week"
-                      ? "Choose what this week is for before the days fill up."
-                      : "Build today from what's unfinished, due, and chosen for this week."}
-                  </small>
-                </div>
-                <button
-                  className="secondary-button"
-                  onClick={() =>
-                    recordPrompt(
-                      prompt === "week"
-                        ? { week: currentWeekStart }
-                        : { day: today },
-                    )
-                  }
-                >
-                  Not now
-                </button>
-                <button
-                  className="primary-button"
-                  onClick={() =>
-                    navigate({
-                      kind: prompt === "week" ? "plan-week" : "plan-today",
-                    })
-                  }
-                >
-                  <Mark filled />
-                  {prompt === "week" ? "Plan the week" : "Plan today"}
-                </button>
-              </section>
+            {navLink(
+              { kind: "plans", archived: true },
+              "Archived",
+              { shape: "circle" },
+              {
+                active: view.kind === "plans" && view.archived,
+                count: archivedCount,
+              },
             )}
+            {navLink(
+              { kind: "people" },
+              "People",
+              { shape: "ring", size: 7 },
+              {
+                active: view.kind === "people",
+                shortcut: "4",
+                count: people.length,
+              },
+            )}
+            {navLink(
+              { kind: "calendars" },
+              "Calendars",
+              { shape: "square", dashed: true },
+              {
+                active: view.kind === "calendars",
+                shortcut: "6",
+                count: calendars.length,
+              },
+            )}
+            {navLink(
+              { kind: "knowledge" },
+              "What it knows",
+              { shape: "rhombus", dashed: true },
+              { active: view.kind === "knowledge", shortcut: "7" },
+            )}
+            <button
+              className="rail-link"
+              title={`Settings (${shortcutLabel(",")})`}
+              aria-keyshortcuts={`${isMac ? "Meta" : "Control"}+,`}
+              onClick={() => setSettingsOpen(true)}
+            >
+              <Mark size={7} />
+              Settings
+            </button>
+          </nav>
+          <section className="privacy-note">
+            <span className="privacy-dot" />
+            <div>
+              <strong>Private by design</strong>
+              <p>Your plans and schedule stay on this device.</p>
+            </div>
+          </section>
+          <div className="rail-footer">
+            DELVE PLANNER / DESKTOP
+            <br />
+            LOCAL-FIRST PLANNER
+          </div>
+        </aside>
 
-            {day === today &&
-              (attention.length > 0 || offeredRelease.length > 0) && (
-                <div className="day-notices">
-                  {attention.length > 0 && (
-                    <section className="day-notice" aria-label="Calendars">
-                      <Mark size={7} filled color="var(--danger-dot)" />
-                      <p>
-                        <strong>
-                          {attention.length === 1
-                            ? `“${attention[0].name}” can't refresh`
-                            : `${attention.length} calendars can't refresh`}
-                        </strong>
-                        <span>
-                          {attention.length === 1
-                            ? attention[0].problem?.message
-                            : "Their last copies still show until you fix them."}
-                        </span>
-                      </p>
-                      <button
-                        className="secondary-button"
-                        onClick={() => navigate({ kind: "calendars" })}
-                      >
-                        Open Calendars
-                      </button>
-                    </section>
-                  )}
-                  {offeredRelease.length > 0 && (
-                    <ReleaseNotice
-                      blocks={offeredRelease}
-                      onRelease={() => void releaseBlocks(offeredRelease)}
-                      onKeep={() => keepBlocks(offeredRelease)}
-                    />
-                  )}
+        <section className="workspace">
+          {view.kind === "inbox" && (
+            <InboxView
+              items={inbox}
+              headingRef={inboxHeading}
+              captureShortcut={shortcutLabel("I")}
+              onConvert={(item, kind) => setConverting({ item, kind })}
+              onChanged={dataChanged}
+              onMessage={setError}
+            />
+          )}
+          {view.kind === "plan-week" && (
+            <PlanWeekView
+              today={today}
+              plans={plans}
+              planById={planById}
+              personById={personById}
+              dataVersion={dataVersion}
+              focusToken={focusToken}
+              onChanged={dataChanged}
+              onOpenTask={(task) => setTaskEditor({ task })}
+              onMessage={setError}
+              onDone={(plannedWeek) => {
+                if (plannedWeek >= currentWeekStart)
+                  recordPrompt({
+                    week:
+                      promptState.week && promptState.week > plannedWeek
+                        ? promptState.week
+                        : plannedWeek,
+                  });
+                navigate({ kind: "today" });
+              }}
+            />
+          )}
+          {view.kind === "plan-today" && (
+            <PlanTodayView
+              today={today}
+              planById={planById}
+              personById={personById}
+              dataVersion={dataVersion}
+              focusToken={focusToken}
+              onChanged={dataChanged}
+              onOpenTask={(task) => setTaskEditor({ task })}
+              onMessage={setError}
+              onDone={() => {
+                recordPrompt({ day: today });
+                setDay(today);
+                navigate({ kind: "today" });
+              }}
+            />
+          )}
+          {view.kind === "plans" && (
+            <PlansView
+              summaries={summaries}
+              archived={view.archived}
+              today={today}
+              focusToken={focusToken}
+              onOpenPlan={(planId) =>
+                navigate({ kind: "plan", planId, tab: "overview" })
+              }
+              onNewPlan={(template) => setNewPlan({ template })}
+              onShowArchived={(archived) =>
+                navigate({ kind: "plans", archived })
+              }
+              onChanged={dataChanged}
+              onMessage={setError}
+            />
+          )}
+          {view.kind === "plan" && (
+            <PlanView
+              planId={view.planId}
+              plans={plans}
+              people={people}
+              today={today}
+              reloadToken={restoredDataVersion + appliedProposals}
+              focusToken={focusToken}
+              planner={plannerCard(planById.get(view.planId)?.title)}
+              tab={view.tab}
+              onTab={(tab) => setViewState({ ...view, tab })}
+              onBack={() => navigate({ kind: "plans", archived: false })}
+              onPlansChanged={dataChanged}
+              onOpenPlan={(planId) =>
+                navigate({ kind: "plan", planId, tab: "overview" })
+              }
+              onMessage={setError}
+            />
+          )}
+          {view.kind === "knowledge" && (
+            <KnowledgeView
+              headingRef={knowledgeHeading}
+              focusToken={focusToken}
+              onChanged={dataChanged}
+              onMessage={setError}
+            />
+          )}
+          {view.kind === "calendars" && (
+            <CalendarsView
+              version={calendarVersion}
+              headingRef={calendarsHeading}
+              focusToken={focusToken}
+              onChanged={async () => {
+                await Promise.all([refreshCalendarDay(), refreshWeek()]);
+                setDataVersion((version) => version + 1);
+              }}
+              onMessage={setError}
+            />
+          )}
+          {view.kind === "people" && (
+            <PeopleView
+              summaries={peopleSummaries}
+              planById={planById}
+              today={today}
+              headingRef={peopleHeading}
+              focusToken={focusToken}
+              onChanged={dataChanged}
+              onOpenTask={(task) => setTaskEditor({ task })}
+              onOpenEvent={setEditor}
+              onMessage={setError}
+            />
+          )}
+          {view.kind === "week" && (
+            <WeekView
+              startDay={weekStart}
+              today={today}
+              agenda={week}
+              plannedTasks={
+                weekBoard?.tasks.filter(
+                  (task) =>
+                    task.scheduledDay === null &&
+                    inWeek(task.plannedWeek, weekStart),
+                ) ?? []
+              }
+              onPlanWeek={() => navigate({ kind: "plan-week" })}
+              loading={week === null}
+              planFilter={planFilter}
+              filterControl={planFilterControl}
+              planById={planById}
+              personById={personById}
+              busyTaskId={busyTaskId}
+              headingRef={weekHeading}
+              onShiftWeek={(weeks) => setDay(offsetDay(day, weeks * 7))}
+              onThisWeek={() => setDay(todayDay())}
+              onOpenDay={(nextDay) => {
+                setDay(nextDay);
+                navigate({ kind: "today" });
+              }}
+              calendar={calendarWeek}
+              capacity={weekCapacity}
+              onOpenEvent={setEditor}
+              onOpenBlock={mover.editBlock}
+              onOpenCalendars={() => navigate({ kind: "calendars" })}
+              onOpenTask={(task) => setTaskEditor({ task })}
+              onToggleTask={(task) => void toggleTask(task)}
+              onOpenMilestone={openMilestone}
+            />
+          )}
+          {view.kind === "today" && (
+            <>
+              <header className="topbar">
+                <div className="date-heading">
+                  <p>YOUR DAY</p>
+                  <h1 ref={todayHeading} tabIndex={-1}>
+                    {dayLabel(day)}
+                  </h1>
                 </div>
+                <div className="date-controls">
+                  <button
+                    className="icon-button"
+                    aria-label="Previous day"
+                    onClick={() => setDay(offsetDay(day, -1))}
+                  >
+                    <Glyph>←</Glyph>
+                  </button>
+                  <button
+                    className="secondary-button"
+                    onClick={() => setDay(todayDay())}
+                  >
+                    Today
+                  </button>
+                  <button
+                    className="icon-button"
+                    aria-label="Next day"
+                    onClick={() => setDay(offsetDay(day, 1))}
+                  >
+                    <Glyph>→</Glyph>
+                  </button>
+                  <button
+                    className="secondary-button"
+                    onClick={() => {
+                      setDay(today);
+                      navigate({ kind: "plan-today" });
+                    }}
+                  >
+                    Plan today
+                  </button>
+                  <button
+                    className="primary-button"
+                    onClick={() => setEditor("new")}
+                  >
+                    <Mark filled />
+                    New event
+                  </button>
+                </div>
+              </header>
+
+              <div className="week-strip" aria-label="Date picker">
+                {visibleDays.map((candidate) => (
+                  <button
+                    key={candidate}
+                    className={`day-chip ${candidate === day ? "selected" : ""} ${candidate === today ? "today" : ""}`}
+                    aria-pressed={candidate === day}
+                    aria-label={dayLabel(candidate)}
+                    onClick={() => setDay(candidate)}
+                  >
+                    <span>
+                      {candidate === today
+                        ? "TODAY"
+                        : weekdayShort(candidate).toUpperCase()}
+                    </span>
+                    <strong>{candidate.slice(-2)}</strong>
+                  </button>
+                ))}
+                {planFilterControl}
+                <button
+                  className="calendar-jump"
+                  title="Jump to today"
+                  aria-label="Jump to today"
+                  onClick={() => setDay(todayDay())}
+                >
+                  <i aria-hidden="true" />
+                </button>
+              </div>
+
+              {day === today && prompt && (
+                <section className="planning-prompt" aria-label="Planning">
+                  <span className="planner-orb" aria-hidden="true">
+                    <i />
+                  </span>
+                  <div>
+                    <p>{prompt === "week" ? "A NEW WEEK" : "A NEW DAY"}</p>
+                    <strong>
+                      {prompt === "week" ? "Plan this week" : "Plan today"}
+                    </strong>
+                    <small>
+                      {prompt === "week"
+                        ? "Choose what this week is for before the days fill up."
+                        : "Build today from what's unfinished, due, and chosen for this week."}
+                    </small>
+                  </div>
+                  <button
+                    className="secondary-button"
+                    onClick={() =>
+                      recordPrompt(
+                        prompt === "week"
+                          ? { week: currentWeekStart }
+                          : { day: today },
+                      )
+                    }
+                  >
+                    Not now
+                  </button>
+                  <button
+                    className="primary-button"
+                    onClick={() =>
+                      navigate({
+                        kind: prompt === "week" ? "plan-week" : "plan-today",
+                      })
+                    }
+                  >
+                    <Mark filled />
+                    {prompt === "week" ? "Plan the week" : "Plan today"}
+                  </button>
+                </section>
               )}
 
-            <div className="content-grid">
-              <section className="agenda-panel">
-                <div className="section-header">
-                  <div>
-                    <p>TIME BLOCKS</p>
-                    <h2>Agenda</h2>
-                  </div>
-                  <span>{dayItems.length} scheduled</span>
-                </div>
-                {allDayExternal.length > 0 && (
-                  <ul className="all-day-strip" aria-label="All-day events">
-                    {allDayExternal.map((event) => (
-                      <AllDayChip
-                        key={`${event.calendarId}-${event.key}`}
-                        event={event}
-                        calendar={calendars.find(
-                          (calendar) => calendar.id === event.calendarId,
-                        )}
+              {day === today &&
+                (attention.length > 0 || offeredRelease.length > 0) && (
+                  <div className="day-notices">
+                    {attention.length > 0 && (
+                      <section className="day-notice" aria-label="Calendars">
+                        <Mark size={7} filled color="var(--danger-dot)" />
+                        <p>
+                          <strong>
+                            {attention.length === 1
+                              ? `“${attention[0].name}” can't refresh`
+                              : `${attention.length} calendars can't refresh`}
+                          </strong>
+                          <span>
+                            {attention.length === 1
+                              ? attention[0].problem?.message
+                              : "Their last copies still show until you fix them."}
+                          </span>
+                        </p>
+                        <button
+                          className="secondary-button"
+                          onClick={() => navigate({ kind: "calendars" })}
+                        >
+                          Open Calendars
+                        </button>
+                      </section>
+                    )}
+                    {offeredRelease.length > 0 && (
+                      <ReleaseNotice
+                        blocks={offeredRelease}
+                        onRelease={() => void releaseBlocks(offeredRelease)}
+                        onKeep={() => keepBlocks(offeredRelease)}
                       />
-                    ))}
-                  </ul>
-                )}
-                {visibleMilestones.length > 0 && (
-                  <ul className="day-milestones" aria-label="Milestones today">
-                    {visibleMilestones.map((milestone) => {
-                      const plan = planById.get(milestone.planId);
-                      return (
-                        <li key={milestone.id}>
-                          <button onClick={() => openMilestone(milestone)}>
-                            <Mark
-                              size={7}
-                              color={planColor(plan)}
-                              filled={milestone.status === "complete"}
-                              dashed={milestone.status === "skipped"}
-                            />
-                            <span>{milestone.title}</span>
-                            <small>
-                              Milestone
-                              {milestone.status !== "pending" &&
-                                ` · ${milestone.status}`}
-                            </small>
-                            <PlanChip plan={plan} />
-                          </button>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                )}
-                {isLoading ? (
-                  <LoadingLine label="Opening your local schedule" />
-                ) : (
-                  <Agenda
-                    items={dayItems}
-                    focusKey={
-                      day === today ? focusItemKey(dayItems, new Date()) : null
-                    }
-                    planById={planById}
-                    onEdit={setEditor}
-                    onDelete={removeEvent}
-                    onOpenBlock={mover.editBlock}
-                    onAdd={() => setEditor("new")}
-                  />
-                )}
-                <section className="task-area">
-                  <div className="section-header">
-                    <div>
-                      <p>LOOSE ENDS</p>
-                      <h2>Daily tasks</h2>
-                    </div>
-                    <span>
-                      {
-                        visibleTasks.filter((task) => task.status === "done")
-                          .length
-                      }
-                      /{visibleTasks.length}
-                    </span>
-                  </div>
-                  <form className="task-add" onSubmit={addTask}>
-                    <Mark size={11} color="var(--blue)" />
-                    <input
-                      value={taskTitle}
-                      onChange={(event) => setTaskTitle(event.target.value)}
-                      placeholder={
-                        filterPlanId
-                          ? `Add a task for this day to ${planById.get(filterPlanId)?.title}`
-                          : "Add a task for this day"
-                      }
-                      aria-label="Add task"
-                      maxLength={140}
-                    />
-                    <button aria-label="Add task" disabled={!taskTitle.trim()}>
-                      <Glyph>→</Glyph>
-                    </button>
-                  </form>
-                  <div className="task-list">
-                    {visibleTasks.length === 0 ? (
-                      <p className="empty-tasks">
-                        A clear list leaves room to think.
-                      </p>
-                    ) : (
-                      visibleTasks.map((task) => (
-                        <TaskRow
-                          key={task.id}
-                          task={task}
-                          today={today}
-                          plan={
-                            task.planId ? planById.get(task.planId) : undefined
-                          }
-                          owner={
-                            task.ownerId
-                              ? personById.get(task.ownerId)
-                              : undefined
-                          }
-                          weekStart={currentWeekStart}
-                          busy={
-                            busyTaskId === task.id || mover.busyIds.has(task.id)
-                          }
-                          moveItems={moveItemsFor(task)}
-                          onToggle={() => void toggleTask(task)}
-                          onOpen={() => setTaskEditor({ task })}
-                          onDelete={() => void removeTask(task)}
-                        />
-                      ))
                     )}
                   </div>
-                  {day === today && visibleUnfinished.length > 0 && (
-                    <div className="unfinished-tasks">
-                      <p className="due-heading late">
-                        UNFINISHED <span>{visibleUnfinished.length}</span>
-                        <button
-                          className="text-button"
-                          onClick={() =>
-                            void mover.move(visibleUnfinished, {
-                              kind: "day",
-                              day: today,
-                            })
-                          }
-                        >
-                          {visibleUnfinished.length === 1
-                            ? "Move to today"
-                            : "Move all to today"}{" "}
-                          <Glyph>→</Glyph>
-                        </button>
-                      </p>
-                      <div className="task-list">
-                        {visibleUnfinished.map((task) => (
-                          <TaskRow
-                            key={task.id}
-                            task={task}
-                            today={today}
-                            plan={
-                              task.planId
-                                ? planById.get(task.planId)
-                                : undefined
-                            }
-                            owner={
-                              task.ownerId
-                                ? personById.get(task.ownerId)
-                                : undefined
-                            }
-                            showScheduledDay
-                            busy={mover.busyIds.has(task.id)}
-                            moveItems={moveItemsFor(task)}
-                            onToggle={() => void toggleTask(task)}
-                            onOpen={() => setTaskEditor({ task })}
-                          />
-                        ))}
-                      </div>
+                )}
+
+              <div className="content-grid">
+                <section className="agenda-panel">
+                  <div className="section-header">
+                    <div>
+                      <p>TIME BLOCKS</p>
+                      <h2>Agenda</h2>
                     </div>
+                    <span>{dayItems.length} scheduled</span>
+                  </div>
+                  {allDayExternal.length > 0 && (
+                    <ul className="all-day-strip" aria-label="All-day events">
+                      {allDayExternal.map((event) => (
+                        <AllDayChip
+                          key={`${event.calendarId}-${event.key}`}
+                          event={event}
+                          calendar={calendars.find(
+                            (calendar) => calendar.id === event.calendarId,
+                          )}
+                        />
+                      ))}
+                    </ul>
                   )}
-                  {visibleDueTasks.length > 0 && (
-                    <div className="due-tasks">
-                      <p className="due-heading">
-                        DUE THIS DAY <span>{visibleDueTasks.length}</span>
-                      </p>
-                      <div className="task-list">
-                        {visibleDueTasks.map((task) => (
+                  {visibleMilestones.length > 0 && (
+                    <ul
+                      className="day-milestones"
+                      aria-label="Milestones today"
+                    >
+                      {visibleMilestones.map((milestone) => {
+                        const plan = planById.get(milestone.planId);
+                        return (
+                          <li key={milestone.id}>
+                            <button onClick={() => openMilestone(milestone)}>
+                              <Mark
+                                size={7}
+                                color={planColor(plan)}
+                                filled={milestone.status === "complete"}
+                                dashed={milestone.status === "skipped"}
+                              />
+                              <span>{milestone.title}</span>
+                              <small>
+                                Milestone
+                                {milestone.status !== "pending" &&
+                                  ` · ${milestone.status}`}
+                              </small>
+                              <PlanChip plan={plan} />
+                            </button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                  {isLoading ? (
+                    <LoadingLine label="Opening your local schedule" />
+                  ) : (
+                    <Agenda
+                      items={dayItems}
+                      focusKey={
+                        day === today
+                          ? focusItemKey(dayItems, new Date())
+                          : null
+                      }
+                      planById={planById}
+                      onEdit={setEditor}
+                      onDelete={removeEvent}
+                      onOpenBlock={mover.editBlock}
+                      onAdd={() => setEditor("new")}
+                      onShowAllPlans={
+                        agendaHiddenByFilter
+                          ? () => setPlanFilter("all")
+                          : undefined
+                      }
+                    />
+                  )}
+                  <section className="task-area">
+                    <div className="section-header">
+                      <div>
+                        <p>LOOSE ENDS</p>
+                        <h2>Daily tasks</h2>
+                      </div>
+                      <span>
+                        {
+                          visibleTasks.filter((task) => task.status === "done")
+                            .length
+                        }
+                        /{visibleTasks.length}
+                      </span>
+                    </div>
+                    <form className="task-add" onSubmit={addTask}>
+                      <Mark size={11} color="var(--blue)" />
+                      <input
+                        value={taskTitle}
+                        onChange={(event) => setTaskTitle(event.target.value)}
+                        placeholder={
+                          filterPlanId
+                            ? `Add a task for this day to ${planById.get(filterPlanId)?.title}`
+                            : "Add a task for this day"
+                        }
+                        aria-label="Add task"
+                        maxLength={140}
+                      />
+                      <button
+                        aria-label="Add task"
+                        disabled={!taskTitle.trim()}
+                      >
+                        <Glyph>→</Glyph>
+                      </button>
+                    </form>
+                    <div className="task-list">
+                      {visibleTasks.length === 0 && hiddenTasks > 0 ? (
+                        <div className="filtered-out">
+                          <p className="empty-tasks">
+                            {plural(hiddenTasks, "task")} on this day{" "}
+                            {hiddenTasks === 1 ? "is" : "are"} hidden by the
+                            plan filter.
+                          </p>
+                          <button
+                            className="text-button"
+                            onClick={() => setPlanFilter("all")}
+                          >
+                            Show all plans
+                          </button>
+                        </div>
+                      ) : visibleTasks.length === 0 ? (
+                        <p className="empty-tasks">
+                          A clear list leaves room to think.
+                        </p>
+                      ) : (
+                        visibleTasks.map((task) => (
                           <TaskRow
                             key={task.id}
                             task={task}
@@ -1328,7 +1432,6 @@ export default function App() {
                                 ? personById.get(task.ownerId)
                                 : undefined
                             }
-                            showScheduledDay
                             weekStart={currentWeekStart}
                             busy={
                               busyTaskId === task.id ||
@@ -1336,165 +1439,256 @@ export default function App() {
                             }
                             moveItems={moveItemsFor(task)}
                             onToggle={() => void toggleTask(task)}
+                            onChecklistChange={(checklist) =>
+                              void saveChecklist(task, checklist)
+                            }
                             onOpen={() => setTaskEditor({ task })}
-                            onScheduleHere={() => void scheduleTaskHere(task)}
+                            onDelete={() => void removeTask(task)}
                           />
-                        ))}
-                      </div>
+                        ))
+                      )}
                     </div>
-                  )}
+                    {day === today && visibleUnfinished.length > 0 && (
+                      <div className="unfinished-tasks">
+                        <p className="due-heading late">
+                          UNFINISHED <span>{visibleUnfinished.length}</span>
+                          <button
+                            className="text-button"
+                            onClick={() =>
+                              void mover.move(visibleUnfinished, {
+                                kind: "day",
+                                day: today,
+                              })
+                            }
+                          >
+                            {visibleUnfinished.length === 1
+                              ? "Move to today"
+                              : "Move all to today"}{" "}
+                            <Glyph>→</Glyph>
+                          </button>
+                        </p>
+                        <div className="task-list">
+                          {visibleUnfinished.map((task) => (
+                            <TaskRow
+                              key={task.id}
+                              task={task}
+                              today={today}
+                              plan={
+                                task.planId
+                                  ? planById.get(task.planId)
+                                  : undefined
+                              }
+                              owner={
+                                task.ownerId
+                                  ? personById.get(task.ownerId)
+                                  : undefined
+                              }
+                              showScheduledDay
+                              busy={mover.busyIds.has(task.id)}
+                              moveItems={moveItemsFor(task)}
+                              onToggle={() => void toggleTask(task)}
+                              onChecklistChange={(checklist) =>
+                                void saveChecklist(task, checklist)
+                              }
+                              onOpen={() => setTaskEditor({ task })}
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {visibleDueTasks.length > 0 && (
+                      <div className="due-tasks">
+                        <p className="due-heading">
+                          DUE THIS DAY <span>{visibleDueTasks.length}</span>
+                        </p>
+                        <div className="task-list">
+                          {visibleDueTasks.map((task) => (
+                            <TaskRow
+                              key={task.id}
+                              task={task}
+                              today={today}
+                              plan={
+                                task.planId
+                                  ? planById.get(task.planId)
+                                  : undefined
+                              }
+                              owner={
+                                task.ownerId
+                                  ? personById.get(task.ownerId)
+                                  : undefined
+                              }
+                              showScheduledDay
+                              weekStart={currentWeekStart}
+                              busy={
+                                busyTaskId === task.id ||
+                                mover.busyIds.has(task.id)
+                              }
+                              moveItems={moveItemsFor(task)}
+                              onToggle={() => void toggleTask(task)}
+                              onChecklistChange={(checklist) =>
+                                void saveChecklist(task, checklist)
+                              }
+                              onOpen={() => setTaskEditor({ task })}
+                              onScheduleHere={() => void scheduleTaskHere(task)}
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </section>
                 </section>
-              </section>
 
-              <aside className="ai-column">
-                {plannerCard()}
-                <CapacityCard
-                  capacity={dayCapacity}
-                  isToday={day === today}
-                  onOpenCalendars={() => navigate({ kind: "calendars" })}
-                />
-                <section className="quiet-card">
-                  <Mark shape="circle" size={14} />
-                  <div>
-                    <strong>All times are local</strong>
-                    <p>
-                      {localTimeZone}. Events persist as UTC with their IANA
-                      time zone.
-                    </p>
-                  </div>
-                </section>
-              </aside>
-            </div>
-          </>
+                <aside className="ai-column">
+                  {plannerCard()}
+                  <CapacityCard
+                    capacity={dayCapacity}
+                    isToday={day === today}
+                    onOpenCalendars={() => navigate({ kind: "calendars" })}
+                  />
+                  <section className="quiet-card">
+                    <Mark shape="circle" size={14} />
+                    <div>
+                      <strong>All times are local</strong>
+                      <p>
+                        {localTimeZone}. Events persist as UTC with their IANA
+                        time zone.
+                      </p>
+                    </div>
+                  </section>
+                </aside>
+              </div>
+            </>
+          )}
+        </section>
+
+        {editor && (
+          <EventEditor
+            day={day}
+            event={editor === "new" ? undefined : editor}
+            plans={plans}
+            people={people}
+            defaultPlanId={filterPlanId}
+            onClose={() => setEditor(null)}
+            onSaved={async () => {
+              setEditor(null);
+              await dataChanged();
+            }}
+            onError={setError}
+          />
         )}
-      </section>
-
-      {editor && (
-        <EventEditor
-          day={day}
-          event={editor === "new" ? undefined : editor}
-          plans={plans}
-          people={people}
-          defaultPlanId={filterPlanId}
-          onClose={() => setEditor(null)}
-          onSaved={async () => {
-            setEditor(null);
-            await dataChanged();
-          }}
-          onError={setError}
-        />
-      )}
-      {taskEditor && (
-        <TaskEditor
-          task={taskEditor.task}
-          defaults={taskEditor.defaults}
-          plans={plans}
-          people={people}
-          onClose={() => setTaskEditor(null)}
-          onSaved={async () => {
-            setTaskEditor(null);
-            await dataChanged();
-          }}
-          onError={setError}
-        />
-      )}
-      {planEditorOpen && (
-        <PlanEditor
-          defaultColor={
-            planColors.find(
-              (color) => !activePlans.some((plan) => plan.color === color),
-            ) ?? planColors[plans.length % planColors.length]
-          }
-          onClose={() => setPlanEditorOpen(false)}
-          onSaved={async (planId) => {
-            setPlanEditorOpen(false);
-            await refreshPlans();
-            navigate({ kind: "plan", planId, tab: "overview" });
-          }}
-          onError={setError}
-        />
-      )}
-      {converting?.kind === "task" && (
-        <TaskEditor
-          inboxItem={converting.item}
-          plans={plans}
-          people={people}
-          onClose={() => setConverting(null)}
-          onSaved={async () => {
-            setConverting(null);
-            await dataChanged();
-          }}
-          onError={setError}
-        />
-      )}
-      {converting?.kind === "plan" && (
-        <PlanEditor
-          inboxItem={converting.item}
-          defaultColor={
-            planColors.find(
-              (color) => !activePlans.some((plan) => plan.color === color),
-            ) ?? planColors[plans.length % planColors.length]
-          }
-          onClose={() => setConverting(null)}
-          onSaved={async () => {
-            setConverting(null);
-            await dataChanged();
-          }}
-          onError={setError}
-        />
-      )}
-      {converting?.kind === "event" && (
-        <EventEditor
-          day={today}
-          inboxItem={converting.item}
-          plans={plans}
-          people={people}
-          onClose={() => setConverting(null)}
-          onSaved={async () => {
-            setConverting(null);
-            await dataChanged();
-          }}
-          onError={setError}
-        />
-      )}
-      {captureOpen && (
-        <QuickCapture
-          onClose={() => setCaptureOpen(false)}
-          onCaptured={refreshInbox}
-          onError={setError}
-        />
-      )}
-      {mover.dialog}
-      {settingsOpen && (
-        <SettingsModal
-          status={status}
-          onClose={() => setSettingsOpen(false)}
-          onDataChanged={async () => {
-            await dataChanged();
-            setRestoredDataVersion((version) => version + 1);
-          }}
-          onRefreshStatus={refreshStatus}
-          onMessage={setError}
-        />
-      )}
-      {onboardingOpen && (
-        <Onboarding
-          status={status}
-          onRefresh={refreshStatus}
-          onComplete={() => setOnboardingOpen(false)}
-          onMessage={setError}
-        />
-      )}
-      {error && (
-        <div className="toast" role="alert">
-          <Mark size={7} color="var(--danger-dot)" filled />
-          <span>{error}</span>
-          <button onClick={() => setError(null)} aria-label="Dismiss message">
-            <Glyph>✕</Glyph>
-          </button>
-        </div>
-      )}
-    </main>
+        {taskEditor && (
+          <TaskEditor
+            task={taskEditor.task}
+            defaults={taskEditor.defaults}
+            plans={plans}
+            people={people}
+            onClose={() => setTaskEditor(null)}
+            onSaved={async () => {
+              setTaskEditor(null);
+              await dataChanged();
+            }}
+            onError={setError}
+          />
+        )}
+        {newPlan && (
+          <PlanEditor
+            defaultColor={
+              planColors.find(
+                (color) => !activePlans.some((plan) => plan.color === color),
+              ) ?? planColors[plans.length % planColors.length]
+            }
+            initialTemplate={newPlan.template}
+            onClose={() => setNewPlan(null)}
+            onSaved={async (planId) => {
+              setNewPlan(null);
+              await refreshPlans();
+              navigate({ kind: "plan", planId, tab: "overview" });
+            }}
+            onError={setError}
+          />
+        )}
+        {converting?.kind === "task" && (
+          <TaskEditor
+            inboxItem={converting.item}
+            plans={plans}
+            people={people}
+            onClose={() => setConverting(null)}
+            onSaved={async () => {
+              setConverting(null);
+              await dataChanged();
+            }}
+            onError={setError}
+          />
+        )}
+        {converting?.kind === "plan" && (
+          <PlanEditor
+            inboxItem={converting.item}
+            defaultColor={
+              planColors.find(
+                (color) => !activePlans.some((plan) => plan.color === color),
+              ) ?? planColors[plans.length % planColors.length]
+            }
+            onClose={() => setConverting(null)}
+            onSaved={async () => {
+              setConverting(null);
+              await dataChanged();
+            }}
+            onError={setError}
+          />
+        )}
+        {converting?.kind === "event" && (
+          <EventEditor
+            day={today}
+            inboxItem={converting.item}
+            plans={plans}
+            people={people}
+            onClose={() => setConverting(null)}
+            onSaved={async () => {
+              setConverting(null);
+              await dataChanged();
+            }}
+            onError={setError}
+          />
+        )}
+        {captureOpen && (
+          <QuickCapture
+            onClose={() => setCaptureOpen(false)}
+            onCaptured={refreshInbox}
+            onError={setError}
+          />
+        )}
+        {mover.dialog}
+        {settingsOpen && (
+          <SettingsModal
+            status={status}
+            onClose={() => setSettingsOpen(false)}
+            onDataChanged={async () => {
+              await dataChanged();
+              setRestoredDataVersion((version) => version + 1);
+            }}
+            onRefreshStatus={refreshStatus}
+            onMessage={setError}
+          />
+        )}
+        {onboardingOpen && (
+          <Onboarding
+            status={status}
+            onRefresh={refreshStatus}
+            onComplete={() => setOnboardingOpen(false)}
+            onMessage={setError}
+          />
+        )}
+        {error && (
+          <div className="toast" role="alert">
+            <Mark size={7} color="var(--danger-dot)" filled />
+            <span>{error}</span>
+            <button onClick={() => setError(null)} aria-label="Dismiss message">
+              <Glyph>✕</Glyph>
+            </button>
+          </div>
+        )}
+      </main>
+    </OpenTasksContext.Provider>
   );
 }
 
@@ -1506,6 +1700,7 @@ function Agenda({
   onDelete,
   onOpenBlock,
   onAdd,
+  onShowAllPlans,
 }: {
   items: AgendaItem[];
   /** The live or next item, drawn in the highlighted glass style. */
@@ -1515,7 +1710,19 @@ function Agenda({
   onDelete: (event: ScheduleEvent) => void;
   onOpenBlock: (scheduled: ScheduledBlock) => void;
   onAdd: () => void;
+  /** Set when the plan filter hides this day's items, to clear it from the empty state. */
+  onShowAllPlans?: () => void;
 }) {
+  if (items.length === 0 && onShowAllPlans)
+    return (
+      <div className="empty-agenda">
+        <i className="empty-mark" aria-hidden="true" />
+        <p>Nothing on this day matches the plan filter.</p>
+        <button className="secondary-button" onClick={onShowAllPlans}>
+          Show all plans
+        </button>
+      </div>
+    );
   if (items.length === 0)
     return (
       <div className="empty-agenda">

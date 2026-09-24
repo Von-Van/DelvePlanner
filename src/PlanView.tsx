@@ -9,7 +9,8 @@ import {
 } from "react";
 import {
   api,
-  DayPlanError,
+  ChecklistItem,
+  DelvePlannerError,
   messageFor,
   Milestone,
   Person,
@@ -32,7 +33,13 @@ import { EventEditor } from "./EventEditor";
 import { reminderShortLabel } from "./events";
 import { Glyph, Mark, Spinner } from "./Geometry";
 import { StatusPill, TabList, tabPanelProps } from "./PlanControls";
-import { MilestoneEditor, PlanEditor, WorkstreamEditor } from "./PlanEditor";
+import {
+  DuplicatePlanDialog,
+  MilestoneEditor,
+  PlanEditor,
+  WorkstreamEditor,
+} from "./PlanEditor";
+import { commandKey } from "./shortcuts";
 import {
   allTasks,
   attentionSignals,
@@ -83,7 +90,8 @@ type Editor =
   | { kind: "milestone"; milestone?: Milestone }
   | { kind: "task"; task?: Task }
   | { kind: "event"; event?: ScheduleEvent; day?: string; time?: string }
-  | { kind: "workstream"; workstream?: Workstream };
+  | { kind: "workstream"; workstream?: Workstream }
+  | { kind: "duplicate" };
 
 export function PlanView({
   planId,
@@ -97,6 +105,7 @@ export function PlanView({
   onTab,
   onBack,
   onPlansChanged,
+  onOpenPlan,
   onMessage,
 }: {
   planId: string;
@@ -112,11 +121,25 @@ export function PlanView({
   onTab: (tab: PlanTab) => void;
   onBack: () => void;
   onPlansChanged: () => Promise<void>;
+  /** Opens another plan, such as a copy just made from this one. */
+  onOpenPlan: (planId: string) => void;
   onMessage: (message: string) => void;
 }) {
   const [workspace, setWorkspace] = useState<PlanWorkspace | null>(null);
   const [missing, setMissing] = useState(false);
   const [editor, setEditor] = useState<Editor | null>(null);
+  // Command-N adds a task to this plan; elsewhere the app's own shortcut handles it.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (!commandKey(event) || event.altKey || event.shiftKey) return;
+      if (event.key.toLowerCase() !== "n") return;
+      if (document.querySelector('[aria-modal="true"]')) return;
+      event.preventDefault();
+      setEditor({ kind: "task" });
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
   const [busy, setBusy] = useState<string | null>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const onMessageRef = useRef(onMessage);
@@ -133,7 +156,7 @@ export function PlanView({
     try {
       setWorkspace(await api.getPlanWorkspace(planId));
     } catch (cause) {
-      if (cause instanceof DayPlanError && cause.code === "not_found")
+      if (cause instanceof DelvePlannerError && cause.code === "not_found")
         setMissing(true);
       else onMessageRef.current(messageFor(cause));
     }
@@ -201,6 +224,12 @@ export function PlanView({
         ...taskUpdate(task),
         status: task.status === "done" ? "todo" : "done",
       }),
+    );
+  }
+
+  function saveChecklist(task: Task, checklist: ChecklistItem[]) {
+    void run(`task-${task.id}`, () =>
+      api.updateTask({ ...taskUpdate(task), checklist }),
     );
   }
 
@@ -299,6 +328,12 @@ export function PlanView({
             Edit plan
           </button>
           <button
+            className="secondary-button"
+            onClick={() => setEditor({ kind: "duplicate" })}
+          >
+            Duplicate
+          </button>
+          <button
             className="primary-button"
             onClick={() => setEditor({ kind: "milestone" })}
           >
@@ -309,6 +344,26 @@ export function PlanView({
       </header>
       {plan.description && (
         <p className="plan-description">{plan.description}</p>
+      )}
+      {plan.links.length > 0 && (
+        <ul className="plan-links" aria-label="Links">
+          {plan.links.map((link, index) => (
+            <li key={`${index}-${link.url}`}>
+              <button
+                className="link-button"
+                title={link.url}
+                onClick={() =>
+                  void api
+                    .openPlanLink(plan.id, index)
+                    .catch((cause) => onMessage(messageFor(cause)))
+                }
+              >
+                <span>{link.title || linkHost(link.url)}</span>
+                <Glyph>↗</Glyph>
+              </button>
+            </li>
+          ))}
+        </ul>
       )}
       {plan.archived && (
         <div className="archived-banner" role="status">
@@ -395,10 +450,12 @@ export function PlanView({
                 move: (tasks, target) => void mover.move(tasks, target),
                 pickDay: mover.pickDay,
                 blockTime: mover.blockTime,
+                skip: mover.skip,
               })
             }
             onAdd={addTask}
             onToggle={toggleTask}
+            onChecklistChange={saveChecklist}
             onOpen={(task) => setEditor({ kind: "task", task })}
           />
         )}
@@ -424,6 +481,18 @@ export function PlanView({
       </section>
 
       {mover.dialog}
+      {editor?.kind === "duplicate" && (
+        <DuplicatePlanDialog
+          plan={plan}
+          onClose={closeEditor}
+          onDuplicated={async (copyId) => {
+            setEditor(null);
+            await onPlansChanged();
+            onOpenPlan(copyId);
+          }}
+          onError={onMessage}
+        />
+      )}
       {editor?.kind === "plan" && (
         <PlanEditor
           plan={plan}
@@ -790,6 +859,7 @@ function TasksPanel({
   moveItemsFor,
   onAdd,
   onToggle,
+  onChecklistChange,
   onOpen,
 }: {
   plan: Plan;
@@ -803,6 +873,7 @@ function TasksPanel({
   moveItemsFor: (task: Task) => MenuItem[];
   onAdd: (title: string, filters: TaskFilters) => Promise<boolean>;
   onToggle: (task: Task) => void;
+  onChecklistChange: (task: Task, checklist: ChecklistItem[]) => void;
   onOpen: (task: Task) => void;
 }) {
   const [title, setTitle] = useState("");
@@ -971,6 +1042,9 @@ function TasksPanel({
                     busy={busy === `task-${task.id}` || busyIds.has(task.id)}
                     moveItems={moveItemsFor(task)}
                     onToggle={() => onToggle(task)}
+                    onChecklistChange={(checklist) =>
+                      onChecklistChange(task, checklist)
+                    }
                     onOpen={() => onOpen(task)}
                   />
                 ))}
@@ -1433,4 +1507,13 @@ function TimelineTrack({
       </div>
     </div>
   );
+}
+
+/** A link's host, such as "docs.example.com", for links saved without a title. */
+function linkHost(url: string) {
+  try {
+    return new URL(url).host.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
 }

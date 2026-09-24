@@ -9,7 +9,7 @@ use crate::model::{
     ProposedOperation, RecordRef, MAX_COMMAND_LENGTH,
 };
 use crate::runtime::{DownloadProgress, RuntimePhase};
-use chrono::{DateTime, Duration as ChronoDuration, NaiveDate, SecondsFormat, Utc};
+use chrono::{DateTime, Duration as ChronoDuration, NaiveDate, SecondsFormat, Utc, Weekday};
 use chrono_tz::Tz;
 use draft::{Draft, DraftOperation, Resolution, Resolver};
 use preflight::{choose_scope, preflight};
@@ -115,6 +115,27 @@ pub struct PlannerRequest<'a> {
     /// The plan the user is looking at, which new work belongs to by default.
     pub active_plan_id: Option<&'a str>,
     pub candidates: &'a PlannerCandidates,
+    /// The day the user's weeks start on, for "this week" and "next week".
+    pub week_start: Weekday,
+}
+
+/// Whether a request hands the choice of a day or week to the planner. Only such requests are
+/// given the spare time on the coming days.
+pub fn asks_to_choose(command: &str) -> bool {
+    grounding::asks_to_choose(command)
+}
+
+/// The weekday for JavaScript's numbering, Sunday = 0 through Saturday = 6; Monday otherwise.
+pub fn weekday_from_js(day: u8) -> Weekday {
+    match day {
+        0 => Weekday::Sun,
+        2 => Weekday::Tue,
+        3 => Weekday::Wed,
+        4 => Weekday::Thu,
+        5 => Weekday::Fri,
+        6 => Weekday::Sat,
+        _ => Weekday::Mon,
+    }
 }
 
 impl Default for PlannerAgent {
@@ -146,9 +167,9 @@ impl PlannerAgent {
             .unwrap_or_else(|_| MODEL_NAME.into())
     }
 
-    /// Asks a model one question DayPlan already knows the answer to, in the shape the planner
-    /// needs it. A model that can't hold the format here won't produce a usable proposal, and the
-    /// user finds that out now rather than in the middle of planning a week.
+    /// Asks a model one question Delve Planner already knows the answer to, in the shape the
+    /// planner needs it. A model that can't hold the format here won't produce a usable proposal,
+    /// and the user finds that out now rather than in the middle of planning a week.
     pub async fn check_model(&self, model: &str) -> AppResult<()> {
         let body = ChatRequest {
             model,
@@ -182,7 +203,7 @@ impl PlannerAgent {
         if !response.status().is_success() {
             // A model that rejects a JSON-schema request can't be used for planning at all.
             return Err(AppError::Validation(format!(
-                "{model} couldn't answer in DayPlan's reply format."
+                "{model} couldn't answer in Delve Planner's reply format."
             )));
         }
         let bytes = response
@@ -194,7 +215,7 @@ impl PlannerAgent {
         let answer: CheckReply =
             serde_json::from_str(reply.message.content.trim()).map_err(|_| {
                 AppError::Validation(format!(
-                    "{model} didn't reply in DayPlan's format, so the planner can't use it."
+                    "{model} didn't reply in Delve Planner's format, so the planner can't use it."
                 ))
             })?;
         if answer.days != 7 {
@@ -361,6 +382,7 @@ impl PlannerAgent {
             active_plan_id,
             session: &session,
             pending_proposal_id: pending_proposal_id.as_deref(),
+            week_start: request.week_start,
         });
         let model_name = self.model_name();
         let body = ChatRequest {
@@ -406,8 +428,8 @@ impl PlannerAgent {
         };
         self.clear_active_cancel(request_id);
 
-        if cfg!(debug_assertions) && std::env::var_os("DAYPLAN_DEBUG_PLANNER").is_some() {
-            eprintln!("DayPlan planner reply: {}", reply.message.content);
+        if cfg!(debug_assertions) && std::env::var_os("DELVE_PLANNER_DEBUG_PLANNER").is_some() {
+            eprintln!("Delve Planner model reply: {}", reply.message.content);
         }
         let draft = parse_reply(reply)?;
         let said = session
@@ -466,6 +488,7 @@ impl PlannerAgent {
             pending,
             recent_ids: &recent_ids,
             now: Utc::now(),
+            week_start: request.week_start,
         }
         .resolve(draft)?;
         self.finish_response(request_id, command, scope, resolution)
@@ -520,6 +543,7 @@ impl PlannerAgent {
                         &result.plan_ids,
                         &result.milestone_ids,
                         &result.task_ids,
+                        &result.workstream_ids,
                     ]
                     .into_iter()
                     .flatten()
@@ -646,10 +670,14 @@ fn operation_record_ids(operation: &MutationOperation) -> Vec<String> {
         MutationOperation::UpdateMilestone { milestone_id, .. }
         | MutationOperation::DeleteMilestone { milestone_id, .. } => vec![milestone_id.clone()],
         MutationOperation::CreateTask {
-            plan, milestone, ..
+            plan,
+            milestone,
+            workstream,
+            ..
         } => reference(plan)
             .into_iter()
             .chain(reference(milestone))
+            .chain(reference(workstream))
             .collect(),
         MutationOperation::UpdateTask { task_id, .. }
         | MutationOperation::ScheduleTask { task_id, .. }
@@ -662,6 +690,16 @@ fn operation_record_ids(operation: &MutationOperation) -> Vec<String> {
         } => std::iter::once(task_id.clone())
             .chain(reference(plan))
             .chain(reference(milestone))
+            .collect(),
+        MutationOperation::CreateWorkstream { plan, .. } => {
+            reference(&Some(plan.clone())).into_iter().collect()
+        }
+        MutationOperation::SetTaskWorkstream {
+            task_id,
+            workstream,
+            ..
+        } => std::iter::once(task_id.clone())
+            .chain(reference(workstream))
             .collect(),
     }
 }
@@ -749,7 +787,7 @@ async fn ollama_status_at(client: &Client, base_url: &str, model_name: &str) -> 
             "Local model is ready. Nothing is sent to a cloud service.".into()
         } else {
             format!(
-                "DayPlan's local runtime is ready. Download {model_name} to enable AI planning."
+                "Delve Planner's local runtime is ready. Download {model_name} to enable AI planning."
             )
         },
         download: None,
@@ -766,7 +804,7 @@ fn unavailable_status(model_name: &str) -> OllamaStatus {
         model_digest: None,
         ollama_version: None,
         model_license: None,
-        detail: "DayPlan's local AI runtime is not running.".into(),
+        detail: "Delve Planner's local AI runtime is not running.".into(),
         download: None,
         storage_bytes: None,
     }
@@ -926,6 +964,7 @@ mod tests {
             duration_minutes: 60,
             reminder_minutes_before: None,
             plan: None,
+            from_inbox: None,
         }];
         Resolution::Proposal(draft::ResolvedProposal {
             summary: "Add lunch".into(),
@@ -1162,6 +1201,7 @@ mod tests {
             time_zone: "America/New_York",
             active_plan_id: None,
             candidates,
+            week_start: chrono::Weekday::Mon,
         }
     }
 

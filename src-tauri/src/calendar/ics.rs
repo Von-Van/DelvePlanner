@@ -14,7 +14,7 @@ use chrono::{DateTime, Days, NaiveDate, NaiveDateTime, TimeZone, Utc};
 use chrono_tz::Tz;
 use std::collections::HashMap;
 
-/// The largest calendar DayPlan reads, from a file or a link.
+/// The largest calendar Delve Planner reads, from a file or a link.
 pub const MAX_CALENDAR_BYTES: usize = 20 * 1024 * 1024;
 /// Days before today whose events are kept, so recent weeks stay visible.
 pub const PAST_DAYS: u64 = 42;
@@ -146,7 +146,7 @@ pub fn read_calendar(content: &str, window: &SyncWindow) -> Result<CalendarRead,
                 let uid = component
                     .uid()
                     .map(str::to_string)
-                    .unwrap_or_else(|| format!("dayplan-unnamed-{index}"));
+                    .unwrap_or_else(|| format!("delve-planner-unnamed-{index}"));
                 match series_by_uid.get(&uid) {
                     Some(position) => series[*position].1.push(component),
                     None => {

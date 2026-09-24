@@ -1,4 +1,4 @@
-# DayPlan Public Beta Release Checklist
+# Delve Planner Public Beta Release Checklist
 
 This checklist gates publishing an existing draft GitHub Release. Record the tested build/tag and both machine environments in the release notes.
 
@@ -26,7 +26,7 @@ This checklist gates publishing an existing draft GitHub Release. Record the tes
 - [ ] Clean install and first-run onboarding work on Apple Silicon.
 - [ ] Launch and core agenda flow work on Intel hardware or an Intel runner artifact.
 - [ ] Bundled runtime missing/start failure, downloading/cancel/retry, model-not-installed, and model-ready states are clear.
-- [ ] A running system Ollama on port 11434 is ignored; DayPlan uses only its private managed endpoint and model directory.
+- [ ] A running system Ollama on port 11434 is ignored; Delve Planner uses only its private managed endpoint and model directory.
 - [ ] Runtime executables for both macOS architectures are signed inside the app bundle.
 - [ ] Events/tasks persist across restart; closing the window retains tray delivery.
 - [ ] Schema-1 migration creates a backup and preserves data.
@@ -40,10 +40,10 @@ This checklist gates publishing an existing draft GitHub Release. Record the tes
 - [ ] Disconnecting an account removes its calendars and events, deletes its Keychain item, and the grant is gone from the provider's account settings.
 - [ ] After updating from the previous build, saved calendar links and account tokens refresh without a Keychain prompt.
 - [ ] Blocking time for a task, releasing a finished task's future blocks, and planned-versus-available capacity work, including after changing working hours.
-- [ ] What DayPlan Knows: a day marked off holds no working time, an observation can be switched off and back on, and forgetting the profile or the history empties them without touching the schedule.
-- [ ] Opening DayPlan starts no `ollama` process; asking the planner something starts one, and quitting DayPlan leaves no `ollama` or model-runner process behind (`pgrep -fl ollama`).
+- [ ] What Delve Planner Knows: a day marked off holds no working time, an observation can be switched off and back on, and forgetting the profile or the history empties them without touching the schedule.
+- [ ] Opening Delve Planner starts no `ollama` process; asking the planner something starts one, and quitting Delve Planner leaves no `ollama` or model-runner process behind (`pgrep -fl ollama`).
 - [ ] After a force quit, the next launch ends the model server the previous one left running.
-- [ ] A model installed outside DayPlan appears in the picker, plans after its format check, and survives **Remove model**.
+- [ ] A model installed outside Delve Planner appears in the picker, plans after its format check, and survives **Remove model**.
 - [ ] Manual update from the previous beta shows notes, asks for confirmation, installs, and relaunches.
 
 ## Windows 10 22H2 / Windows 11 x64
@@ -54,8 +54,8 @@ This checklist gates publishing an existing draft GitHub Release. Record the tes
 - [ ] A running system Ollama on port 11434 is ignored and the bundled runtime executables are Authenticode signed.
 - [ ] Events/tasks persist across restart; tray behavior is correct.
 - [ ] Migration, recovery, JSON round-trip, stale-proposal rejection, and permission denial match macOS.
-- [ ] Calendar links and account refresh tokens are saved in Credential Manager, calendars refresh while DayPlan runs in the tray, and account connection, the picker, disconnect, time blocks, and capacity match macOS.
-- [ ] Quitting DayPlan ends `ollama.exe` and its model runner (Task Manager shows neither), and the model picker lists models installed outside DayPlan.
+- [ ] Calendar links and account refresh tokens are saved in Credential Manager, calendars refresh while Delve Planner runs in the tray, and account connection, the picker, disconnect, time blocks, and capacity match macOS.
+- [ ] Quitting Delve Planner ends `ollama.exe` and its model runner (Task Manager shows neither), and the model picker lists models installed outside Delve Planner.
 - [ ] Installed-build notification fires while the window is closed and never includes notes.
 - [ ] Manual update from the previous beta verifies and installs the signed NSIS updater.
 

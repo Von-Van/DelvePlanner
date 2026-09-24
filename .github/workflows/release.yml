@@ -90,10 +90,10 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          DAYPLAN_UPDATER_PUBKEY: ${{ vars.TAURI_UPDATER_PUBKEY }}
-          DAYPLAN_GOOGLE_CLIENT_ID: ${{ vars.DAYPLAN_GOOGLE_CLIENT_ID }}
-          DAYPLAN_GOOGLE_CLIENT_SECRET: ${{ secrets.DAYPLAN_GOOGLE_CLIENT_SECRET }}
-          DAYPLAN_MICROSOFT_CLIENT_ID: ${{ vars.DAYPLAN_MICROSOFT_CLIENT_ID }}
+          DELVE_PLANNER_UPDATER_PUBKEY: ${{ vars.TAURI_UPDATER_PUBKEY }}
+          DELVE_PLANNER_GOOGLE_CLIENT_ID: ${{ vars.DELVE_PLANNER_GOOGLE_CLIENT_ID }}
+          DELVE_PLANNER_GOOGLE_CLIENT_SECRET: ${{ secrets.DELVE_PLANNER_GOOGLE_CLIENT_SECRET }}
+          DELVE_PLANNER_MICROSOFT_CLIENT_ID: ${{ vars.DELVE_PLANNER_MICROSOFT_CLIENT_ID }}
       - uses: actions/upload-artifact@v4
         with:
           name: macos-${{ matrix.target }}
@@ -133,7 +133,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         shell: bash
-        run: scripts/notarize-macos.sh release-assets/DayPlan.app release-assets/DayPlan_${{ needs.validate-tag.outputs.version }}_universal.dmg
+        run: scripts/notarize-macos.sh "release-assets/Delve Planner.app" release-assets/Delve-Planner_${{ needs.validate-tag.outputs.version }}_universal.dmg
       - uses: actions/upload-artifact@v4
         with:
           name: signed-macos
@@ -175,10 +175,10 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          DAYPLAN_UPDATER_PUBKEY: ${{ vars.TAURI_UPDATER_PUBKEY }}
-          DAYPLAN_GOOGLE_CLIENT_ID: ${{ vars.DAYPLAN_GOOGLE_CLIENT_ID }}
-          DAYPLAN_GOOGLE_CLIENT_SECRET: ${{ secrets.DAYPLAN_GOOGLE_CLIENT_SECRET }}
-          DAYPLAN_MICROSOFT_CLIENT_ID: ${{ vars.DAYPLAN_MICROSOFT_CLIENT_ID }}
+          DELVE_PLANNER_UPDATER_PUBKEY: ${{ vars.TAURI_UPDATER_PUBKEY }}
+          DELVE_PLANNER_GOOGLE_CLIENT_ID: ${{ vars.DELVE_PLANNER_GOOGLE_CLIENT_ID }}
+          DELVE_PLANNER_GOOGLE_CLIENT_SECRET: ${{ secrets.DELVE_PLANNER_GOOGLE_CLIENT_SECRET }}
+          DELVE_PLANNER_MICROSOFT_CLIENT_ID: ${{ vars.DELVE_PLANNER_MICROSOFT_CLIENT_ID }}
       - name: Azure Artifact Signing
         uses: azure/artifact-signing-action@v2
         with:
@@ -206,8 +206,10 @@ jobs:
           $signature | Format-List | Out-File windows-signatures.txt
           if ($signature.Status -ne "Valid") { throw "Windows signature status is $($signature.Status)" }
           New-Item -ItemType Directory -Force release-assets | Out-Null
-          Copy-Item $installer.FullName release-assets/
-          Copy-Item "$($installer.FullName).sig" release-assets/
+          # GitHub turns spaces in asset names into dots, and latest.json links to the file by name.
+          $asset = $installer.Name -replace ' ', '-'
+          Copy-Item $installer.FullName "release-assets/$asset"
+          Copy-Item "$($installer.FullName).sig" "release-assets/$asset.sig"
           Copy-Item windows-signatures.txt release-assets/
       - uses: actions/upload-artifact@v4
         with:
@@ -239,7 +241,7 @@ jobs:
         with:
           path: .
           format: cyclonedx-json
-          output-file: release-assets/dayplan-sbom.cdx.json
+          output-file: release-assets/delve-planner-sbom.cdx.json
       - name: Generate checksums
         run: find release-assets -type f ! -name SHA256SUMS.txt -print0 | sort -z | xargs -0 sha256sum > release-assets/SHA256SUMS.txt
       - name: Verify native signatures
@@ -249,4 +251,4 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
-        run: gh release create "$GITHUB_REF_NAME" release-assets/* --draft --verify-tag --notes-file "$RUNNER_TEMP/release-notes.md" --title "DayPlan $GITHUB_REF_NAME"
+        run: gh release create "$GITHUB_REF_NAME" release-assets/* --draft --verify-tag --notes-file "$RUNNER_TEMP/release-notes.md" --title "Delve Planner $GITHUB_REF_NAME"

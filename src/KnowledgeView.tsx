@@ -24,6 +24,8 @@ const observationTitles: Record<ObservationKind, string> = {
   usual_start: "When you start",
   typical_daily_load: "What a day holds",
   deferred_days: "The day work slips",
+  repeatedly_moved: "Work that keeps moving",
+  slipping_plan: "The plan that slips",
 };
 
 /** Minutes for a select, so a length is picked rather than typed. */
@@ -33,7 +35,7 @@ const breaks = [5, 10, 15, 20, 30, 45, 60];
 
 /**
  * The options a length select offers, always including whatever is stored. Without this a value
- * DayPlan didn't offer — from an earlier version, or set elsewhere — would show as "no
+ * Delve Planner didn't offer — from an earlier version, or set elsewhere — would show as "no
  * preference" and be thrown away by the next change to any other field.
  */
 function withCurrent(options: number[], current: number | null) {
@@ -42,7 +44,7 @@ function withCurrent(options: number[], current: number | null) {
 }
 
 /**
- * Everything DayPlan knows about how this person plans: what they told it, and what it worked
+ * Everything Delve Planner knows about how this person plans: what they told it, and what it worked
  * out from local records. Each observation shows what it rests on, and everything here can be
  * changed, switched off, or forgotten.
  */
@@ -100,8 +102,8 @@ export function KnowledgeView({
   async function forget(what: "profile" | "history") {
     const question =
       what === "profile"
-        ? "Forget everything you've told DayPlan about how you plan? Your schedule isn't affected."
-        : "Forget the history DayPlan learns from? The observations drawn from it go too, and it starts collecting again from today.";
+        ? "Forget everything you've told Delve Planner about how you plan? Your schedule isn't affected."
+        : "Forget the history Delve Planner learns from? The observations drawn from it go too, and it starts collecting again from today.";
     if (!window.confirm(question)) return;
     setBusy(true);
     try {
@@ -147,15 +149,15 @@ export function KnowledgeView({
         <div className="date-heading">
           <p>ON THIS DEVICE</p>
           <h1 ref={headingRef} tabIndex={-1}>
-            What DayPlan knows
+            What Delve Planner knows
           </h1>
         </div>
       </header>
       <p className="page-intro">
         Everything here stays on this device and none of it is exported. What
-        you tell DayPlan shapes capacity and the planner&rsquo;s suggestions;
-        what DayPlan noticed is worked out from your own records, and says what
-        it rests on.
+        you tell Delve Planner shapes capacity and the planner&rsquo;s
+        suggestions; what Delve Planner noticed is worked out from your own
+        records, and says what it rests on.
       </p>
 
       <section className="knowledge-block">
@@ -329,8 +331,8 @@ export function KnowledgeView({
         <h2>What it noticed</h2>
         {observations.length === 0 ? (
           <p className="knowledge-empty">
-            Nothing yet. DayPlan says something only once there is enough behind
-            it, and it only ever looks at records already on this device.
+            Nothing yet. Delve Planner says something only once there is enough
+            behind it, and it only ever looks at records already on this device.
           </p>
         ) : (
           <ul className="observation-list">

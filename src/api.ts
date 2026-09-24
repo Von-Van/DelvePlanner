@@ -77,6 +77,11 @@ export const workstreamSchema = z
   })
   .strict();
 
+/** A page that belongs with a plan; opened in the browser, never sent to the planner. */
+export const planLinkSchema = z
+  .object({ title: z.string(), url: z.string().url() })
+  .strict();
+
 export const planSchema = z
   .object({
     id: z.string().uuid(),
@@ -87,6 +92,7 @@ export const planSchema = z
     targetDate: daySchema.nullable(),
     color: z.enum(planColors).nullable(),
     archived: z.boolean(),
+    links: z.array(planLinkSchema),
     revision: revisionSchema,
     createdAt: timestampSchema,
     updatedAt: timestampSchema,
@@ -126,6 +132,27 @@ export const linkChangeSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("set"), id: z.string().uuid() }).strict(),
 ]);
 
+export const recurrenceFrequencies = [
+  "daily",
+  "weekdays",
+  "weekly",
+  "monthly",
+] as const;
+
+/** How a task repeats. Only the open occurrence carries it; finishing it creates the next. */
+export const recurrenceSchema = z
+  .object({
+    frequency: z.enum(recurrenceFrequencies),
+    interval: z.number().int().min(1).max(99),
+    weekdays: z.array(z.number().int().min(1).max(7)),
+    monthDay: z.number().int().min(1).max(31).nullable(),
+  })
+  .strict();
+
+export const checklistItemSchema = z
+  .object({ text: z.string(), done: z.boolean() })
+  .strict();
+
 export const taskSchema = z
   .object({
     id: z.string().uuid(),
@@ -142,10 +169,25 @@ export const taskSchema = z
     status: z.enum(taskStatuses),
     priority: z.enum(taskPriorities),
     completedAt: timestampSchema.nullable(),
+    recurrence: recurrenceSchema.nullable(),
+    checklist: z.array(checklistItemSchema),
+    /** Tasks this one waits on: a hint, never enforced. */
+    waitingOn: z.array(z.string().uuid()),
     sortOrder: z.number().int().nonnegative(),
     revision: revisionSchema,
     createdAt: timestampSchema,
     updatedAt: timestampSchema,
+  })
+  .strict();
+
+/** An open task in a word, for choosing and showing what a task waits on. */
+export const taskReferenceSchema = z
+  .object({
+    id: z.string().uuid(),
+    title: z.string(),
+    planId: z.string().uuid().nullable(),
+    scheduledDay: daySchema.nullable(),
+    dueDate: daySchema.nullable(),
   })
   .strict();
 
@@ -218,7 +260,7 @@ export const calendarAccountSchema = z
   })
   .strict();
 
-/** A calendar an account offers, before DayPlan starts showing it. */
+/** A calendar an account offers, before Delve Planner starts showing it. */
 export const remoteCalendarSchema = z
   .object({
     id: z.string().min(1),
@@ -383,6 +425,11 @@ const recordReferenceSchema = z.union([
   z.object({ newTitle: z.string().min(1).max(140) }).strict(),
 ]);
 
+/** The inbox item a new record is made from; applying removes it from the inbox. */
+const inboxSourceSchema = z
+  .object({ itemId: z.string().uuid(), expectedRevision: revisionSchema })
+  .strict();
+
 const dayChangeSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("unchanged") }).strict(),
   z.object({ action: z.literal("clear") }).strict(),
@@ -417,6 +464,7 @@ export const operationSchema = z.discriminatedUnion("type", [
       durationMinutes: z.number().int().min(5).max(1440),
       reminderMinutesBefore: z.number().int().min(0).max(10_080).nullable(),
       plan: recordReferenceSchema.nullable(),
+      fromInbox: inboxSourceSchema.nullable(),
     })
     .strict(),
   z
@@ -466,6 +514,7 @@ export const operationSchema = z.discriminatedUnion("type", [
       status: z.enum(planStatuses),
       startDate: daySchema.nullable(),
       targetDate: daySchema.nullable(),
+      fromInbox: inboxSourceSchema.nullable(),
     })
     .strict(),
   z
@@ -518,6 +567,8 @@ export const operationSchema = z.discriminatedUnion("type", [
       dueDate: daySchema.nullable(),
       status: z.enum(taskStatuses),
       priority: z.enum(taskPriorities),
+      workstream: recordReferenceSchema.nullable(),
+      fromInbox: inboxSourceSchema.nullable(),
     })
     .strict(),
   z
@@ -558,12 +609,34 @@ export const operationSchema = z.discriminatedUnion("type", [
       ...targetSchema,
     })
     .strict(),
+  z
+    .object({
+      type: z.literal("create_workstream"),
+      plan: recordReferenceSchema,
+      name: z.string().min(1).max(140),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("set_task_workstream"),
+      taskId: z.string().uuid(),
+      ...targetSchema,
+      workstream: recordReferenceSchema.nullable(),
+    })
+    .strict(),
 ]);
 
 const proposalReferenceSchema = z
   .object({
     id: z.string().uuid(),
-    kind: z.enum(["event", "plan", "milestone", "task"]),
+    kind: z.enum([
+      "event",
+      "plan",
+      "milestone",
+      "task",
+      "workstream",
+      "inbox_item",
+    ]),
     title: z.string(),
   })
   .strict();
@@ -607,6 +680,7 @@ const appliedProposalSchema = z
     planIds: z.array(z.string().uuid()),
     milestoneIds: z.array(z.string().uuid()),
     taskIds: z.array(z.string().uuid()),
+    workstreamIds: z.array(z.string().uuid()),
   })
   .strict();
 
@@ -741,6 +815,28 @@ export type InboxConversion = z.infer<typeof inboxConversionSchema>;
 export type Milestone = z.infer<typeof milestoneSchema>;
 export type MilestoneStatus = Milestone["status"];
 export type Task = z.infer<typeof taskSchema>;
+export type Recurrence = z.infer<typeof recurrenceSchema>;
+export type RecurrenceFrequency = Recurrence["frequency"];
+export type ChecklistItem = z.infer<typeof checklistItemSchema>;
+export type TaskReference = z.infer<typeof taskReferenceSchema>;
+export type PlanLink = z.infer<typeof planLinkSchema>;
+export const planTemplates = [
+  "event",
+  "trip",
+  "move",
+  "research",
+  "job_search",
+  "personal_project",
+] as const;
+export type PlanTemplate = (typeof planTemplates)[number];
+const planTemplateInfoSchema = z
+  .object({
+    template: z.enum(planTemplates),
+    label: z.string(),
+    workstreams: z.array(z.string()),
+  })
+  .strict();
+export type PlanTemplateInfo = z.infer<typeof planTemplateInfoSchema>;
 export type TaskBlock = z.infer<typeof taskBlockSchema>;
 export type ScheduledBlock = z.infer<typeof scheduledBlockSchema>;
 export type Calendar = z.infer<typeof calendarSchema>;
@@ -759,6 +855,9 @@ export type TaskPriority = Task["priority"];
 export type PlannerResponse = z.infer<typeof plannerResponseSchema>;
 export type Proposal = Extract<PlannerResponse, { kind: "proposal" }>;
 export type ProposalOperation = Proposal["operations"][number];
+export type ProposalChange = ProposalOperation["change"];
+/** A suggestion changed in review before applying; Rust checks it still targets the same record. */
+export type SuggestionEdit = { id: string; change: ProposalChange };
 export type ProposalReference = z.infer<typeof proposalReferenceSchema>;
 export type RecordReference = z.infer<typeof recordReferenceSchema>;
 export type DayChange = z.infer<typeof dayChangeSchema>;
@@ -768,7 +867,13 @@ export type ReminderChange = z.infer<typeof reminderChangeSchema>;
 
 export type PlanInput = Pick<
   Plan,
-  "title" | "description" | "status" | "startDate" | "targetDate" | "color"
+  | "title"
+  | "description"
+  | "status"
+  | "startDate"
+  | "targetDate"
+  | "color"
+  | "links"
 >;
 export type MilestoneInput = Pick<
   Milestone,
@@ -788,6 +893,9 @@ export type TaskInput = Pick<
   | "estimatedMinutes"
   | "status"
   | "priority"
+  | "recurrence"
+  | "checklist"
+  | "waitingOn"
 >;
 export type InboxInput = Pick<InboxItem, "text" | "notes">;
 export type EventInput = {
@@ -837,6 +945,8 @@ export const observationKinds = [
   "usual_start",
   "typical_daily_load",
   "deferred_days",
+  "repeatedly_moved",
+  "slipping_plan",
 ] as const;
 export type ObservationKind = (typeof observationKinds)[number];
 
@@ -862,7 +972,7 @@ const planningProfileSchema = z
 
 export type PlanningProfile = z.infer<typeof planningProfileSchema>;
 
-/** Something DayPlan worked out from local records, with what it rests on. */
+/** Something Delve Planner worked out from local records, with what it rests on. */
 const observationSchema = z
   .object({
     kind: z.enum(observationKinds),
@@ -876,7 +986,7 @@ export type Observation = z.infer<typeof observationSchema>;
 
 export type OllamaStatus = z.infer<typeof statusSchema>;
 
-export const modelSources = ["dayplan", "system"] as const;
+export const modelSources = ["delve_planner", "system"] as const;
 export type ModelSource = (typeof modelSources)[number];
 
 const installedModelSchema = z
@@ -884,9 +994,9 @@ const installedModelSchema = z
     name: z.string(),
     sizeBytes: z.number().nonnegative(),
     source: z.enum(modelSources),
-    /** Whether DayPlan's own evaluations run against this model. */
+    /** Whether Delve Planner's own evaluations run against this model. */
     tested: z.boolean(),
-    /** Whether it has answered DayPlan's reply-format check on this machine. */
+    /** Whether it has answered Delve Planner's reply-format check on this machine. */
     checked: z.boolean(),
     selected: z.boolean(),
   })
@@ -900,14 +1010,14 @@ export type LocalDateTimeResolution = z.infer<
 export type DatabaseStatus = z.infer<typeof databaseStatusSchema>;
 export type ImportSelection = z.infer<typeof importSelectionSchema>;
 
-export class DayPlanError extends Error {
+export class DelvePlannerError extends Error {
   code: string;
   retryable: boolean;
   details?: unknown;
 
   constructor(payload: CommandErrorPayload) {
     super(payload.message);
-    this.name = "DayPlanError";
+    this.name = "DelvePlannerError";
     this.code = payload.code;
     this.retryable = payload.retryable;
     this.details = payload.details;
@@ -923,7 +1033,7 @@ async function invokeCommand<T>(name: string, args?: Record<string, unknown>) {
     return await invoke<T>(name, args);
   } catch (cause) {
     const parsed = commandErrorSchema.safeParse(cause);
-    if (parsed.success) throw new DayPlanError(parsed.data);
+    if (parsed.success) throw new DelvePlannerError(parsed.data);
     throw cause instanceof Error ? cause : new Error(String(cause));
   }
 }
@@ -992,6 +1102,26 @@ export const api = {
       await invokeCommand("delete_plan", { id, revision }),
     );
   },
+  /** The templates a new plan can start from, with the workstreams each creates. */
+  async listPlanTemplates() {
+    return z
+      .array(planTemplateInfoSchema)
+      .parse(await invokeCommand("list_plan_templates"));
+  },
+  /** Creates a plan with a template's starting workstreams in one step. */
+  async createPlanFromTemplate(input: PlanInput, template: PlanTemplate) {
+    return planSchema.parse(
+      await invokeCommand("create_plan_from_template", { input, template }),
+    );
+  },
+  /** Copies a plan's workstreams, milestones, and open tasks, moving dates by `shiftDays`. */
+  async duplicatePlan(input: { id: string; title: string; shiftDays: number }) {
+    return planSchema.parse(await invokeCommand("duplicate_plan", { input }));
+  },
+  /** Opens a saved plan link in the browser; links are named by position, never by address. */
+  async openPlanLink(planId: string, index: number) {
+    await invokeCommand("open_plan_link", { planId, index });
+  },
   async createMilestone(input: MilestoneInput & { planId: string }) {
     return milestoneSchema.parse(
       await invokeCommand("create_milestone", { input }),
@@ -1049,6 +1179,18 @@ export const api = {
   },
   async deleteTask(id: string, revision: number) {
     await invokeCommand("delete_task", { id, revision });
+  },
+  /** Moves a repeating task's open occurrence to its next date without finishing it. */
+  async skipTaskOccurrence(id: string, revision: number) {
+    return taskSchema.parse(
+      await invokeCommand("skip_task_occurrence", { id, revision }),
+    );
+  },
+  /** Every open task in a word; one that isn't listed is finished. */
+  async listOpenTaskReferences() {
+    return z
+      .array(taskReferenceSchema)
+      .parse(await invokeCommand("list_open_task_references"));
   },
   async listInbox() {
     return z
@@ -1109,7 +1251,7 @@ export const api = {
       .array(taskBlockSchema)
       .parse(await invokeCommand("list_task_blocks", { taskId }));
   },
-  /** Future blocks of finished tasks, which DayPlan offers to release. */
+  /** Future blocks of finished tasks, which Delve Planner offers to release. */
   async releasableBlocks() {
     return z
       .array(scheduledBlockSchema)
@@ -1306,11 +1448,27 @@ export const api = {
   async removeModel() {
     await invokeCommand("remove_ollama_model");
   },
+  /** The system-wide quick-capture shortcut saved on this computer, or null while it's off. */
+  async getQuickCaptureShortcut() {
+    return z
+      .string()
+      .nullable()
+      .parse(await invokeCommand("get_quick_capture_shortcut"));
+  },
+  /** Records a new quick-capture shortcut, or switches it off with null; returns what's saved. */
+  async setQuickCaptureShortcut(shortcut: string | null) {
+    return z
+      .string()
+      .nullable()
+      .parse(await invokeCommand("set_quick_capture_shortcut", { shortcut }));
+  },
   async propose(
     command: string,
     day: string,
     timeZone: string,
     activePlanId: string | null = null,
+    /** 0 = Sunday, as the week-start setting stores it. */
+    weekStartsOn = 1,
   ) {
     return plannerResponseSchema.parse(
       await invokeCommand("propose_schedule_changes", {
@@ -1318,13 +1476,25 @@ export const api = {
         day,
         timeZone,
         activePlanId,
+        weekStartsOn,
       }),
     );
   },
-  /** Applies the accepted suggestions; leaving `accepted` out applies all of them. */
-  async apply(proposalId: string, accepted?: string[]) {
+  /**
+   * Applies the accepted suggestions, with any the user edited first; leaving `accepted` out
+   * applies all of them.
+   */
+  async apply(
+    proposalId: string,
+    accepted?: string[],
+    edits: SuggestionEdit[] = [],
+  ) {
     return appliedProposalSchema.parse(
-      await invokeCommand("apply_schedule_changes", { proposalId, accepted }),
+      await invokeCommand("apply_schedule_changes", {
+        proposalId,
+        accepted,
+        edits,
+      }),
     );
   },
   async discardProposal(proposalId: string) {

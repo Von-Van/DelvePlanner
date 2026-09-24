@@ -18,7 +18,7 @@ labels: bug
 
 ## Environment
 
-- DayPlan version:
+- Delve Planner version:
 - macOS or Windows version:
 - CPU architecture:
 - Ollama/model version (if relevant):

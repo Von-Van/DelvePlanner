@@ -24,6 +24,9 @@ describe("planning record boundary", () => {
     status: "todo",
     priority: "high",
     completedAt: null,
+    recurrence: null,
+    checklist: [],
+    waitingOn: [],
     sortOrder: 0,
     revision: 1,
     createdAt: stamp,
@@ -32,6 +35,33 @@ describe("planning record boundary", () => {
 
   it("accepts a general task without a scheduled day", () => {
     expect(taskSchema.parse(task).scheduledDay).toBeNull();
+  });
+
+  it("reads repeat rules, checklists, and waits in the shape Rust saves them", () => {
+    const repeating = {
+      ...task,
+      scheduledDay: "2026-10-12",
+      recurrence: {
+        frequency: "weekly",
+        interval: 2,
+        weekdays: [1, 4],
+        monthDay: null,
+      },
+      checklist: [{ text: "Call the venue", done: true }],
+      waitingOn: ["f67fcad6-2827-4668-829f-1950f441d054"],
+    };
+    expect(taskSchema.parse(repeating).recurrence?.weekdays).toEqual([1, 4]);
+    expect(() =>
+      taskSchema.parse({
+        ...repeating,
+        recurrence: { ...repeating.recurrence, frequency: "yearly" },
+      }),
+    ).toThrow();
+    expect(() =>
+      taskSchema.parse({ ...repeating, waitingOn: ["not-an-id"] }),
+    ).toThrow();
+    const { checklist: _checklist, ...withoutChecklist } = repeating;
+    expect(() => taskSchema.parse(withoutChecklist)).toThrow();
   });
 
   it("accepts a chosen week and an estimate within one day", () => {
@@ -64,6 +94,7 @@ describe("planning record boundary", () => {
       targetDate: "2026-10-16",
       color: "clay",
       archived: false,
+      links: [{ title: "Venue", url: "https://example.com/venue" }],
       revision: 2,
       createdAt: stamp,
       updatedAt: stamp,
@@ -71,6 +102,9 @@ describe("planning record boundary", () => {
     expect(planSchema.parse(plan).targetDate).toBe("2026-10-16");
     expect(() => planSchema.parse({ ...plan, color: "#ff0000" })).toThrow();
     expect(() => planSchema.parse({ ...plan, status: "at_risk" })).toThrow();
+    expect(() =>
+      planSchema.parse({ ...plan, links: [{ title: "", url: "not a link" }] }),
+    ).toThrow();
   });
 
   it("types event plan membership and plan changes", () => {
@@ -201,6 +235,11 @@ describe("planner response boundary", () => {
           kind: "task",
           title: "Book venue",
         },
+        {
+          id: "7c3e9a1b-2f4d-4e6a-8b0c-9d1e2f3a4b5c",
+          kind: "inbox_item",
+          title: "Buy flour",
+        },
       ],
       operations: [
         review(
@@ -211,6 +250,7 @@ describe("planner response boundary", () => {
             status: "planning",
             startDate: null,
             targetDate: "2026-10-03",
+            fromInbox: null,
           },
           0,
         ),
@@ -225,8 +265,30 @@ describe("planner response boundary", () => {
             dueDate: "2026-10-01",
             status: "todo",
             priority: "normal",
+            workstream: { id: "0b8f2a4c-6d1e-4f3a-9b7c-5e2d1a0f9c8b" },
+            fromInbox: {
+              itemId: "7c3e9a1b-2f4d-4e6a-8b0c-9d1e2f3a4b5c",
+              expectedRevision: 1,
+            },
           },
           1,
+        ),
+        review(
+          {
+            type: "create_workstream",
+            plan: { newTitle: "Bake sale" },
+            name: "Stalls",
+          },
+          3,
+        ),
+        review(
+          {
+            type: "set_task_workstream",
+            taskId: "f67fcad6-2827-4668-829f-1950f441d054",
+            expectedRevision: 2,
+            workstream: null,
+          },
+          4,
         ),
         review(
           {

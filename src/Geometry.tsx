@@ -4,8 +4,8 @@ export type MarkShape =
   "rhombus" | "square" | "circle" | "ring" | "rule" | "bar";
 
 /**
- * DayPlan's icon system is geometry, not pictograms: one shape per meaning, filled for done or
- * active, outlined for pending, dashed for skipped. Marks are always decorative.
+ * Delve Planner's icon system is geometry, not pictograms: one shape per meaning, filled for done
+ * or active, outlined for pending, dashed for skipped. Marks are always decorative.
  */
 export function Mark({
   shape = "rhombus",
