@@ -558,6 +558,7 @@ describe("plan views", () => {
 
   it("finds locale week starts and labels ranges", () => {
     expect(localeWeekStart("en-GB")).toBe(1);
+    expect(localeWeekStart("en-US")).toBe(0);
     expect(weekStartDay("2026-11-11", 1)).toBe("2026-11-09");
     expect(weekStartDay("2026-11-11", 0)).toBe("2026-11-08");
     expect(rangeLabel("2026-11-09", "2026-11-15")).toBe(

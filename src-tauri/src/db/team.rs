@@ -1,16 +1,16 @@
 //! People and workstreams: team planning semantics without accounts, sync, or permissions.
 
-use super::planning::{ensure_plan_exists, validate_description, TASK_SELECT};
+use super::planning::{ensure_plan_exists, stale_write_error, validate_description, TASK_SELECT};
 use super::{
     collect, event_from_row, now, planning::task_from_row, validate_id, validate_revision,
-    PlannerDatabase, SqlConnection, EVENT_SELECT,
+    PlannerDatabase, EVENT_SELECT,
 };
 use crate::error::{AppError, AppResult};
 use crate::model::{
     CreatePersonInput, CreateWorkstreamInput, Person, PersonSummary, UpdatePersonInput,
     UpdateWorkstreamInput, Workstream, MAX_EMAIL_LENGTH, MAX_NAME_LENGTH, MAX_NOTES_LENGTH,
 };
-use rusqlite::{params, OptionalExtension, Row, TransactionBehavior};
+use rusqlite::{params, Connection, OptionalExtension, Row, TransactionBehavior};
 use uuid::Uuid;
 
 const PERSON_SELECT: &str =
@@ -238,8 +238,8 @@ impl PlannerDatabase {
 
 /// Adds a workstream to a plan, for callers that may be inside a transaction. Names are unique
 /// within a plan, ignoring case.
-pub(super) fn insert_workstream<C: SqlConnection>(
-    connection: &C,
+pub(super) fn insert_workstream(
+    connection: &Connection,
     input: &CreateWorkstreamInput,
 ) -> AppResult<Workstream> {
     validate_workstream_shape(&input.name, &input.description)?;
@@ -247,12 +247,12 @@ pub(super) fn insert_workstream<C: SqlConnection>(
     ensure_unique_workstream_name(connection, &input.plan_id, &input.name, None)?;
     let id = Uuid::new_v4().to_string();
     let timestamp = now();
-    let next_order: i64 = connection.connection().query_row(
+    let next_order: i64 = connection.query_row(
         "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM workstreams WHERE plan_id = ?1",
         params![input.plan_id],
         |row| row.get(0),
     )?;
-    connection.connection().execute(
+    connection.execute(
         "INSERT INTO workstreams
          (id, plan_id, name, description, sort_order, revision, created_at, updated_at)
          VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6, ?6)",
@@ -268,11 +268,11 @@ pub(super) fn insert_workstream<C: SqlConnection>(
     workstream_by_id(connection, &id)?.ok_or(AppError::NotFound)
 }
 
-pub(super) fn workstreams_in_plan<C: SqlConnection>(
-    connection: &C,
+pub(super) fn workstreams_in_plan(
+    connection: &Connection,
     plan_id: &str,
 ) -> AppResult<Vec<Workstream>> {
-    let mut statement = connection.connection().prepare(&format!(
+    let mut statement = connection.prepare(&format!(
         "{WORKSTREAM_SELECT} WHERE plan_id = ?1 ORDER BY sort_order ASC, created_at ASC"
     ))?;
     let rows = statement.query_map(params![plan_id], workstream_from_row)?;
@@ -281,8 +281,8 @@ pub(super) fn workstreams_in_plan<C: SqlConnection>(
 
 /// Validates optional plan-scoped links shared by tasks, milestones, and events: a workstream must
 /// belong to the item's plan and an owner must exist.
-pub(super) fn validate_links<C: SqlConnection>(
-    connection: &C,
+pub(super) fn validate_links(
+    connection: &Connection,
     plan_id: Option<&str>,
     workstream_id: Option<&str>,
     owner_id: Option<&str>,
@@ -290,7 +290,6 @@ pub(super) fn validate_links<C: SqlConnection>(
     if let Some(workstream_id) = workstream_id {
         validate_id(workstream_id)?;
         let workstream_plan: Option<String> = connection
-            .connection()
             .query_row(
                 "SELECT plan_id FROM workstreams WHERE id = ?1",
                 params![workstream_id],
@@ -311,7 +310,7 @@ pub(super) fn validate_links<C: SqlConnection>(
     }
     if let Some(owner_id) = owner_id {
         validate_id(owner_id)?;
-        let exists: bool = connection.connection().query_row(
+        let exists: bool = connection.query_row(
             "SELECT EXISTS(SELECT 1 FROM people WHERE id = ?1)",
             params![owner_id],
             |row| row.get(0),
@@ -378,13 +377,13 @@ fn validate_name(value: &str) -> AppResult<()> {
 }
 
 /// Workstream names are unique within a plan, ignoring ASCII case like SQLite's NOCASE.
-fn ensure_unique_workstream_name<C: SqlConnection>(
-    connection: &C,
+fn ensure_unique_workstream_name(
+    connection: &Connection,
     plan_id: &str,
     name: &str,
     except_id: Option<&str>,
 ) -> AppResult<()> {
-    let taken: bool = connection.connection().query_row(
+    let taken: bool = connection.query_row(
         "SELECT EXISTS(
              SELECT 1 FROM workstreams
              WHERE plan_id = ?1 AND name = ?2 COLLATE NOCASE AND id <> COALESCE(?3, '')
@@ -400,26 +399,8 @@ fn ensure_unique_workstream_name<C: SqlConnection>(
     Ok(())
 }
 
-fn stale_write_error<C: SqlConnection>(
-    connection: &C,
-    table: &'static str,
-    id: &str,
-) -> AppResult<AppError> {
-    let exists: bool = connection.connection().query_row(
-        &format!("SELECT EXISTS(SELECT 1 FROM {table} WHERE id = ?1)"),
-        params![id],
-        |row| row.get(0),
-    )?;
-    Ok(if exists {
-        AppError::Conflict
-    } else {
-        AppError::NotFound
-    })
-}
-
-fn person_by_id<C: SqlConnection>(connection: &C, id: &str) -> AppResult<Option<Person>> {
+fn person_by_id(connection: &Connection, id: &str) -> AppResult<Option<Person>> {
     connection
-        .connection()
         .query_row(
             &format!("{PERSON_SELECT} WHERE id = ?1"),
             params![id],
@@ -429,9 +410,8 @@ fn person_by_id<C: SqlConnection>(connection: &C, id: &str) -> AppResult<Option<
         .map_err(AppError::from)
 }
 
-fn workstream_by_id<C: SqlConnection>(connection: &C, id: &str) -> AppResult<Option<Workstream>> {
+fn workstream_by_id(connection: &Connection, id: &str) -> AppResult<Option<Workstream>> {
     connection
-        .connection()
         .query_row(
             &format!("{WORKSTREAM_SELECT} WHERE id = ?1"),
             params![id],

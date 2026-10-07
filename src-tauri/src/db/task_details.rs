@@ -3,7 +3,7 @@
 //! JSON beside the record they belong to, so they move, export, and revision-check with it.
 //! "Waits on" is a link table, so deleting a task can't leave another one waiting on nothing.
 
-use super::{now, validate_id, SqlConnection};
+use super::{now, validate_id};
 use crate::error::{AppError, AppResult};
 use crate::model::{
     ChecklistItem, PlanLink, Recurrence, MAX_CHECKLIST_ITEMS, MAX_LINK_URL_LENGTH, MAX_PLAN_LINKS,
@@ -98,12 +98,11 @@ pub(super) fn validate_waiting_on(ids: &[String]) -> AppResult<Vec<String>> {
 /// others: waiting in a circle would never end. A task that has since been deleted is dropped from
 /// the list rather than refused, since waiting on something that no longer exists is no wait at
 /// all, and an editor opened before the deletion shouldn't be unable to save.
-pub(super) fn replace_dependencies<C: SqlConnection>(
-    connection: &C,
+pub(super) fn replace_dependencies(
+    connection: &Connection,
     task_id: &str,
     waiting_on: &[String],
 ) -> AppResult<()> {
-    let connection = connection.connection();
     let mut kept = Vec::with_capacity(waiting_on.len());
     for prerequisite in waiting_on {
         if prerequisite == task_id {

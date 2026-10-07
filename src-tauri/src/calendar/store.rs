@@ -39,7 +39,6 @@ pub struct NewCalendar<'a> {
     pub remote_id: Option<&'a str>,
 }
 
-/// A connected account about to be stored.
 pub struct NewAccount<'a> {
     pub id: &'a str,
     pub provider: CalendarProvider,
@@ -437,16 +436,6 @@ impl CalendarStore {
         )?;
         transaction.commit()?;
         Ok(())
-    }
-
-    /// Points an account at the address it signed in as, after a reconnect.
-    pub fn rename_account(&mut self, id: &str, label: &str) -> AppResult<CalendarAccount> {
-        self.connection.execute(
-            "UPDATE calendar_accounts SET label = ?1, revision = revision + 1, updated_at = ?2
-             WHERE id = ?3",
-            params![label, timestamp(Utc::now()), id],
-        )?;
-        account_by_id(&self.connection, id)?.ok_or(AppError::NotFound)
     }
 
     /// Deletes an account, and with it every calendar and event cached from it.

@@ -25,13 +25,13 @@ use model::{
     Observation, Person, PersonSummary, Plan, PlanColor, PlanDeletion, PlanSummary, PlanTemplate,
     PlanTemplateInfo, PlanWorkspace, PlannerResponse, PlanningBoard, PlanningFacts,
     PlanningProfile, ProcessInboxItemInput, RecordVersion, RemoteCalendar,
-    ReplaceCalendarLinkInput, RescheduleEventInput, ScheduleEvent, ScheduledBlock,
-    SubscribeCalendarInput, SuggestionEdit, Task, TaskBlock, TaskMove, TaskReference,
-    UpdateCalendarInput, UpdateEventInput, UpdateInboxItemInput, UpdateMilestoneInput,
-    UpdatePersonInput, UpdatePlanInput, UpdatePlanningProfileInput, UpdateTaskBlockInput,
-    UpdateTaskInput, UpdateWorkingHoursInput, UpdateWorkstreamInput, WorkingHours, Workstream,
+    ReplaceCalendarLinkInput, ScheduleEvent, ScheduledBlock, SubscribeCalendarInput,
+    SuggestionEdit, Task, TaskMove, TaskReference, UpdateCalendarInput, UpdateEventInput,
+    UpdateInboxItemInput, UpdateMilestoneInput, UpdatePersonInput, UpdatePlanInput,
+    UpdatePlanningProfileInput, UpdateTaskBlockInput, UpdateTaskInput, UpdateWorkingHoursInput,
+    UpdateWorkstreamInput, WorkingHours, Workstream,
 };
-use runtime::{InstalledModel, OllamaRuntimeManager};
+use runtime::{InstalledModel, OllamaRuntime};
 use serde::Serialize;
 use std::fs::{self, File};
 use std::io::{Read, Write};
@@ -58,7 +58,7 @@ struct AppState {
     database: Mutex<DatabaseRuntime>,
     calendars: CalendarService,
     agent: PlannerAgent,
-    ollama: OllamaRuntimeManager,
+    ollama: OllamaRuntime,
     pending_import: Mutex<Option<PendingImport>>,
     /// Serializes changes to the quick-capture shortcut and remembers where it's saved.
     shortcuts: Mutex<PathBuf>,
@@ -371,14 +371,6 @@ fn delete_event(state: State<'_, AppState>, id: String, revision: i64) -> Result
 }
 
 #[tauri::command]
-fn reschedule_event(
-    state: State<'_, AppState>,
-    input: RescheduleEventInput,
-) -> Result<ScheduleEvent, CommandError> {
-    with_database(&state, |database| database.reschedule_event(input))
-}
-
-#[tauri::command]
 fn create_task(state: State<'_, AppState>, input: CreateTaskInput) -> Result<Task, CommandError> {
     with_database(&state, |database| database.create_task(input))
 }
@@ -486,14 +478,6 @@ fn delete_task_blocks(
 }
 
 #[tauri::command]
-fn list_task_blocks(
-    state: State<'_, AppState>,
-    task_id: String,
-) -> Result<Vec<TaskBlock>, CommandError> {
-    with_database(&state, |database| database.task_blocks(&task_id))
-}
-
-#[tauri::command]
 fn list_releasable_blocks(state: State<'_, AppState>) -> Result<Vec<ScheduledBlock>, CommandError> {
     with_database(&state, |database| database.releasable_blocks())
 }
@@ -553,16 +537,32 @@ fn get_capacity(
     time_zone: String,
     excluded_block_id: Option<String>,
 ) -> Result<Capacity, CommandError> {
-    let range = DayRange::new(&start_day, days, &time_zone)?;
-    let zone = parse_zone(&time_zone)?;
+    capacity_for(
+        &state,
+        &start_day,
+        days,
+        &time_zone,
+        excluded_block_id.as_deref(),
+    )
+}
+
+fn capacity_for(
+    state: &State<'_, AppState>,
+    start_day: &str,
+    days: u32,
+    time_zone: &str,
+    excluded_block_id: Option<&str>,
+) -> Result<Capacity, CommandError> {
+    let range = DayRange::new(start_day, days, time_zone)?;
+    let zone = parse_zone(time_zone)?;
     let first_day = NaiveDate::parse_from_str(&range.first_day, "%Y-%m-%d")
         .map_err(|_| AppError::Validation("Dates must use YYYY-MM-DD.".into()))?;
-    let (facts, profile) = with_database(&state, |database| {
+    let (facts, profile) = with_database(state, |database| {
         let facts = database.capacity_facts(
             &range.first_day,
             &range.end_day,
-            &time_zone,
-            excluded_block_id.as_deref(),
+            time_zone,
+            excluded_block_id,
         )?;
         Ok((facts, database.planning_profile()?))
     })?;
@@ -978,7 +978,6 @@ fn list_installed_models(state: State<'_, AppState>) -> Result<Vec<InstalledMode
     Ok(state.ollama.installed_models())
 }
 
-/// Switches the planner to another installed model.
 #[tauri::command]
 async fn choose_planner_model(
     state: State<'_, AppState>,
@@ -1012,21 +1011,6 @@ async fn check_planner_model(
         .await
         .map_err(CommandError::from)?;
     state.ollama.mark_checked(&model);
-    Ok(())
-}
-
-/// Starts the runtime because the user asked for something that needs it. Status alone never
-/// does: an open Delve Planner that nobody is asking anything shouldn't be running a model server.
-#[tauri::command]
-async fn start_ollama_runtime(state: State<'_, AppState>) -> Result<OllamaStatus, CommandError> {
-    state.ollama.note_used();
-    Ok(state.ollama.started_status(&state.agent).await)
-}
-
-/// Lets the model go without stopping the server, for when the user leaves the planner.
-#[tauri::command]
-async fn release_ollama_model(state: State<'_, AppState>) -> Result<(), CommandError> {
-    state.ollama.unload_model(&state.agent.model_name()).await;
     Ok(())
 }
 
@@ -1256,27 +1240,7 @@ fn planning_facts(
     start_day: &str,
     time_zone: &str,
 ) -> Result<PlanningFacts, CommandError> {
-    let range = DayRange::new(start_day, PLANNING_FACT_DAYS, time_zone)?;
-    let zone = parse_zone(time_zone)?;
-    let first_day = NaiveDate::parse_from_str(&range.first_day, "%Y-%m-%d")
-        .map_err(|_| AppError::Validation("Dates must use YYYY-MM-DD.".into()))?;
-    let (facts, profile) = with_database(state, |database| {
-        let facts = database.capacity_facts(&range.first_day, &range.end_day, time_zone, None)?;
-        Ok((facts, database.planning_profile()?))
-    })?;
-    let (busy, incomplete) = state
-        .calendars
-        .busy(&range)
-        .unwrap_or_else(|_| (Vec::new(), true));
-    let capacity = capacity::capacity(
-        first_day,
-        PLANNING_FACT_DAYS,
-        zone,
-        facts,
-        &busy,
-        incomplete,
-        &profile,
-    );
+    let capacity = capacity_for(state, start_day, PLANNING_FACT_DAYS, time_zone, None)?;
     Ok(PlanningFacts::from_capacity(&capacity))
 }
 
@@ -1319,11 +1283,6 @@ fn discard_schedule_proposal(
         .agent
         .discard_pending(&proposal_id)
         .map_err(CommandError::from)
-}
-
-#[tauri::command]
-fn cancel_planner_request(state: State<'_, AppState>) {
-    state.agent.cancel_current();
 }
 
 async fn reminder_worker(app: AppHandle) {
@@ -1559,7 +1518,7 @@ pub fn run() {
                 .path()
                 .resource_dir()
                 .map_err(|error| error.to_string())?;
-            let ollama = OllamaRuntimeManager::new(resource_directory, directory.clone())
+            let ollama = OllamaRuntime::new(resource_directory, directory.clone())
                 .map_err(|error| error.to_string())?;
             // Whichever model the user chose last, or the one Delve Planner ships against.
             let model = ollama
@@ -1629,7 +1588,6 @@ pub fn run() {
             create_event,
             update_event,
             delete_event,
-            reschedule_event,
             create_task,
             update_task,
             delete_task,
@@ -1645,7 +1603,6 @@ pub fn run() {
             create_task_block,
             update_task_block,
             delete_task_blocks,
-            list_task_blocks,
             list_releasable_blocks,
             get_working_hours,
             update_working_hours,
@@ -1679,8 +1636,6 @@ pub fn run() {
             list_installed_models,
             choose_planner_model,
             check_planner_model,
-            start_ollama_runtime,
-            release_ollama_model,
             download_ollama_model,
             cancel_ollama_model_download,
             restart_ollama_runtime,
@@ -1689,7 +1644,6 @@ pub fn run() {
             propose_schedule_changes,
             apply_schedule_changes,
             discard_schedule_proposal,
-            cancel_planner_request,
             clear_planner_context,
         ])
         .build(tauri::generate_context!())

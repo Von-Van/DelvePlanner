@@ -4,7 +4,6 @@
 use super::planning::{stale_write_error, task_by_id, task_from_row, TASK_SELECT};
 use super::{
     collect, day_bounds, now, validate_id, validate_revision, validate_time, PlannerDatabase,
-    SqlConnection,
 };
 use crate::error::{AppError, AppResult};
 use crate::model::{
@@ -137,6 +136,7 @@ impl PlannerDatabase {
         Ok(ScheduledBlock { block, task })
     }
 
+    #[cfg(test)]
     pub fn delete_task_block(&mut self, id: &str, revision: i64) -> AppResult<()> {
         self.delete_task_blocks(vec![RecordVersion {
             id: id.into(),
@@ -178,6 +178,7 @@ impl PlannerDatabase {
     }
 
     /// Every block of one task, earliest first.
+    #[cfg(test)]
     pub fn task_blocks(&self, task_id: &str) -> AppResult<Vec<TaskBlock>> {
         validate_id(task_id)?;
         let mut statement = self.connection.prepare(&format!(
@@ -375,12 +376,8 @@ fn working_hours_from_row(row: &Row<'_>) -> rusqlite::Result<WorkingHours> {
     })
 }
 
-pub(super) fn block_by_id<C: SqlConnection>(
-    connection: &C,
-    id: &str,
-) -> AppResult<Option<TaskBlock>> {
+pub(super) fn block_by_id(connection: &Connection, id: &str) -> AppResult<Option<TaskBlock>> {
     connection
-        .connection()
         .query_row(
             &format!("{BLOCK_SELECT} WHERE id = ?1"),
             params![id],

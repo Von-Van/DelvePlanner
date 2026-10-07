@@ -14,7 +14,7 @@ use crate::error::{AppError, AppResult};
 use crate::model::{
     Calendar, CalendarAccount, CalendarAgenda, CalendarKind, CalendarProblem, CalendarProvider,
     ConnectedAccount, ExternalEvent, PlanColor, RemoteCalendar, ReplaceCalendarLinkInput,
-    SubscribeCalendarInput, UpdateCalendarInput,
+    SubscribeCalendarInput, UpdateCalendarInput, MAX_AGENDA_DAYS,
 };
 use chrono::{DateTime, Duration, NaiveDate, Utc};
 use chrono_tz::Tz;
@@ -38,7 +38,6 @@ type AccessTokens = HashMap<String, (String, DateTime<Utc>)>;
 
 /// How often a link calendar refreshes while Delve Planner runs.
 const REFRESH_INTERVAL_MINUTES: i64 = 30;
-const MAX_AGENDA_DAYS: u32 = 14;
 
 /// The local days `[first_day, end_day)` of a request and the UTC instants they span.
 #[derive(Debug, Clone, PartialEq, Eq)]

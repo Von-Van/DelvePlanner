@@ -14,13 +14,12 @@ Delve Planner (formerly DayPlan) runs on macOS and Windows. There is no Delve Pl
 
 A daily planner or notebook is quick, but it forgets the bigger thing today's task belongs to. A project-management suite remembers everything, but it's built for teams: custom statuses, sprints, dependencies, permissions. For one person juggling a few real projects, the first is too thin and the second is too heavy.
 
-Delve Planner explores the space in between:
+Delve Planner sits in between:
 
 - **One task, three horizons.** A task can wait in a plan's backlog, be chosen for this week, or be scheduled for a day. It is the same record moving Plan → Week → Today, never a copy.
 - **Plans are optional.** Anything without a plan is still first-class, so Delve Planner also works as a plain day planner.
 - **Light by design.** A closed set of statuses; no custom fields, sprints, story points, Gantt editing, or automation. People are labels, not accounts. Tasks can repeat and wait on one another, but lightly: one open occurrence at a time, and a wait is a hint beside the task, never a lock.
-- **Nothing moves on its own.** Delve Planner shows planned work against available time and surfaces unfinished work, but you decide what moves.
-- **AI assists; it never decides.** The planner proposes changes, and you accept or reject each one.
+- **You decide what moves.** Capacity and carry-forward show what doesn't fit, and the AI planner only proposes; you accept or reject each change.
 
 ## Features
 
@@ -55,6 +54,14 @@ Everything except the AI planner works without a model installed.
 From the [roadmap](ROADMAP.md):
 
 - The AI planner using the rest of your planning profile. It already works around days off, your daily limit, and busy time when you ask it to pick a day; preferred hours, focus and break lengths, and energy preference are recorded but not used yet.
+
+### Known limitations
+
+- Reminders are delivered only while Delve Planner is running, including in the tray; quitting stops them.
+- The planner database is not encrypted at rest; it relies on your OS account and disk encryption.
+- React components have no automated tests; the pure modules and the Rust core do.
+- Published builds are unsigned: macOS and Windows warn on first launch, in-app updates can't install, and macOS asks for keychain access again after each new version.
+- The AI planner holds an 8B model in memory (about 5 GB) while it works; 16 GB of RAM is recommended.
 
 Not planned: team accounts, collaboration, cloud sync, two-way calendar sync, cloud AI, sprints, Gantt charts, and automation builders.
 
@@ -105,13 +112,13 @@ Calendars flow one way — into Delve Planner — and stay read-only.
 | iCalendar link    | Paste any `https://` or `webcal://` link, such as Google's secret address |
 | `.ics` file       | Import a file; replace it with a newer one later                          |
 
-Every request to a calendar API is a `GET`. Refresh tokens and private links go to the macOS Keychain or Windows Credential Manager; the interface never sees them. Events from other calendars count toward busy time but are never edited, exported, or sent to the AI planner; their busy time reaches it only as part of a day's spare-time number when you ask it to pick a day. Disconnecting revokes access where the provider allows and deletes everything cached. [Calendar integration](docs/calendar-integration.md) covers sync, caching, recurrence, and failure handling, and [calendar accounts](docs/calendar-accounts.md) covers the OAuth clients.
+Every request to a calendar API is a `GET`. Refresh tokens and private links go to the macOS Keychain or Windows Credential Manager; the interface never sees them. Events from other calendars count toward busy time but are never edited, exported, or sent to the AI planner. Disconnecting revokes access where the provider allows and deletes everything cached. [Calendar integration](docs/calendar-integration.md) covers sync, caching, recurrence, and failure handling, and [calendar accounts](docs/calendar-accounts.md) covers the OAuth clients.
 
 ## The AI planner
 
 The planner runs a bundled, version-pinned Ollama server on a private loopback port and uses `qwen3:8b` (a 5.2 GB download you approve) or a model already installed on the machine. The runtime starts only when it's needed — a planner request, a model download, or a model check — and stops after five idle minutes; quitting Delve Planner ends it.
 
-Replies are constrained by a JSON Schema grammar to seventeen typed operations, validated again in Rust, and shown as a preview. Ambiguous requests get a question, not a guess. An evaluation harness scores the planner on 126 hand-labeled requests — including daylight saving edge cases and prompt injection — three runs at a time against the tested model. [The AI planner](docs/ai.md) explains the permission boundary, what the model sees, and what the latest recorded results cover.
+Replies are constrained by a JSON Schema grammar to seventeen typed operations, validated again in Rust, and shown as a preview. Ambiguous requests get a question, not a guess. An evaluation harness scores the planner on 126 hand-labeled requests — including daylight saving edge cases and prompt injection — three runs at a time against the tested model. The last full run (September 16, 2026, 111 cases) passed every gate; the 15 cases added since haven't had one. [The AI planner](docs/ai.md) explains the permission boundary, what the model sees, and what the latest recorded results cover.
 
 ## Running Delve Planner
 
@@ -173,12 +180,12 @@ scripts/              Version checks, Ollama runtime fetch and verify, release p
 - [The AI planner](docs/ai.md) — runtime, permission boundary, model context, and evaluation
 - [Calendar integration](docs/calendar-integration.md) and [calendar accounts](docs/calendar-accounts.md) — sync design and OAuth setup
 - [Development](docs/development.md) — setup, commands, tests, adding a feature, and releasing
-- [Release checklist](docs/release-checklist.md) — the manual gate before publishing a beta
+- [Release checklist](docs/release-checklist.md) — manual checks for native behavior before a release
 - [Roadmap](ROADMAP.md) and [changelog](CHANGELOG.md)
 
 ## How Delve Planner is built
 
-Delve Planner is developed with AI coding assistants, including Anthropic's Claude through Claude Code, which is credited as a co-author on the release commits it helped write. The project owner sets the product direction, requirements, architecture, privacy and integration decisions, and reviews and accepts every change; the roadmap's recorded decisions, the tests, the evaluation gates, and the release checklist are where that judgment is written down. [Contributing](CONTRIBUTING.md#ai-assisted-development) describes the workflow.
+Delve Planner is built with help from Claude Code, which is credited as a co-author on the commits it helped write. The project owner decides what gets built and reviews every change; [Contributing](CONTRIBUTING.md#ai-assisted-development) describes the workflow.
 
 Delve Planner started in February 2026 as a Flask web app called DayPlan, became a SwiftUI iOS app with widgets in June — preserved on the [`ios-swiftui`](https://github.com/Von-Van/DelvePlanner/tree/ios-swiftui) branch, with its own separate data — was rebuilt as this desktop app in August, and took its current name in September.
 

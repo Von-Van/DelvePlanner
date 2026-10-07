@@ -8,7 +8,8 @@ import {
   ObservationKind,
   PlanningProfile,
 } from "./api";
-import { minuteLabel, parseMinute, weekdayNames } from "./calendars";
+import { minuteLabel, parseMinute } from "./calendars";
+import { weekdayNames } from "./date";
 import { Glyph, Mark } from "./Geometry";
 import { estimateLabel } from "./planning";
 import { useHeadingFocus } from "./useHeadingFocus";

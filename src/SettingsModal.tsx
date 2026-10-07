@@ -2,8 +2,15 @@ import { useEffect, useRef, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check, Update } from "@tauri-apps/plugin-updater";
-import { api, DatabaseStatus, ImportSelection, OllamaStatus } from "./api";
+import {
+  api,
+  DatabaseStatus,
+  ImportSelection,
+  messageFor,
+  OllamaStatus,
+} from "./api";
 import { Glyph } from "./Geometry";
+import { useModalFocus } from "./useModalFocus";
 import { ModelPicker, TESTED_MODEL } from "./ModelPicker";
 import {
   KeyboardShortcutList,
@@ -27,8 +34,6 @@ export function SettingsModal({
   onMessage,
 }: Props) {
   const dialogRef = useRef<HTMLElement>(null);
-  const busyRef = useRef<string | null>(null);
-  const onCloseRef = useRef(onClose);
   const [database, setDatabase] = useState<DatabaseStatus | null>(null);
   const [version, setVersion] = useState("…");
   const [selection, setSelection] = useState<ImportSelection | null>(null);
@@ -37,8 +42,7 @@ export function SettingsModal({
     "Updates are checked only when you ask.",
   );
   const [busy, setBusy] = useState<string | null>(null);
-  busyRef.current = busy;
-  onCloseRef.current = onClose;
+  useModalFocus(dialogRef, onClose, busy !== null);
 
   async function refreshDatabase() {
     setDatabase(await api.databaseStatus());
@@ -47,31 +51,7 @@ export function SettingsModal({
   useEffect(() => {
     void refreshDatabase();
     void getVersion().then(setVersion);
-    const previous = document.activeElement as HTMLElement | null;
     dialogRef.current?.focus();
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !busyRef.current) onCloseRef.current();
-      if (event.key !== "Tab" || !dialogRef.current) return;
-      const items = dialogRef.current.querySelectorAll<HTMLElement>(
-        'button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex="0"]',
-      );
-      if (!items.length) return;
-      const first = items[0];
-      const last = items[items.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      }
-      if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      previous?.focus();
-    };
   }, []);
 
   async function run(label: string, action: () => Promise<void>) {
@@ -441,8 +421,4 @@ function SettingsBlock({
       <div className="settings-block-body">{children}</div>
     </section>
   );
-}
-
-function messageFor(cause: unknown) {
-  return cause instanceof Error ? cause.message : String(cause);
 }

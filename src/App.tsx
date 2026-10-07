@@ -61,11 +61,11 @@ import {
 } from "./date";
 import { EventEditor } from "./EventEditor";
 import { ensureNotificationPermission, reminderShortLabel } from "./events";
-import { Glyph, Mark, MarkShape, Spinner } from "./Geometry";
+import { Glyph, LoadingLine, Mark, MarkShape } from "./Geometry";
 import { InboxConversionKind, InboxView, QuickCapture } from "./InboxView";
 import { PlannerCard } from "./PlannerCard";
 import { proposalEnablesReminder, withEdits } from "./proposals";
-import { Onboarding } from "./Onboarding";
+import { Onboarding, onboardingStorageKey } from "./Onboarding";
 import { PeopleView } from "./PeopleView";
 import { PlanChip, PlanDot } from "./PlanControls";
 import { PlanEditor } from "./PlanEditor";
@@ -93,10 +93,10 @@ import { KnowledgeView } from "./KnowledgeView";
 import { OpenTasksContext } from "./openTasks";
 import { taskMoveItems, useTaskMover } from "./useTaskMover";
 import {
+  commandAriaShortcut,
   commandKey,
   commandShortcutText,
   isTextEntry,
-  shortcutPlatform,
 } from "./shortcuts";
 import { WeekView } from "./WeekView";
 
@@ -122,8 +122,6 @@ const emptyAgenda: AgendaData = {
   blocks: [],
 };
 
-const isMac = shortcutPlatform === "mac";
-const shortcutLabel = (key: string) => commandShortcutText(key);
 // Stored keys keep the app's former name, DayPlan, so existing settings carry over.
 const promptStorageKey = "dayplan-planning-prompts";
 const keptBlocksStorageKey = "dayplan-kept-blocks";
@@ -216,10 +214,13 @@ export default function App() {
   const [appliedProposals, setAppliedProposals] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [restoredDataVersion, setRestoredDataVersion] = useState(0);
-  // The key keeps the app's former name, DayPlan, so finished onboarding stays finished.
-  const [onboardingOpen, setOnboardingOpen] = useState(
-    () => localStorage.getItem("dayplan-onboarding") !== "complete",
-  );
+  const [onboardingOpen, setOnboardingOpen] = useState(() => {
+    try {
+      return localStorage.getItem(onboardingStorageKey) !== "complete";
+    } catch {
+      return true;
+    }
+  });
   const todayHeading = useRef<HTMLHeadingElement>(null);
   const weekHeading = useRef<HTMLHeadingElement>(null);
   const peopleHeading = useRef<HTMLHeadingElement>(null);
@@ -813,13 +814,11 @@ export default function App() {
       className={`rail-link ${options.active ? "active" : ""}`}
       aria-current={options.active ? "page" : undefined}
       aria-keyshortcuts={
-        options.shortcut
-          ? `${isMac ? "Meta" : "Control"}+${options.shortcut}`
-          : undefined
+        options.shortcut ? commandAriaShortcut(options.shortcut) : undefined
       }
       title={
         options.shortcut
-          ? `${label} (${shortcutLabel(options.shortcut)})`
+          ? `${label} (${commandShortcutText(options.shortcut)})`
           : undefined
       }
       onClick={() => navigate(target)}
@@ -957,8 +956,8 @@ export default function App() {
             )}
             <button
               className="rail-link"
-              title={`Settings (${shortcutLabel(",")})`}
-              aria-keyshortcuts={`${isMac ? "Meta" : "Control"}+,`}
+              title={`Settings (${commandShortcutText(",")})`}
+              aria-keyshortcuts={commandAriaShortcut(",")}
               onClick={() => setSettingsOpen(true)}
             >
               <Mark size={7} />
@@ -984,7 +983,7 @@ export default function App() {
             <InboxView
               items={inbox}
               headingRef={inboxHeading}
-              captureShortcut={shortcutLabel("I")}
+              captureShortcut={commandShortcutText("I")}
               onConvert={(item, kind) => setConverting({ item, kind })}
               onChanged={dataChanged}
               onMessage={setError}
@@ -2054,14 +2053,5 @@ function ReleaseNotice({
         Release time
       </button>
     </section>
-  );
-}
-
-function LoadingLine({ label }: { label: string }) {
-  return (
-    <div className="loading-line">
-      <Spinner size={10} />
-      {label}
-    </div>
   );
 }

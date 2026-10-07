@@ -35,7 +35,7 @@ The Ollama binary isn't in Git. Without it, Delve Planner runs normally and the 
 bash scripts/fetch-ollama-runtime.sh
 ```
 
-That script is for macOS (it extracts the universal binary into `src-tauri/resources/ollama/macos-universal/`, about 460 MB). On Windows, `scripts/fetch-ollama-runtime.ps1` does the same into `windows-x86_64/`; it downloads into the GitHub Actions `RUNNER_TEMP` folder, so set `$env:RUNNER_TEMP = $env:TEMP` before running it locally.
+That script is for macOS (it extracts the universal binary into `src-tauri/resources/ollama/macos-universal/`, about 460 MB). On Windows, `scripts/fetch-ollama-runtime.ps1` does the same into `windows-x86_64/`.
 
 Alternatively, point `DELVE_PLANNER_OLLAMA_RUNTIME` at an existing `ollama` executable. It must be version 0.32.0: Delve Planner refuses a runtime whose version doesn't match `BUNDLED_OLLAMA_VERSION` in [`runtime.rs`](../src-tauri/src/runtime.rs).
 
@@ -76,7 +76,7 @@ Run the same commands locally before opening a pull request.
 
 ## Evaluating the AI planner
 
-The evaluation gate runs the production planner against 126 hand-labeled requests ([`eval/`](../eval/)) three times on one model digest and writes [`eval/results/latest.json`](../eval/results/latest.json). [The AI planner](ai.md#evaluation) describes the cases and pass criteria.
+The evaluation gate runs the production planner against 126 hand-labeled requests ([`eval/`](../eval/)) three times on one model digest and writes [`eval/results/latest.json`](../eval/results/latest.json). The committed results predate the last 15 cases. [The AI planner](ai.md#evaluation) describes the cases and pass criteria.
 
 - **When:** whenever planner prompts, context, operations, or task records change.
 - **Needs:** the fetched runtime (above) and `qwen3:8b` installed, either through Delve Planner or with Ollama itself. The harness keeps its own runtime state in `DELVE_PLANNER_EVAL_DATA_DIR` (default: a `delve-planner-eval-data` folder in the system temp directory), so it never disturbs a running Delve Planner.

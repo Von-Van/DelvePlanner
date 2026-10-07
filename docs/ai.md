@@ -6,7 +6,7 @@ Delve Planner has one AI feature: a natural-language planner that turns a reques
 
 into a proposal the user reviews before anything changes. This document explains what the planner can do, where the model runs, what it sees, what is kept, and how it is evaluated.
 
-The important engineering idea is the permission boundary, not the chat box: the model never receives a database handle and cannot write planner data. It may only return one schema-constrained proposal or one clarification question. Rust validates the reply, the UI shows a readable preview, and SQLite changes only after the user accepts.
+The model never receives a database handle and cannot write planner data. It may only return one schema-constrained proposal or one clarification question. Rust validates the reply, the UI shows a readable preview, and SQLite changes only after the user accepts.
 
 ## What works without AI
 
@@ -137,7 +137,7 @@ It never sees event notes or locations; plan, milestone, task, or workstream des
 
 ## Evaluation
 
-The planner is measured against hand-labeled requests rather than judged by feel:
+The planner is evaluated on hand-labeled requests:
 
 - [`eval/cases.json`](../eval/cases.json) — 68 schedule cases: creates, updates, deletes, reschedules, compound and bulk changes, follow-ups, reminders, daylight saving transitions, date rollover, noon and midnight, duplicate titles, prompt injection, unsupported requests, and ambiguity.
 - [`eval/planning-cases.json`](../eval/planning-cases.json) — 58 planning cases on a shared fixture: creating and renaming plans, adding tasks to plans and milestones, moving tasks between plans, milestones, workstreams, inbox conversion, compound requests, follow-ups on pending and applied proposals, estimates and week choice, suggested dates and days off, ambiguity, deleted and stale targets, unsupported requests, and prompt injection in requests and in stored titles.

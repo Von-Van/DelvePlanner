@@ -1,6 +1,7 @@
 //! Deterministic checks that answer a request with a question before the model runs: requests
 //! Delve Planner cannot do, names that fit several records, and targets that do not exist.
 
+use super::grounding::contains_title;
 use super::{Scope, SessionTurn};
 use crate::db::{fold, planning_tokens, title_matches};
 use crate::model::{Milestone, Plan, PlannerCandidates, ScheduleEvent, Task};
@@ -225,19 +226,6 @@ fn words(lower: &str) -> Vec<String> {
         .filter(|word| !word.is_empty())
         .map(str::to_string)
         .collect()
-}
-
-/// Whether `lower` contains `title` as whole words.
-fn contains_title(lower: &str, title: &str) -> bool {
-    let title = fold(title);
-    if title.chars().count() < 3 {
-        return false;
-    }
-    lower.match_indices(&title).any(|(index, _)| {
-        let before = lower[..index].chars().next_back();
-        let after = lower[index + title.len()..].chars().next();
-        !before.is_some_and(char::is_alphanumeric) && !after.is_some_and(char::is_alphanumeric)
-    })
 }
 
 fn is_recurring(lower: &str) -> bool {

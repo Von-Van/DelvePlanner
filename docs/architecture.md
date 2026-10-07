@@ -18,7 +18,7 @@ flowchart TB
     Capacity["capacity.rs<br/>planned vs available time"]
     Calendars["CalendarService — calendar.rs + calendar/*<br/>links, files, OAuth accounts, cache"]
     Agent["PlannerAgent — agent.rs + agent/*<br/>context, grammar, validation, pending proposals"]
-    Runtime["OllamaRuntimeManager — runtime.rs<br/>start, stop, models, downloads"]
+    Runtime["OllamaRuntime — runtime.rs<br/>start, stop, models, downloads"]
   end
 
   subgraph local["On this device"]
@@ -71,7 +71,7 @@ flowchart TB
 | [`src-tauri/src/main.rs`](../src-tauri/src/main.rs) → [`lib.rs`](../src-tauri/src/lib.rs) `run()` | Registers plugins (log, dialog, global shortcut, opener, notification, process, updater), builds `AppState`, registers a saved quick-capture shortcut, installs the tray, starts three background workers, and registers every command |
 | [`src-tauri/examples/eval_agent.rs`](../src-tauri/examples/eval_agent.rs)                         | The AI evaluation harness (`npm run eval`)                                                                                                                                                                                             |
 
-`AppState` holds the planner database (behind a mutex, with any startup error kept so commands and Settings can report it), the `CalendarService`, the `PlannerAgent`, the `OllamaRuntimeManager`, a pending import awaiting confirmation, and where the quick-capture shortcut is saved.
+`AppState` holds the planner database (behind a mutex, with any startup error kept so commands and Settings can report it), the `CalendarService`, the `PlannerAgent`, the `OllamaRuntime`, a pending import awaiting confirmation, and where the quick-capture shortcut is saved.
 
 The quick-capture shortcut, when one is recorded, is registered with the operating system from Rust. Pressing it — or choosing **Quick Capture…** in the tray menu — brings the window forward and emits `quick-capture`, which opens the capture box unless another dialog is already open.
 
@@ -175,7 +175,7 @@ Rust functions return `AppResult<T>`. At the command boundary, `AppError` become
 A few files carry more than one job. They're worth knowing about before changing them:
 
 - [`src/App.tsx`](../src/App.tsx) (about 2,050 lines) holds the shell, data loading for several views, keyboard shortcuts, the planner hookup, and the entire Today screen.
-- [`src-tauri/src/db.rs`](../src-tauri/src/db.rs) mixes migrations, backup and restore, export/import validation, and event and reminder storage; about 40% of it is tests.
+- [`src-tauri/src/db.rs`](../src-tauri/src/db.rs) mixes migrations, backup and restore, export/import validation, and event and reminder storage; about half of it is tests.
 - [`src-tauri/src/agent/draft.rs`](../src-tauri/src/agent/draft.rs) turns model replies into operations, including follow-up merging; its resolver is one long `impl`.
 - [`src-tauri/src/model.rs`](../src-tauri/src/model.rs) holds every shared type, from domain records to AI operations.
 

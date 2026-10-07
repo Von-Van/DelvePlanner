@@ -21,7 +21,7 @@ import {
   weekStartDay,
   weekStartsOn,
 } from "./date";
-import { Glyph, Mark, Spinner } from "./Geometry";
+import { Glyph, LoadingLine, Mark } from "./Geometry";
 import { PlanDot } from "./PlanControls";
 import {
   dayPlanning,
@@ -173,10 +173,7 @@ export function PlanWeekView({
         it one here or when you plan each day.
       </p>
       {!board || !week || !sections ? (
-        <div className="loading-line">
-          <Spinner size={10} />
-          Gathering open work
-        </div>
+        <LoadingLine label="Gathering open work" />
       ) : (
         <>
           <ol className="week-load" aria-label="The week at a glance">
@@ -441,10 +438,7 @@ export function PlanTodayView({
         due and what you chose for this week.
       </p>
       {!board || !agenda || !sections ? (
-        <div className="loading-line">
-          <Spinner size={10} />
-          Gathering today's work
-        </div>
+        <LoadingLine label="Gathering today's work" />
       ) : (
         <div className="session-grid">
           <section className="session-column" aria-labelledby="day-candidates">

@@ -3,6 +3,17 @@ import { addDays, format, parseISO, startOfToday, startOfWeek } from "date-fns";
 export const localTimeZone =
   Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 
+/** Short weekday names, Monday first, indexed by ISO weekday − 1. */
+export const weekdayNames = [
+  "Mon",
+  "Tue",
+  "Wed",
+  "Thu",
+  "Fri",
+  "Sat",
+  "Sun",
+] as const;
+
 export type WeekStart = 0 | 1 | 2 | 3 | 4 | 5 | 6;
 
 /** The locale's first day of the week (0 = Sunday), falling back to Monday. */

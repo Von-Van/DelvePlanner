@@ -26,6 +26,14 @@ export function commandShortcutText(
   return `Ctrl+${shift ? "Shift+" : ""}${key === "↩" ? "Enter" : key}`;
 }
 
+/** The `aria-keyshortcuts` value for an in-app shortcut: "Meta+N" on macOS, "Control+N" elsewhere. */
+export function commandAriaShortcut(
+  key: string,
+  platform: ShortcutPlatform = shortcutPlatform,
+) {
+  return `${platform === "mac" ? "Meta" : "Control"}+${key}`;
+}
+
 /** Whether keys pressed in this element edit text, where arrows and letters belong to it. */
 export function isTextEntry(target: EventTarget | null) {
   if (!(target instanceof HTMLElement)) return false;

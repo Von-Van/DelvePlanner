@@ -10,11 +10,11 @@ import {
   TaskReference,
 } from "./api";
 import { Glyph } from "./Geometry";
+import { weekdayNames } from "./date";
 import { recurrenceLabel, shortDate } from "./planning";
 
 const MAX_CHECKLIST_ITEMS = 30;
 const MAX_WAITING_ON = 10;
-const weekdayLabels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 /** Monday = 1 through Sunday = 7, as the repeat rule stores weekdays. */
 function isoWeekday(day: string) {
@@ -104,7 +104,7 @@ export function RepeatField({
           role="group"
           aria-label="On these days"
         >
-          {weekdayLabels.map((label, index) => {
+          {weekdayNames.map((label, index) => {
             const weekday = index + 1;
             const chosen = value.weekdays.includes(weekday);
             return (

@@ -54,3 +54,12 @@ export function Glyph({ children }: { children: string }) {
     </span>
   );
 }
+
+export function LoadingLine({ label }: { label: string }) {
+  return (
+    <div className="loading-line">
+      <Spinner size={10} />
+      {label}
+    </div>
+  );
+}

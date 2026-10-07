@@ -76,8 +76,8 @@ impl PlannerDatabase {
                 ..UpdateTaskInput::keeping(&current)
             };
             // A task that leaves a day it was already on is what "carried forward" means, and it
-            // is the only thing Delve Planner keeps a history of. It starts empty in v0.3.5, and
-            // What Delve Planner Knows can clear it or switch the observation off.
+            // is the only thing Delve Planner keeps a history of. What Delve Planner Knows can clear
+            // it or switch the observation off.
             let from_day = current.scheduled_day.clone();
             let to_day = input.scheduled_day.clone();
             if from_day.is_some() && from_day != to_day {

@@ -42,8 +42,6 @@ Keep pull requests small and about one thing. In the description, say what chang
 
 ## AI-assisted development
 
-Delve Planner is developed with AI coding assistants, including Anthropic's Claude through Claude Code, which is credited as a co-author on the release commits it helped write. Assistants help with implementation, debugging, refactoring, code review, documentation, prototyping, and trying alternative approaches.
-
-The project owner is responsible for everything that makes Delve Planner what it is: product direction and feature selection, requirements and UX decisions, architectural constraints, privacy and integration decisions, technical tradeoffs, and validating, reviewing, and accepting every change. The roadmap's recorded decisions, the release checklist, the evaluation gates, and the tests are where that judgment is written down.
+Claude Code helps with implementation, debugging, review, and documentation, and is credited as a co-author on the commits it helped write. The project owner decides what gets built and how, and reviews every change before it lands.
 
 The same standard applies to contributions. You may use AI tools; you are responsible for what you submit. Understand every line, run the gates, don't include content you can't vouch for, don't paste private planner data or secrets into an assistant, and mention substantial AI assistance in the pull request description.

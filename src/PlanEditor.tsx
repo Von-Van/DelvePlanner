@@ -1,5 +1,4 @@
 import { FormEvent, ReactNode, useEffect, useRef, useState } from "react";
-import { differenceInCalendarDays, parseISO } from "date-fns";
 import { submitOnCommandEnter } from "./shortcuts";
 import {
   api,
@@ -20,7 +19,11 @@ import {
 } from "./api";
 import { Glyph, Spinner } from "./Geometry";
 import { ColorSwatches, OptionalDate, WorkstreamSelect } from "./PlanControls";
-import { milestoneStatusLabels, planStatusLabels } from "./planning";
+import {
+  daysBetween,
+  milestoneStatusLabels,
+  planStatusLabels,
+} from "./planning";
 import { useModalFocus } from "./useModalFocus";
 
 export function PlanEditor({
@@ -272,9 +275,7 @@ export function DuplicatePlanDialog({
   const [shiftDays, setShiftDays] = useState(0);
   const [saving, setSaving] = useState(false);
   const shift =
-    anchor && anchorDay
-      ? differenceInCalendarDays(parseISO(anchorDay), parseISO(anchor))
-      : shiftDays;
+    anchor && anchorDay ? daysBetween(anchor, anchorDay) : shiftDays;
 
   async function submit(form: FormEvent) {
     form.preventDefault();

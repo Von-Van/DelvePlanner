@@ -1,6 +1,6 @@
 import { RefObject, useEffect, useRef, useState } from "react";
 
-const focusableSelector =
+export const focusableSelector =
   'button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex="0"]';
 
 /**

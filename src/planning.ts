@@ -31,6 +31,7 @@ import {
   isoDay,
   offsetDay,
   timeLabel,
+  weekdayNames,
   weekStartDay,
   WeekStart,
 } from "./date";
@@ -219,8 +220,6 @@ export function newTask(fields: Pick<TaskInput, "title"> & Partial<TaskInput>) {
   } satisfies TaskInput;
 }
 
-const weekdayLabels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-
 function ordinal(day: number) {
   const tens = day % 100;
   if (tens >= 11 && tens <= 13) return `${day}th`;
@@ -237,7 +236,7 @@ export function recurrenceLabel(rule: Recurrence) {
     case "weekdays":
       return "Every weekday";
     case "weekly": {
-      const days = rule.weekdays.map((weekday) => weekdayLabels[weekday - 1]);
+      const days = rule.weekdays.map((weekday) => weekdayNames[weekday - 1]);
       return days.length > 0
         ? `${every("week")} on ${days.join(", ")}`
         : every("week");

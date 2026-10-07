@@ -9,7 +9,7 @@ use delve_planner_desktop::model::{
     UpdateEventInput, UpdateMilestoneInput, UpdatePlanInput, UpdatePlanningProfileInput,
     UpdateTaskInput,
 };
-use delve_planner_desktop::runtime::OllamaRuntimeManager;
+use delve_planner_desktop::runtime::OllamaRuntime;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::HashMap;
@@ -273,7 +273,7 @@ async fn main() {
         std::process::exit(2);
     }
     point_at_installed_models();
-    let runtime = OllamaRuntimeManager::new(
+    let runtime = OllamaRuntime::new(
         PathBuf::from(env!("CARGO_MANIFEST_DIR")),
         eval_data_directory(),
     )

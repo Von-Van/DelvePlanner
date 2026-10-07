@@ -7,13 +7,14 @@ mod proposals;
 mod task_details;
 mod team;
 
+use crate::calendar::parse_zone as parse_time_zone;
+use crate::calendar::store::timestamp as utc_string;
 use crate::error::{AppError, AppResult};
 use crate::model::{
     Agenda, BackupInfo, CreateEventInput, ExportBundle, ImportPreview, LegacyExportBundle,
     LocalDateTimeInput, LocalDateTimeResolution, LocalTimeOption, PlanColor, ReminderChange,
-    ReminderStatus, RescheduleEventInput, ScheduleEvent, Task, TaskPriority, TaskStatus,
-    UpdateEventInput, MAX_LOCATION_LENGTH, MAX_NOTES_LENGTH, MAX_REMINDER_MINUTES,
-    MAX_TITLE_LENGTH,
+    ReminderStatus, ScheduleEvent, Task, TaskPriority, TaskStatus, UpdateEventInput,
+    MAX_AGENDA_DAYS, MAX_LOCATION_LENGTH, MAX_NOTES_LENGTH, MAX_REMINDER_MINUTES, MAX_TITLE_LENGTH,
 };
 use availability::{ensure_availability_schema, validate_block_shape};
 use capture::validate_inbox_text;
@@ -21,15 +22,12 @@ use chrono::{
     DateTime, Duration as ChronoDuration, LocalResult, NaiveDate, NaiveDateTime, NaiveTime, Offset,
     TimeZone, Utc,
 };
-use chrono_tz::Tz;
 use planning::{
     ensure_plan_exists, milestone_plan_mismatch, validate_milestone_shape, validate_plan_shape,
     validate_task_shape, TaskShape,
 };
 use profile::ensure_profile_schema;
-use rusqlite::{
-    params, types::Type, Connection, OptionalExtension, Row, Transaction, TransactionBehavior,
-};
+use rusqlite::{params, types::Type, Connection, OptionalExtension, Row, TransactionBehavior};
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -54,7 +52,6 @@ pub const EXPORT_FORMAT_VERSION: u32 = 7;
 const BACKUP_RETENTION: usize = 5;
 const REMINDER_DELIVERY_GRACE_MINUTES: i64 = 15;
 const MAX_IMPORT_RECORDS: usize = 100_000;
-const MAX_AGENDA_DAYS: u32 = 14;
 const EVENT_SELECT: &str = "SELECT id, title, notes, start_at_utc, time_zone, duration_minutes,
         reminder_minutes_before, reminder_status, plan_id, location, workstream_id, owner_id,
         revision, created_at, updated_at
@@ -109,8 +106,9 @@ impl PlannerDatabase {
         schema_version(&self.connection)
     }
 
+    #[cfg(test)]
     pub fn list_backups(&self) -> AppResult<Vec<BackupInfo>> {
-        list_backup_files(&self.path)
+        backups_for_path(&self.path)
     }
 
     pub fn backup(&self, reason: &str) -> AppResult<BackupInfo> {
@@ -538,45 +536,7 @@ impl PlannerDatabase {
         }
     }
 
-    pub fn reschedule_event(&mut self, input: RescheduleEventInput) -> AppResult<ScheduleEvent> {
-        let existing = self.event_by_id(&input.id)?.ok_or(AppError::NotFound)?;
-        if existing.revision != input.revision {
-            return Err(AppError::Conflict);
-        }
-        let (start_at_utc, time_zone) = validate_time(&input.start_at_utc, &input.time_zone)?;
-        validate_duration(input.duration_minutes)?;
-        let reminder_minutes_before =
-            apply_reminder_change(&input.reminder_change, existing.reminder_minutes_before)?;
-        if matches!(input.reminder_change, ReminderChange::Set { .. }) {
-            validate_reminder_delivery_time(&start_at_utc, reminder_minutes_before)?;
-        }
-        let (reminder_status, notification_id) =
-            reminder_outbox_values(&start_at_utc, reminder_minutes_before)?;
-        let changed = self.connection.execute(
-            "UPDATE schedule_events
-             SET start_at_utc=?1, time_zone=?2, duration_minutes=?3,
-                 reminder_minutes_before=?4, reminder_status=?5, notification_id=?6,
-                 reminder_last_error=NULL, revision=revision+1, updated_at=?7
-             WHERE id=?8 AND revision=?9",
-            params![
-                start_at_utc,
-                time_zone,
-                input.duration_minutes,
-                reminder_minutes_before,
-                reminder_status_string(&reminder_status),
-                notification_id,
-                now(),
-                input.id,
-                input.revision
-            ],
-        )?;
-        match changed {
-            1 => self.event_by_id(&input.id)?.ok_or(AppError::NotFound),
-            0 if self.event_by_id(&input.id)?.is_some() => Err(AppError::Conflict),
-            _ => Err(AppError::NotFound),
-        }
-    }
-
+    #[cfg(test)]
     pub fn events_for_day(&self, day: &str, time_zone: &str) -> AppResult<Vec<ScheduleEvent>> {
         self.events_between(day, &next_day(day)?, time_zone)
     }
@@ -758,26 +718,7 @@ impl PreparedEvent {
     }
 }
 
-trait SqlConnection {
-    fn connection(&self) -> &Connection;
-}
-
-impl SqlConnection for Connection {
-    fn connection(&self) -> &Connection {
-        self
-    }
-}
-
-impl SqlConnection for Transaction<'_> {
-    fn connection(&self) -> &Connection {
-        self
-    }
-}
-
-fn insert_event<C: SqlConnection>(
-    connection: &C,
-    prepared: PreparedEvent,
-) -> AppResult<ScheduleEvent> {
+fn insert_event(connection: &Connection, prepared: PreparedEvent) -> AppResult<ScheduleEvent> {
     let input = prepared.input;
     let id = Uuid::new_v4().to_string();
     let timestamp = now();
@@ -793,7 +734,7 @@ fn insert_event<C: SqlConnection>(
     )?;
     let (reminder_status, notification_id) =
         reminder_outbox_values(&input.start_at_utc, input.reminder_minutes_before)?;
-    connection.connection().execute(
+    connection.execute(
         "INSERT INTO schedule_events
          (id, title, notes, start_at_utc, time_zone, duration_minutes,
           reminder_minutes_before, reminder_status, notification_id, plan_id, location,
@@ -819,9 +760,8 @@ fn insert_event<C: SqlConnection>(
     event_by_id(connection, &id)?.ok_or(AppError::NotFound)
 }
 
-fn event_by_id<C: SqlConnection>(connection: &C, id: &str) -> AppResult<Option<ScheduleEvent>> {
+fn event_by_id(connection: &Connection, id: &str) -> AppResult<Option<ScheduleEvent>> {
     connection
-        .connection()
         .query_row(
             &format!("{EVENT_SELECT} WHERE id = ?1"),
             params![id],
@@ -1035,6 +975,7 @@ fn offset_day(day: &str, days: i64) -> AppResult<String> {
         .ok_or_else(|| AppError::Validation("That date is out of range.".into()))
 }
 
+#[cfg(test)]
 fn next_day(day: &str) -> AppResult<String> {
     offset_day(day, 1)
 }
@@ -1046,12 +987,6 @@ fn validate_location(value: &str) -> AppResult<()> {
         ));
     }
     Ok(())
-}
-
-fn parse_time_zone(time_zone: &str) -> AppResult<Tz> {
-    time_zone
-        .parse::<Tz>()
-        .map_err(|_| AppError::Validation("A valid IANA time zone is required.".into()))
 }
 
 fn validate_time(start_at_utc: &str, time_zone: &str) -> AppResult<(String, String)> {
@@ -1070,9 +1005,6 @@ fn validate_time(start_at_utc: &str, time_zone: &str) -> AppResult<(String, Stri
     ))
 }
 
-fn utc_string(value: DateTime<Utc>) -> String {
-    value.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
-}
 /// Today's date on this device. Delve Planner runs where its user is, so the device's zone is the
 /// user's; repeating tasks use it to keep a late finish from creating an overdue occurrence.
 fn local_today() -> NaiveDate {
@@ -1390,7 +1322,7 @@ fn create_backup_file(path: &Path, schema: u32, reason: &str) -> AppResult<Backu
     })
 }
 
-fn list_backup_files(path: &Path) -> AppResult<Vec<BackupInfo>> {
+pub fn backups_for_path(path: &Path) -> AppResult<Vec<BackupInfo>> {
     let directory = backup_directory(path)?;
     let mut backups = fs::read_dir(directory)?
         .filter_map(Result::ok)
@@ -1411,13 +1343,9 @@ fn list_backup_files(path: &Path) -> AppResult<Vec<BackupInfo>> {
     Ok(backups)
 }
 
-pub fn backups_for_path(path: &Path) -> AppResult<Vec<BackupInfo>> {
-    list_backup_files(path)
-}
-
 fn prune_backups(path: &Path) -> AppResult<()> {
     let directory = backup_directory(path)?;
-    for backup in list_backup_files(path)?.into_iter().skip(BACKUP_RETENTION) {
+    for backup in backups_for_path(path)?.into_iter().skip(BACKUP_RETENTION) {
         let backup_path = directory.join(backup.name);
         if backup_path.is_file() {
             fs::remove_file(backup_path)?;
@@ -1427,7 +1355,7 @@ fn prune_backups(path: &Path) -> AppResult<()> {
 }
 
 pub fn restore_backup(path: &Path, backup_name: &str) -> AppResult<()> {
-    let backup = list_backup_files(path)?
+    let backup = backups_for_path(path)?
         .into_iter()
         .find(|backup| backup.name == backup_name)
         .ok_or(AppError::BackupNotFound)?;

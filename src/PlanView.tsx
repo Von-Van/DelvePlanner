@@ -31,7 +31,7 @@ import {
 } from "./date";
 import { EventEditor } from "./EventEditor";
 import { reminderShortLabel } from "./events";
-import { Glyph, Mark, Spinner } from "./Geometry";
+import { Glyph, LoadingLine, Mark } from "./Geometry";
 import { StatusPill, TabList, tabPanelProps } from "./PlanControls";
 import {
   DuplicatePlanDialog,
@@ -203,13 +203,7 @@ export function PlanView({
         </div>
       </div>
     );
-  if (!workspace)
-    return (
-      <div className="loading-line">
-        <Spinner size={10} />
-        Opening this plan
-      </div>
-    );
+  if (!workspace) return <LoadingLine label="Opening this plan" />;
 
   const { plan, milestones, tasks, events, workstreams } = workspace;
   const lookups: Lookups = {

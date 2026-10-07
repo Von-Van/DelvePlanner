@@ -231,7 +231,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          gh api --method POST "repos/$GITHUB_REPOSITORY/releases/generate-notes" -f tag_name="$GITHUB_REF_NAME" -f target_commitish="$GITHUB_SHA" --jq .body > "$RUNNER_TEMP/release-notes.md"
+          notes="$RUNNER_TEMP/release-notes.md"
+          # The CHANGELOG section for this tag, if there is one, leads the notes.
+          awk -v heading="## $GITHUB_REF_NAME" '$0 == heading { found = 1; next } /^## / { found = 0 } found' CHANGELOG.md > "$notes"
+          gh api --method POST "repos/$GITHUB_REPOSITORY/releases/generate-notes" -f tag_name="$GITHUB_REF_NAME" -f target_commitish="$GITHUB_SHA" --jq .body >> "$notes"
       - name: Generate updater metadata
         env:
           RELEASE_TAG: ${{ github.ref_name }}
@@ -251,4 +254,4 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
-        run: gh release create "$GITHUB_REF_NAME" release-assets/* --draft --verify-tag --notes-file "$RUNNER_TEMP/release-notes.md" --title "Delve Planner $GITHUB_REF_NAME"
+        run: gh release create "$GITHUB_REF_NAME" release-assets/* --draft --verify-tag --notes-file "$RUNNER_TEMP/release-notes.md" --title "$GITHUB_REF_NAME"

@@ -1,16 +1,15 @@
 //! The capture inbox: unorganized thoughts that later become tasks, plans, or events.
 
-use super::planning::{insert_plan, insert_task};
+use super::planning::{insert_plan, insert_task, stale_write_error};
 use super::{
     collect, insert_event, now, validate_id, validate_revision, PlannerDatabase, PreparedEvent,
-    SqlConnection,
 };
 use crate::error::{AppError, AppResult};
 use crate::model::{
     CreateInboxItemInput, InboxConversion, InboxItem, InboxTarget, ProcessInboxItemInput,
     RecordKind, UpdateInboxItemInput, MAX_NOTES_LENGTH, MAX_TITLE_LENGTH,
 };
-use rusqlite::{params, OptionalExtension, Row, TransactionBehavior};
+use rusqlite::{params, Connection, OptionalExtension, Row, TransactionBehavior};
 use uuid::Uuid;
 
 const INBOX_SELECT: &str =
@@ -55,7 +54,11 @@ impl PlannerDatabase {
             ],
         )?;
         if changed != 1 {
-            return Err(stale_inbox_error(&self.connection, &input.id)?);
+            return Err(stale_write_error(
+                &self.connection,
+                "inbox_items",
+                &input.id,
+            )?);
         }
         inbox_item_by_id(&self.connection, &input.id)?.ok_or(AppError::NotFound)
     }
@@ -70,7 +73,7 @@ impl PlannerDatabase {
         if changed == 1 {
             Ok(())
         } else {
-            Err(stale_inbox_error(&self.connection, id)?)
+            Err(stale_write_error(&self.connection, "inbox_items", id)?)
         }
     }
 
@@ -132,22 +135,8 @@ pub(super) fn validate_inbox_text(text: &str, notes: &str) -> AppResult<()> {
     Ok(())
 }
 
-fn stale_inbox_error<C: SqlConnection>(connection: &C, id: &str) -> AppResult<AppError> {
-    let exists: bool = connection.connection().query_row(
-        "SELECT EXISTS(SELECT 1 FROM inbox_items WHERE id = ?1)",
-        params![id],
-        |row| row.get(0),
-    )?;
-    Ok(if exists {
-        AppError::Conflict
-    } else {
-        AppError::NotFound
-    })
-}
-
-fn inbox_item_by_id<C: SqlConnection>(connection: &C, id: &str) -> AppResult<Option<InboxItem>> {
+fn inbox_item_by_id(connection: &Connection, id: &str) -> AppResult<Option<InboxItem>> {
     connection
-        .connection()
         .query_row(
             &format!("{INBOX_SELECT} WHERE id = ?1"),
             params![id],

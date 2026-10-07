@@ -26,7 +26,7 @@ import {
   timeLabel,
   weekdayName,
 } from "./date";
-import { Glyph, Mark, Spinner } from "./Geometry";
+import { Glyph, LoadingLine, Mark } from "./Geometry";
 import { PlanChip } from "./PlanControls";
 import {
   estimateLabel,
@@ -200,10 +200,7 @@ export function WeekView({
         </button>
       )}
       {loading && !filtered ? (
-        <div className="loading-line">
-          <Spinner size={10} />
-          Gathering your week
-        </div>
+        <LoadingLine label="Gathering your week" />
       ) : (
         <>
           {pooled.length > 0 && (

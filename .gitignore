@@ -1,16 +1,4 @@
-# Xcode (kept because `ios-swiftui` preserves the native version)
-DerivedData/
-build/
-*.xcuserstate
-xcuserdata/
-*.moved-aside
-*.xcscmblueprint
-*.xccheckout
-
-# Swift / Rust / Node build output
-.build/
-.swiftpm/
-Package.resolved
+# Build output
 node_modules/
 dist/
 src-tauri/target/
@@ -39,7 +27,7 @@ backups/
 *.db-shm
 *.db-wal
 
-# Worktrees that coding assistants create inside the checkout
+# Claude Code worktrees
 .claude/worktrees/
 
 # Editors / OS

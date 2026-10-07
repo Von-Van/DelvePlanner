@@ -22,7 +22,6 @@ use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-pub const OLLAMA_BASE_URL: &str = "http://127.0.0.1:11434";
 pub const MODEL_NAME: &str = "qwen3:8b";
 const MEMORY_LIMIT: usize = 4;
 const PROPOSAL_TTL_MINUTES: i64 = 10;
@@ -138,9 +137,10 @@ pub fn weekday_from_js(day: u8) -> Weekday {
     }
 }
 
+#[cfg(test)]
 impl Default for PlannerAgent {
     fn default() -> Self {
-        Self::new(OLLAMA_BASE_URL, MODEL_NAME)
+        Self::new("http://127.0.0.1:11434", MODEL_NAME)
     }
 }
 
@@ -259,6 +259,7 @@ impl PlannerAgent {
         }
     }
 
+    #[cfg(test)]
     pub fn memory_len(&self) -> usize {
         self.state
             .lock()

@@ -6,7 +6,7 @@ use super::grounding::asks_to_choose;
 use super::{Scope, SessionOutcome, SessionTurn};
 use crate::model::{
     DayFacts, MilestoneStatus, PlanStatus, PlannerCandidates, TaskPriority, TaskStatus,
-    MAX_OPERATIONS,
+    MAX_OPERATIONS, MAX_REASON_LENGTH,
 };
 use chrono::{DateTime, Duration, NaiveDate, Utc, Weekday};
 use chrono_tz::Tz;
@@ -580,9 +580,6 @@ fn pattern(value: &str) -> Schema {
     Schema::Object(vec![("type", text("string")), ("pattern", text(value))])
 }
 
-/// A reason is one line under a suggestion in the review.
-const MAX_REASON: u64 = 120;
-
 fn integer() -> Schema {
     Schema::Object(vec![("type", text("integer"))])
 }
@@ -791,7 +788,7 @@ pub(super) fn output_format(scope: Scope, candidates: &PlannerCandidates) -> Sch
         if let Some(inbox_ids) = &inbox_ids {
             create_task.push(("fromInbox", inbox_ids.clone()));
         }
-        create_task.push(("reason", string(MAX_REASON)));
+        create_task.push(("reason", string(MAX_REASON_LENGTH as u64)));
         operations.push(object(create_task, &["type", "title"]));
         operations.push(object(
             vec![
@@ -829,7 +826,7 @@ pub(super) fn output_format(scope: Scope, candidates: &PlannerCandidates) -> Sch
                     ("status", task_status()),
                     ("priority", priority()),
                     ("takes", estimate_change()),
-                    ("reason", string(MAX_REASON)),
+                    ("reason", string(MAX_REASON_LENGTH as u64)),
                 ],
                 &["type", "taskId"],
             ));
@@ -840,7 +837,7 @@ pub(super) fn output_format(scope: Scope, candidates: &PlannerCandidates) -> Sch
                     ("doOn", day_change()),
                     ("dueBy", day_change()),
                     ("inWeek", day_change()),
-                    ("reason", string(MAX_REASON)),
+                    ("reason", string(MAX_REASON_LENGTH as u64)),
                 ],
                 &["type", "taskId"],
             ));

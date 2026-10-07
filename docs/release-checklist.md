@@ -1,6 +1,6 @@
 # Delve Planner Public Beta Release Checklist
 
-This checklist gates publishing an existing draft GitHub Release. Record the tested build/tag and both machine environments in the release notes.
+This checklist gates publishing a signed draft GitHub Release. Unsigned pre-releases publish as soon as the tag is pushed, so run the platform sections before tagging those. Record the tested build/tag and both machine environments in the release notes.
 
 ## One-time GitHub configuration
 

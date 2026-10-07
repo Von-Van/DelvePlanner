@@ -7,7 +7,7 @@ import type {
   ScheduleEvent,
   WorkingHours,
 } from "./api";
-import { dateTimeFields, timeLabel } from "./date";
+import { dateTimeFields, timeLabel, weekdayNames } from "./date";
 import { estimateLabel, planColorValues, shortDate } from "./planning";
 
 /**
@@ -175,16 +175,6 @@ export function calendarsNeedingAttention(calendars: Calendar[]) {
       calendar.visible && calendar.problem && !calendar.problem.retryable,
   );
 }
-
-export const weekdayNames = [
-  "Mon",
-  "Tue",
-  "Wed",
-  "Thu",
-  "Fri",
-  "Sat",
-  "Sun",
-] as const;
 
 /** "09:00" for 540 minutes after midnight; 1440 is "24:00". */
 export function minuteLabel(minute: number) {

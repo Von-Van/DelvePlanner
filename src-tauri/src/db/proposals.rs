@@ -20,7 +20,7 @@ use crate::model::{
     CreateWorkstreamInput, DayChange, EstimateChange, InboxSource, Milestone, MilestoneStatus,
     ModelResponse, MutationOperation, NewRef, Plan, PlannerCandidates, ProposedOperation,
     RecordKind, RecordRef, ReminderChange, ScheduleEvent, SuggestionEdit, Task,
-    UpdateMilestoneInput, UpdatePlanInput, UpdateTaskInput, MAX_OPERATIONS,
+    UpdateMilestoneInput, UpdatePlanInput, UpdateTaskInput, MAX_ESTIMATE_MINUTES, MAX_OPERATIONS,
 };
 use chrono::{DateTime, TimeZone, Utc};
 use rusqlite::{params, Transaction, TransactionBehavior};
@@ -296,7 +296,7 @@ impl PlannerDatabase {
 
 /// The bounds the tasks table itself enforces, checked before anything is written.
 fn validate_estimate(minutes: i64) -> AppResult<()> {
-    if !(1..=1440).contains(&minutes) {
+    if !(1..=MAX_ESTIMATE_MINUTES).contains(&minutes) {
         return Err(AppError::Validation(
             "An estimate must be between 1 minute and 24 hours.".into(),
         ));

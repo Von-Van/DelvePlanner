@@ -141,11 +141,11 @@ pub struct InstalledModel {
 }
 
 #[derive(Clone)]
-pub struct OllamaRuntimeManager {
+pub struct OllamaRuntime {
     inner: Arc<RuntimeInner>,
 }
 
-impl OllamaRuntimeManager {
+impl OllamaRuntime {
     pub fn new(resource_dir: PathBuf, app_data_dir: PathBuf) -> AppResult<Self> {
         let port = reserve_loopback_port()?;
         Self::new_with_port(resource_dir, app_data_dir, port, system_model_dir())
@@ -1179,14 +1179,9 @@ mod tests {
         .unwrap();
     }
 
-    fn manager_with(root: &Path, system: Option<PathBuf>) -> OllamaRuntimeManager {
-        OllamaRuntimeManager::new_with_port(
-            root.join("resources"),
-            root.join("data"),
-            49_152,
-            system,
-        )
-        .unwrap()
+    fn manager_with(root: &Path, system: Option<PathBuf>) -> OllamaRuntime {
+        OllamaRuntime::new_with_port(root.join("resources"), root.join("data"), 49_152, system)
+            .unwrap()
     }
 
     #[test]
@@ -1278,7 +1273,7 @@ mod tests {
     #[test]
     fn model_storage_is_isolated() {
         let root = tempfile::tempdir().unwrap();
-        let manager = OllamaRuntimeManager::new_with_port(
+        let manager = OllamaRuntime::new_with_port(
             root.path().join("resources"),
             root.path().join("data"),
             49_152,

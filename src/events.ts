@@ -155,8 +155,8 @@ export function reminderShortLabel(minutes: number) {
 }
 
 export function reminderLabel(minutes: number) {
-  if (minutes === 0) return "reminder at start";
-  if (minutes === 1_440) return "reminder 1 day before";
-  if (minutes === 60) return "reminder 1 hour before";
-  return `reminder ${minutes} minutes before`;
+  if (minutes === 0) return "Reminder at start";
+  if (minutes === 1_440) return "Reminder 1 day before";
+  if (minutes === 60) return "Reminder 1 hour before";
+  return `Reminder ${minutes} minutes before`;
 }

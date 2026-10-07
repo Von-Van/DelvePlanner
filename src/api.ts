@@ -736,7 +736,6 @@ const commandErrorSchema = z
     code: z.string(),
     message: z.string(),
     retryable: z.boolean(),
-    details: z.unknown().optional(),
   })
   .strict();
 const localTimeOptionSchema = z
@@ -811,7 +810,6 @@ export type Workstream = z.infer<typeof workstreamSchema>;
 export type Agenda = z.infer<typeof agendaSchema>;
 export type PlanningBoard = z.infer<typeof planningBoardSchema>;
 export type InboxItem = z.infer<typeof inboxItemSchema>;
-export type InboxConversion = z.infer<typeof inboxConversionSchema>;
 export type Milestone = z.infer<typeof milestoneSchema>;
 export type MilestoneStatus = Milestone["status"];
 export type Task = z.infer<typeof taskSchema>;
@@ -840,11 +838,9 @@ export type PlanTemplateInfo = z.infer<typeof planTemplateInfoSchema>;
 export type TaskBlock = z.infer<typeof taskBlockSchema>;
 export type ScheduledBlock = z.infer<typeof scheduledBlockSchema>;
 export type Calendar = z.infer<typeof calendarSchema>;
-export type CalendarKind = Calendar["kind"];
 export type CalendarAccount = z.infer<typeof calendarAccountSchema>;
 export type CalendarProvider = CalendarAccount["provider"];
 export type RemoteCalendar = z.infer<typeof remoteCalendarSchema>;
-export type CalendarProblem = NonNullable<Calendar["problem"]>;
 export type ExternalEvent = z.infer<typeof externalEventSchema>;
 export type CalendarAgenda = z.infer<typeof calendarAgendaSchema>;
 export type WorkingHours = z.infer<typeof workingHoursSchema>;
@@ -862,7 +858,6 @@ export type ProposalReference = z.infer<typeof proposalReferenceSchema>;
 export type RecordReference = z.infer<typeof recordReferenceSchema>;
 export type DayChange = z.infer<typeof dayChangeSchema>;
 export type EstimateChange = z.infer<typeof estimateChangeSchema>;
-export type AppliedProposal = z.infer<typeof appliedProposalSchema>;
 export type ReminderChange = z.infer<typeof reminderChangeSchema>;
 
 export type PlanInput = Pick<
@@ -987,7 +982,6 @@ export type Observation = z.infer<typeof observationSchema>;
 export type OllamaStatus = z.infer<typeof statusSchema>;
 
 export const modelSources = ["delve_planner", "system"] as const;
-export type ModelSource = (typeof modelSources)[number];
 
 const installedModelSchema = z
   .object({
@@ -1013,14 +1007,12 @@ export type ImportSelection = z.infer<typeof importSelectionSchema>;
 export class DelvePlannerError extends Error {
   code: string;
   retryable: boolean;
-  details?: unknown;
 
   constructor(payload: CommandErrorPayload) {
     super(payload.message);
     this.name = "DelvePlannerError";
     this.code = payload.code;
     this.retryable = payload.retryable;
-    this.details = payload.details;
   }
 }
 
@@ -1159,18 +1151,6 @@ export const api = {
   async deleteEvent(id: string, revision: number) {
     await invokeCommand("delete_event", { id, revision });
   },
-  async rescheduleEvent(input: {
-    id: string;
-    revision: number;
-    startAtUtc: string;
-    timeZone: string;
-    durationMinutes: number;
-    reminderChange?: ReminderChange;
-  }) {
-    return eventSchema.parse(
-      await invokeCommand("reschedule_event", { input }),
-    );
-  },
   async createTask(input: TaskInput) {
     return taskSchema.parse(await invokeCommand("create_task", { input }));
   },
@@ -1245,11 +1225,6 @@ export const api = {
     await invokeCommand("delete_task_blocks", {
       blocks: blocks.map(({ id, revision }) => ({ id, revision })),
     });
-  },
-  async taskBlocks(taskId: string) {
-    return z
-      .array(taskBlockSchema)
-      .parse(await invokeCommand("list_task_blocks", { taskId }));
   },
   /** Future blocks of finished tasks, which Delve Planner offers to release. */
   async releasableBlocks() {
@@ -1417,14 +1392,6 @@ export const api = {
   async status() {
     return statusSchema.parse(await invokeCommand("current_ollama_status"));
   },
-  /** Starts the local runtime because the user asked for something that needs it. */
-  async startModelRuntime() {
-    return statusSchema.parse(await invokeCommand("start_ollama_runtime"));
-  },
-  /** Lets the model out of memory without stopping the runtime. */
-  async releaseModel() {
-    await invokeCommand("release_ollama_model");
-  },
   async installedModels() {
     return z
       .array(installedModelSchema)
@@ -1499,9 +1466,6 @@ export const api = {
   },
   async discardProposal(proposalId: string) {
     await invokeCommand("discard_schedule_proposal", { proposalId });
-  },
-  async cancelPlannerRequest() {
-    await invokeCommand("cancel_planner_request");
   },
   async clearContext() {
     await invokeCommand("clear_planner_context");

@@ -1,6 +1,6 @@
 # Setting up Google and Microsoft calendar access
 
-Delve Planner reads Google Calendar and Outlook through an OAuth client for each. It ships with clients already set up, so **connecting an account needs nothing from this guide** — open **Calendars** and select **Connect Google** or **Connect Outlook**. This guide is for the two people who need more: whoever maintains Delve Planner's own clients, and anyone who would rather point their build at a client of their own.
+Delve Planner reads Google Calendar and Outlook through an OAuth client for each. It ships with clients already set up, so **connecting an account needs nothing from this guide** — open **Calendars** and select **Connect Google** or **Connect Outlook**. This guide covers two other cases: maintaining Delve Planner's own clients, and pointing a build at a client of your own.
 
 Checked against Google's and Microsoft's documentation on September 17, 2026. Consoles change often, so expect labels to drift.
 

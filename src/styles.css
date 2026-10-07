@@ -1695,25 +1695,6 @@ select:focus-visible,
   min-width: 0;
   flex: 1;
 }
-.weekday-toggles {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin: -4px 0 15px;
-}
-.weekday-toggles button {
-  min-width: 42px;
-  padding: 6px 0;
-  border: 1px solid var(--control);
-  background: var(--ground);
-  color: var(--secondary);
-  font: 500 11px var(--font-ui);
-}
-.weekday-toggles button.selected {
-  border-color: var(--blue);
-  background: var(--blue-wash);
-  color: var(--blue-deep);
-}
 /* The last chosen day can't be cleared, but it still reads as chosen. */
 .weekday-toggles button.selected:disabled {
   cursor: default;
@@ -4255,9 +4236,10 @@ kbd.off {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 3px;
+  margin: -4px 0 15px;
 }
 .weekday-toggles button {
-  padding: 6px 0;
+  min-width: 42px;
 }
 .weekday-toggles button,
 .free-slots button {

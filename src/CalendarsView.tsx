@@ -24,11 +24,10 @@ import {
   parseMinute,
   providerLabel,
   syncLabel,
-  weekdayNames,
   workingHoursLabel,
 } from "./calendars";
-import { weekStartsOn } from "./date";
-import { Glyph, Mark, Spinner } from "./Geometry";
+import { weekdayNames, weekStartsOn } from "./date";
+import { Glyph, LoadingLine, Mark, Spinner } from "./Geometry";
 import { Menu, MenuItem } from "./Menu";
 import { ColorSwatches } from "./PlanControls";
 import { EditorShell } from "./PlanEditor";
@@ -297,10 +296,7 @@ export function CalendarsView({
             </ul>
           )}
           {calendars === null ? (
-            <div className="loading-line">
-              <Spinner size={10} />
-              Reading calendars
-            </div>
+            <LoadingLine label="Reading calendars" />
           ) : calendars.length === 0 ? (
             <div className="empty-agenda">
               <i className="empty-mark" aria-hidden="true" />

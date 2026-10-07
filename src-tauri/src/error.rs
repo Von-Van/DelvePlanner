@@ -1,6 +1,5 @@
 use crate::model::CalendarProblem;
 use serde::Serialize;
-use serde_json::Value;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -57,8 +56,6 @@ pub struct CommandError {
     pub code: &'static str,
     pub message: String,
     pub retryable: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub details: Option<Value>,
 }
 
 impl CommandError {
@@ -67,7 +64,6 @@ impl CommandError {
             code: "internal",
             message: message.into(),
             retryable: true,
-            details: None,
         }
     }
 }
@@ -98,7 +94,6 @@ impl From<AppError> for CommandError {
             code,
             message: error.to_string(),
             retryable,
-            details: None,
         }
     }
 }

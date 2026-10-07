@@ -4,9 +4,13 @@ import {
   isPermissionGranted,
   requestPermission,
 } from "@tauri-apps/plugin-notification";
-import { OllamaStatus } from "./api";
+import { messageFor, OllamaStatus } from "./api";
 import { Glyph, Mark } from "./Geometry";
 import { ModelPicker, TESTED_MODEL } from "./ModelPicker";
+import { focusableSelector } from "./useModalFocus";
+
+// The key keeps the app's former name, DayPlan, so finished onboarding stays finished.
+export const onboardingStorageKey = "dayplan-onboarding";
 
 export function Onboarding({
   status,
@@ -37,9 +41,8 @@ export function Onboarding({
     );
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Tab" || !dialogRef.current) return;
-      const items = dialogRef.current.querySelectorAll<HTMLElement>(
-        'button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex="0"]',
-      );
+      const items =
+        dialogRef.current.querySelectorAll<HTMLElement>(focusableSelector);
       if (!items.length) return;
       const first = items[0];
       const last = items[items.length - 1];
@@ -59,8 +62,7 @@ export function Onboarding({
   const ready = status?.modelInstalled ?? false;
   const finish = () => {
     try {
-      // The key keeps the app's former name, DayPlan, which App reads on launch.
-      localStorage.setItem("dayplan-onboarding", "complete");
+      localStorage.setItem(onboardingStorageKey, "complete");
     } catch {
       // Without storage the welcome returns next launch; Delve Planner still opens now.
     }
@@ -71,7 +73,7 @@ export function Onboarding({
       const next = await requestPermission();
       setPermission(next === "granted" ? "granted" : "denied");
     } catch (cause) {
-      onMessage(cause instanceof Error ? cause.message : String(cause));
+      onMessage(messageFor(cause));
     }
   }
   const panels = [

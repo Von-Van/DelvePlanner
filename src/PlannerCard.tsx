@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
+  commandAriaShortcut,
   commandShortcutText,
-  shortcutPlatform,
   submitOnCommandEnter,
 } from "./shortcuts";
 import type {
@@ -127,7 +127,7 @@ export function PlannerCard({
           value={command}
           onChange={(event) => onCommand(event.target.value)}
           onKeyDown={submitOnCommandEnter}
-          aria-keyshortcuts={isMacShortcuts ? "Meta+Enter" : "Control+Enter"}
+          aria-keyshortcuts={commandAriaShortcut("Enter")}
           aria-label={
             planTitle ? `Plan changes for ${planTitle}` : "Plan changes"
           }
@@ -285,5 +285,3 @@ export function PlannerCard({
     </section>
   );
 }
-
-const isMacShortcuts = shortcutPlatform === "mac";

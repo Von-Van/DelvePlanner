@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing draft release tag (for example v0.1.0)
+        description: Existing draft release tag (for example v0.5.0)
         required: true
       native_smoke_tests_passed:
         description: Confirm macOS and Windows native smoke checks passed

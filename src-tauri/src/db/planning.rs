@@ -7,7 +7,7 @@ use super::task_details::{
 use super::team::{insert_workstream, validate_links, workstreams_in_plan};
 use super::{
     collect, event_from_row, normalize_day, now, validate_id, validate_revision, validate_title,
-    PlannerDatabase, SqlConnection, EVENT_SELECT,
+    PlannerDatabase, EVENT_SELECT,
 };
 use crate::error::{AppError, AppResult};
 use crate::model::{
@@ -18,7 +18,7 @@ use crate::model::{
     MAX_ESTIMATE_MINUTES,
 };
 use crate::recurrence;
-use rusqlite::{params, types::Type, OptionalExtension, Row, TransactionBehavior};
+use rusqlite::{params, types::Type, Connection, OptionalExtension, Row, TransactionBehavior};
 use std::collections::HashMap;
 use uuid::Uuid;
 
@@ -445,12 +445,14 @@ impl PlannerDatabase {
         remove_task(&self.connection, id, revision)
     }
 
+    #[cfg(test)]
     pub fn tasks_for_day(&self, day: &str) -> AppResult<Vec<Task>> {
         let day = normalize_day(day)?;
         self.tasks_scheduled_between(&day, &super::next_day(&day)?)
     }
 
     /// Tasks due on `day` that are not also scheduled onto it, so the agenda lists each task once.
+    #[cfg(test)]
     pub fn tasks_due_on(&self, day: &str) -> AppResult<Vec<Task>> {
         let day = normalize_day(day)?;
         self.tasks_due_between(&day, &super::next_day(&day)?)
@@ -518,10 +520,7 @@ struct TaskTotals {
     overdue: i64,
 }
 
-pub(super) fn insert_plan<C: SqlConnection>(
-    connection: &C,
-    input: &CreatePlanInput,
-) -> AppResult<Plan> {
+pub(super) fn insert_plan(connection: &Connection, input: &CreatePlanInput) -> AppResult<Plan> {
     let (start_date, target_date) = validate_plan_shape(
         &input.title,
         &input.description,
@@ -531,7 +530,7 @@ pub(super) fn insert_plan<C: SqlConnection>(
     let links = validate_plan_links(&input.links)?;
     let id = Uuid::new_v4().to_string();
     let timestamp = now();
-    connection.connection().execute(
+    connection.execute(
         "INSERT INTO plans
          (id, title, description, status, start_date, target_date, color, archived, links,
           revision, created_at, updated_at)
@@ -552,10 +551,7 @@ pub(super) fn insert_plan<C: SqlConnection>(
 }
 
 /// Replaces a plan's editable fields when its revision still matches.
-pub(super) fn replace_plan<C: SqlConnection>(
-    connection: &C,
-    input: &UpdatePlanInput,
-) -> AppResult<Plan> {
+pub(super) fn replace_plan(connection: &Connection, input: &UpdatePlanInput) -> AppResult<Plan> {
     validate_id(&input.id)?;
     validate_revision(input.revision)?;
     let (start_date, target_date) = validate_plan_shape(
@@ -565,7 +561,7 @@ pub(super) fn replace_plan<C: SqlConnection>(
         input.target_date.as_deref(),
     )?;
     let links = validate_plan_links(&input.links)?;
-    let changed = connection.connection().execute(
+    let changed = connection.execute(
         "UPDATE plans
          SET title = ?1, description = ?2, status = ?3, start_date = ?4, target_date = ?5,
              color = ?6, archived = ?7, links = ?8, revision = revision + 1, updated_at = ?9
@@ -590,8 +586,8 @@ pub(super) fn replace_plan<C: SqlConnection>(
     plan_by_id(connection, &input.id)?.ok_or(AppError::NotFound)
 }
 
-pub(super) fn insert_milestone<C: SqlConnection>(
-    connection: &C,
+pub(super) fn insert_milestone(
+    connection: &Connection,
     input: &CreateMilestoneInput,
 ) -> AppResult<Milestone> {
     let target_date = validate_milestone_shape(
@@ -608,12 +604,12 @@ pub(super) fn insert_milestone<C: SqlConnection>(
     )?;
     let id = Uuid::new_v4().to_string();
     let timestamp = now();
-    let next_order: i64 = connection.connection().query_row(
+    let next_order: i64 = connection.query_row(
         "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM milestones WHERE plan_id = ?1",
         params![input.plan_id],
         |row| row.get(0),
     )?;
-    connection.connection().execute(
+    connection.execute(
         "INSERT INTO milestones
          (id, plan_id, title, description, target_date, status, workstream_id, sort_order,
           revision, created_at, updated_at)
@@ -634,8 +630,8 @@ pub(super) fn insert_milestone<C: SqlConnection>(
 }
 
 /// Replaces a milestone's editable fields when its revision still matches.
-pub(super) fn replace_milestone<C: SqlConnection>(
-    connection: &C,
+pub(super) fn replace_milestone(
+    connection: &Connection,
     input: &UpdateMilestoneInput,
 ) -> AppResult<Milestone> {
     validate_id(&input.id)?;
@@ -655,7 +651,7 @@ pub(super) fn replace_milestone<C: SqlConnection>(
         input.workstream_id.as_deref(),
         None,
     )?;
-    let changed = connection.connection().execute(
+    let changed = connection.execute(
         "UPDATE milestones
          SET title = ?1, description = ?2, target_date = ?3, status = ?4, workstream_id = ?5,
              revision = revision + 1, updated_at = ?6
@@ -678,18 +674,13 @@ pub(super) fn replace_milestone<C: SqlConnection>(
 }
 
 /// Deletes a milestone inside the caller's transaction, detaching its tasks with a revision bump.
-pub(super) fn remove_milestone<C: SqlConnection>(
-    connection: &C,
-    id: &str,
-    revision: i64,
-) -> AppResult<()> {
+pub(super) fn remove_milestone(connection: &Connection, id: &str, revision: i64) -> AppResult<()> {
     validate_id(id)?;
     validate_revision(revision)?;
     let milestone = milestone_by_id(connection, id)?.ok_or(AppError::NotFound)?;
     if milestone.revision != revision {
         return Err(AppError::Conflict);
     }
-    let connection = connection.connection();
     connection.execute(
         "UPDATE tasks
          SET milestone_id = NULL, revision = revision + 1, updated_at = ?1
@@ -700,14 +691,10 @@ pub(super) fn remove_milestone<C: SqlConnection>(
     Ok(())
 }
 
-pub(super) fn remove_task<C: SqlConnection>(
-    connection: &C,
-    id: &str,
-    revision: i64,
-) -> AppResult<()> {
+pub(super) fn remove_task(connection: &Connection, id: &str, revision: i64) -> AppResult<()> {
     validate_id(id)?;
     validate_revision(revision)?;
-    let changed = connection.connection().execute(
+    let changed = connection.execute(
         "DELETE FROM tasks WHERE id = ?1 AND revision = ?2",
         params![id, revision],
     )?;
@@ -718,10 +705,7 @@ pub(super) fn remove_task<C: SqlConnection>(
     }
 }
 
-pub(super) fn insert_task<C: SqlConnection>(
-    connection: &C,
-    input: &CreateTaskInput,
-) -> AppResult<Task> {
+pub(super) fn insert_task(connection: &Connection, input: &CreateTaskInput) -> AppResult<Task> {
     let shape = TaskShape {
         title: &input.title,
         description: &input.description,
@@ -748,12 +732,12 @@ pub(super) fn insert_task<C: SqlConnection>(
     let id = Uuid::new_v4().to_string();
     let timestamp = now();
     let completed_at = (input.status == TaskStatus::Done).then(|| timestamp.clone());
-    let next_order: i64 = connection.connection().query_row(
+    let next_order: i64 = connection.query_row(
         "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM tasks",
         [],
         |row| row.get(0),
     )?;
-    connection.connection().execute(
+    connection.execute(
         "INSERT INTO tasks
          (id, title, description, plan_id, milestone_id, workstream_id, owner_id, due_date,
           scheduled_day, planned_week, estimated_minutes, status, priority, completed_at,
@@ -788,10 +772,7 @@ pub(super) fn insert_task<C: SqlConnection>(
 /// Replaces a task's editable fields when its revision still matches. Finishing a repeating task
 /// also creates its next occurrence, which takes the rule over: the finished one keeps its history
 /// without a rule, so finishing it again can never make a second copy.
-pub(super) fn replace_task<C: SqlConnection>(
-    connection: &C,
-    input: &UpdateTaskInput,
-) -> AppResult<Task> {
+pub(super) fn replace_task(connection: &Connection, input: &UpdateTaskInput) -> AppResult<Task> {
     validate_id(&input.id)?;
     validate_revision(input.revision)?;
     let existing = task_by_id(connection, &input.id)?.ok_or(AppError::NotFound)?;
@@ -831,7 +812,7 @@ pub(super) fn replace_task<C: SqlConnection>(
         TaskStatus::Done => Some(now()),
         _ => None,
     };
-    let changed = connection.connection().execute(
+    let changed = connection.execute(
         "UPDATE tasks
          SET title = ?1, description = ?2, plan_id = ?3, milestone_id = ?4, workstream_id = ?5,
              owner_id = ?6, due_date = ?7, scheduled_day = ?8, planned_week = ?9,
@@ -874,8 +855,8 @@ pub(super) fn replace_task<C: SqlConnection>(
 /// Creates the occurrence after a finished one: the same work on the rule's next date after both
 /// the finished day and today, with a due date moved by the same number of days, an unticked
 /// checklist, and nothing to wait on yet.
-fn insert_next_occurrence<C: SqlConnection>(
-    connection: &C,
+fn insert_next_occurrence(
+    connection: &Connection,
     finished: &UpdateTaskInput,
     days: &TaskDays,
     rule: Recurrence,
@@ -1022,10 +1003,7 @@ pub(super) fn validate_task_shape(shape: &TaskShape<'_>) -> AppResult<TaskDays> 
     Ok(days)
 }
 
-fn validate_task_references<C: SqlConnection>(
-    connection: &C,
-    shape: &TaskShape<'_>,
-) -> AppResult<()> {
+fn validate_task_references(connection: &Connection, shape: &TaskShape<'_>) -> AppResult<()> {
     if let Some(plan_id) = shape.plan_id {
         ensure_plan_exists(connection, plan_id)?;
     }
@@ -1089,9 +1067,9 @@ pub(super) fn validate_description(value: &str) -> AppResult<()> {
     Ok(())
 }
 
-pub(super) fn ensure_plan_exists<C: SqlConnection>(connection: &C, plan_id: &str) -> AppResult<()> {
+pub(super) fn ensure_plan_exists(connection: &Connection, plan_id: &str) -> AppResult<()> {
     validate_id(plan_id)?;
-    let exists: bool = connection.connection().query_row(
+    let exists: bool = connection.query_row(
         "SELECT EXISTS(SELECT 1 FROM plans WHERE id = ?1)",
         params![plan_id],
         |row| row.get(0),
@@ -1106,12 +1084,12 @@ pub(super) fn ensure_plan_exists<C: SqlConnection>(connection: &C, plan_id: &str
 }
 
 /// Distinguishes a revision conflict from a missing record after a guarded write changed nothing.
-pub(super) fn stale_write_error<C: SqlConnection>(
-    connection: &C,
+pub(super) fn stale_write_error(
+    connection: &Connection,
     table: &'static str,
     id: &str,
 ) -> AppResult<AppError> {
-    let exists: bool = connection.connection().query_row(
+    let exists: bool = connection.query_row(
         &format!("SELECT EXISTS(SELECT 1 FROM {table} WHERE id = ?1)"),
         params![id],
         |row| row.get(0),
@@ -1123,9 +1101,8 @@ pub(super) fn stale_write_error<C: SqlConnection>(
     })
 }
 
-pub(super) fn plan_by_id<C: SqlConnection>(connection: &C, id: &str) -> AppResult<Option<Plan>> {
+pub(super) fn plan_by_id(connection: &Connection, id: &str) -> AppResult<Option<Plan>> {
     connection
-        .connection()
         .query_row(
             &format!("{PLAN_SELECT} WHERE id = ?1"),
             params![id],
@@ -1135,12 +1112,8 @@ pub(super) fn plan_by_id<C: SqlConnection>(connection: &C, id: &str) -> AppResul
         .map_err(AppError::from)
 }
 
-pub(super) fn milestone_by_id<C: SqlConnection>(
-    connection: &C,
-    id: &str,
-) -> AppResult<Option<Milestone>> {
+pub(super) fn milestone_by_id(connection: &Connection, id: &str) -> AppResult<Option<Milestone>> {
     connection
-        .connection()
         .query_row(
             &format!("{MILESTONE_SELECT} WHERE id = ?1"),
             params![id],
@@ -1150,9 +1123,8 @@ pub(super) fn milestone_by_id<C: SqlConnection>(
         .map_err(AppError::from)
 }
 
-pub(super) fn task_by_id<C: SqlConnection>(connection: &C, id: &str) -> AppResult<Option<Task>> {
+pub(super) fn task_by_id(connection: &Connection, id: &str) -> AppResult<Option<Task>> {
     connection
-        .connection()
         .query_row(
             &format!("{TASK_SELECT} WHERE id = ?1"),
             params![id],

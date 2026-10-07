@@ -123,7 +123,7 @@ export function describeOperation(
           when(operation.startAtUtc),
           `${operation.durationMinutes} min`,
           operation.reminderMinutesBefore !== null &&
-            capitalize(reminderLabel(operation.reminderMinutesBefore)),
+            reminderLabel(operation.reminderMinutesBefore),
           operation.plan && `In ${planName(operation.plan)}`,
           operation.fromInbox && "From your inbox",
         ]),
@@ -425,7 +425,7 @@ function eventDetails(operation: {
       (operation.notes ? "New notes" : "Clear the notes"),
     operation.durationMinutes !== null && `${operation.durationMinutes} min`,
     operation.reminderChange.action === "set" &&
-      capitalize(reminderLabel(operation.reminderChange.minutesBefore)),
+      reminderLabel(operation.reminderChange.minutesBefore),
     operation.reminderChange.action === "clear" && "Clear the reminder",
   ]);
 }
@@ -459,10 +459,6 @@ function weekChangeLabel(change: DayChange) {
 function dateTimeLabel(startAtUtc: string, timeZone: string) {
   const { day } = dateTimeFields(startAtUtc, timeZone);
   return `${dayMonthShort(day)}, ${timeLabel(startAtUtc, timeZone)}`;
-}
-
-function capitalize(value: string) {
-  return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
 function compact(values: Array<string | false | null | undefined | 0>) {

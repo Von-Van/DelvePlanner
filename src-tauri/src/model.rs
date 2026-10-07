@@ -11,6 +11,9 @@ pub const MAX_COMMAND_LENGTH: usize = 1_000;
 pub const MAX_OPERATIONS: usize = 12;
 pub const MAX_REMINDER_MINUTES: i64 = 7 * 24 * 60;
 pub const MAX_ESTIMATE_MINUTES: i64 = 24 * 60;
+pub const MAX_AGENDA_DAYS: u32 = 14;
+/// A reason is one line under a suggestion in the review.
+pub const MAX_REASON_LENGTH: usize = 120;
 pub const MAX_TASK_MOVES: usize = 500;
 pub const MAX_BLOCK_CHANGES: usize = 200;
 pub const MAX_CALENDAR_NAME_LENGTH: usize = 80;
@@ -590,18 +593,6 @@ pub struct UpdateEventInput {
     pub workstream_change: LinkChange,
     #[serde(default)]
     pub owner_change: LinkChange,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct RescheduleEventInput {
-    pub id: String,
-    pub revision: i64,
-    pub start_at_utc: String,
-    pub time_zone: String,
-    pub duration_minutes: i64,
-    #[serde(default)]
-    pub reminder_change: ReminderChange,
 }
 
 #[derive(Debug, Clone, Deserialize)]

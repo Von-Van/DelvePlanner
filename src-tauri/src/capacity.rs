@@ -229,7 +229,7 @@ mod tests {
             pooled: Vec::new(),
         };
         let profile = PlanningProfile {
-            // Thursday 17 September 2026 is a Thursday, so take Thursdays off.
+            // 17 September 2026 is a Thursday, so take Thursdays off.
             no_work_days: vec![4],
             max_planned_minutes: Some(300),
             ..no_profile()

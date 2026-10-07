@@ -17,7 +17,8 @@ use crate::model::{
     Milestone, MilestoneStatus, ModelResponse, MutationOperation, Plan, PlanStatus,
     PlannerCandidates, ProposalReference, RecordKind, RecordRef, ReminderChange, ReviewNote,
     ScheduleEvent, Task, TaskPriority, TaskStatus, Workstream, MAX_DESCRIPTION_LENGTH,
-    MAX_NAME_LENGTH, MAX_NOTES_LENGTH, MAX_OPERATIONS, MAX_REMINDER_MINUTES, MAX_TITLE_LENGTH,
+    MAX_ESTIMATE_MINUTES, MAX_NAME_LENGTH, MAX_NOTES_LENGTH, MAX_OPERATIONS, MAX_REASON_LENGTH,
+    MAX_REMINDER_MINUTES, MAX_TITLE_LENGTH,
 };
 use chrono::{DateTime, Duration, NaiveDate, NaiveTime, Utc, Weekday};
 use serde::{Deserialize, Serialize};
@@ -25,8 +26,6 @@ use std::collections::{HashMap, HashSet};
 
 pub(super) const DEFAULT_EVENT_MINUTES: i64 = 60;
 const SUMMARY_LIMIT: usize = 280;
-/// A reason sits on one preview line, so it stays shorter than a summary.
-const MAX_REASON_LENGTH: usize = 120;
 
 /// The single JSON object the model must produce.
 #[derive(Debug, Clone, Deserialize)]
@@ -1308,7 +1307,7 @@ impl Resolver<'_> {
                 }) {
                     return ask(format!(
                         "“{}” already has a milestone named “{title}”. Should I use that one?",
-                        self.plan_title(plan_id)
+                        self.title_of(plan_id)
                     ));
                 }
             }
@@ -1349,7 +1348,7 @@ impl Resolver<'_> {
                             return ask(format!(
                             "“{}” is a milestone in “{}”. Which plan should “{task_title}” go in?",
                             found.title,
-                            self.plan_title(&found.plan_id)
+                            self.title_of(&found.plan_id)
                         ))
                         }
                     }
@@ -1481,7 +1480,7 @@ impl Resolver<'_> {
                 }) {
                     return ask(format!(
                         "“{}” already has a workstream named “{name}”. Should I use that one?",
-                        self.plan_title(plan_id)
+                        self.title_of(plan_id)
                     ));
                 }
             }
@@ -1536,7 +1535,7 @@ impl Resolver<'_> {
                             return ask(format!(
                                 "“{}” is a workstream in “{}”. Which workstream should “{task_title}” go in?",
                                 found.name,
-                                self.plan_title(&found.plan_id)
+                                self.title_of(&found.plan_id)
                             ))
                         }
                     }
@@ -2051,10 +2050,6 @@ impl Resolver<'_> {
             .iter()
             .find(|task| task.id == id)
             .ok_or_else(|| invalid("an operation referenced a task outside the request context"))
-    }
-
-    fn plan_title(&self, id: &str) -> String {
-        self.title_of(id)
     }
 
     fn title_of(&self, id: &str) -> String {
@@ -2904,7 +2899,7 @@ fn changed_estimate(
         None | Some(EstimateChange::Unchanged) => None,
         Some(EstimateChange::Clear) => current.is_some().then_some(EstimateChange::Clear),
         Some(EstimateChange::Set { minutes }) => {
-            if !(1..=1440).contains(&minutes) {
+            if !(1..=MAX_ESTIMATE_MINUTES).contains(&minutes) {
                 return ask("How long should that take, between 1 minute and 24 hours?");
             }
             (current != Some(minutes)).then_some(EstimateChange::Set { minutes })
