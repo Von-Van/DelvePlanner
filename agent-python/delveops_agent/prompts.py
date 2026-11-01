@@ -7,11 +7,11 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from .drafts import ALLOWED_OPS, TARGETED_OPS
+from .drafts import ALLOWED_OPS, OP_SPECS, TYPE_HELP, payload_help
 from .tools import ToolSpec
 from .types import AgentTask
 
-PROMPT_VERSION = "a1-v1"
+PROMPT_VERSION = "a1-v2"
 
 # JSON Schema passed to Ollama's `format` so the model must reply with exactly one step object.
 STEP_SCHEMA = {
@@ -42,11 +42,20 @@ STEP_SCHEMA = {
 }
 
 
+def _draft_reference() -> str:
+    ops = "\n".join(payload_help(op) for op in OP_SPECS)
+    used = sorted({kind for spec in OP_SPECS.values() for kind, _ in spec.values()})
+    types = "\n".join(f"- {kind}: {TYPE_HELP[kind]}" for kind in used if kind not in ("str", "int"))
+    return f"""Draft ops and their payload fields. "?" = optional; a left-out *_change field means unchanged.
+Use no other fields:
+{ops}
+Field types:
+{types}"""
+
+
 def system_prompt(tools: Sequence[ToolSpec]) -> str:
     tool_lines = "\n".join(spec.prompt_line() for spec in tools) or "- (no tools are permitted for this task)"
-    targeted = ", ".join(sorted(TARGETED_OPS))
-    ops = ", ".join(sorted(ALLOWED_OPS))
-    return f"""You are the DelveOps planning assistant. You help one person with their own planner.
+    return f"""You are the planning assistant. You help one person with their own planner.
 
 You work in steps. Each reply is exactly one JSON object choosing one action:
 - {{"action": "call_tool", "tool": NAME, "arguments": {{...}}}}: read planner data with one tool.
@@ -59,9 +68,11 @@ You work in steps. Each reply is exactly one JSON object choosing one action:
 Tools you may use (read-only):
 {tool_lines}
 
+{_draft_reference()}
+
 Rules:
 - You cannot change the planner. Changes are drafts that the person reviews and approves later.
-- Draft ops: {ops}. For {targeted}, copy the target id and revision exactly from a tool result.
+- For an op with a target, copy the record's id and revision exactly from a tool result; they never go in payload.
 - Every draft lists in "evidence" the ids of the tool calls (like "tc-1") whose results support it.
 - Never invent ids, dates, revisions or records. If you have not seen it in a tool result, look it up \
 or say you cannot.

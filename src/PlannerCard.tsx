@@ -27,6 +27,7 @@ export function PlannerCard({
   onClear,
   onRefreshStatus,
   planTitle,
+  heading = { kicker: "LOCAL PLANNER", title: "Say it messily." },
 }: {
   status: OllamaStatus | null;
   command: string;
@@ -42,6 +43,8 @@ export function PlannerCard({
   onRefreshStatus: () => void;
   /** When set, the planner works inside this plan: new work belongs to it by default. */
   planTitle?: string;
+  /** The card's kicker and title; the Assistant home names it as the assistant. */
+  heading?: { kicker: string; title: string };
 }) {
   // Readiness is having a model, not having a server running: the runtime starts when a request
   // is sent and stops again once nobody is asking anything.
@@ -87,8 +90,8 @@ export function PlannerCard({
           <i />
         </div>
         <div>
-          <p>LOCAL PLANNER</p>
-          <h2>Say it messily.</h2>
+          <p>{heading.kicker}</p>
+          <h2>{heading.title}</h2>
         </div>
         <button
           onClick={onClear}

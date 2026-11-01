@@ -59,6 +59,12 @@ import {
   weekStartDay,
   weekStartsOn,
 } from "./date";
+import {
+  AssistantView,
+  AttentionTarget,
+  DayContext,
+  worthAttention,
+} from "./AssistantView";
 import { EventEditor } from "./EventEditor";
 import { ensureNotificationPermission, reminderShortLabel } from "./events";
 import { Glyph, LoadingLine, Mark, MarkShape } from "./Geometry";
@@ -97,10 +103,14 @@ import {
   commandKey,
   commandShortcutText,
   isTextEntry,
+  SectionShortcut,
+  sectionShortcutKey,
+  sectionShortcuts,
 } from "./shortcuts";
 import { WeekView } from "./WeekView";
 
 type View =
+  | { kind: "assistant" }
   | { kind: "inbox" }
   | { kind: "calendars" }
   | { kind: "knowledge" }
@@ -111,6 +121,50 @@ type View =
   | { kind: "plans"; archived: boolean }
   | { kind: "plan"; planId: string; tab: PlanTab }
   | { kind: "people" };
+
+/** The three main areas; every view belongs to one, or to the secondary places below them. */
+type Area = "assistant" | "schedule" | "projects" | "other";
+
+function areaOf(view: View): Area {
+  switch (view.kind) {
+    case "assistant":
+      return "assistant";
+    case "today":
+    case "week":
+    case "plan-today":
+    case "plan-week":
+      return "schedule";
+    case "plans":
+    case "plan":
+    case "people":
+      return "projects";
+    default:
+      return "other";
+  }
+}
+
+/** Where a number shortcut or a main rail link goes. */
+function sectionView(
+  section: SectionShortcut,
+  scheduleView: "today" | "week",
+): View {
+  switch (section) {
+    case "assistant":
+      return { kind: "assistant" };
+    case "schedule":
+      return { kind: scheduleView };
+    case "projects":
+      return { kind: "plans", archived: false };
+    case "people":
+      return { kind: "people" };
+    case "inbox":
+      return { kind: "inbox" };
+    case "calendars":
+      return { kind: "calendars" };
+    case "knowledge":
+      return { kind: "knowledge" };
+  }
+}
 
 type TaskEditorState = { task?: Task; defaults?: Partial<TaskInput> };
 
@@ -166,7 +220,10 @@ function readPromptState(): PlanningPromptState {
 }
 
 export default function App() {
-  const [view, setViewState] = useState<View>({ kind: "today" });
+  // The assistant is home: the app opens on it, and the planner stays one click away.
+  const [view, setViewState] = useState<View>({ kind: "assistant" });
+  // Schedule reopens on whichever of Today or Week was used last.
+  const [scheduleView, setScheduleView] = useState<"today" | "week">("today");
   const [focusToken, setFocusToken] = useState(0);
   const [day, setDay] = useState(todayDay());
   const [agenda, setAgenda] = useState(emptyAgenda);
@@ -221,6 +278,7 @@ export default function App() {
       return true;
     }
   });
+  const assistantHeading = useRef<HTMLHeadingElement>(null);
   const todayHeading = useRef<HTMLHeadingElement>(null);
   const weekHeading = useRef<HTMLHeadingElement>(null);
   const peopleHeading = useRef<HTMLHeadingElement>(null);
@@ -234,8 +292,11 @@ export default function App() {
   /** Changes the view and moves focus to its heading, as a page change would. */
   const navigate = useCallback((next: View) => {
     setViewState(next);
+    if (next.kind === "today" || next.kind === "week")
+      setScheduleView(next.kind);
     setFocusToken((token) => token + 1);
   }, []);
+  useHeadingFocus(assistantHeading, focusToken, view.kind === "assistant");
   useHeadingFocus(todayHeading, focusToken, view.kind === "today");
   useHeadingFocus(weekHeading, focusToken, view.kind === "week");
   useHeadingFocus(inboxHeading, focusToken, view.kind === "inbox");
@@ -454,22 +515,21 @@ export default function App() {
         );
         return;
       }
-      const target = {
-        "1": { kind: "today" },
-        "2": { kind: "week" },
-        "3": { kind: "plans", archived: false },
-        "4": { kind: "people" },
-        "5": { kind: "inbox" },
-        "6": { kind: "calendars" },
-        "7": { kind: "knowledge" },
-      }[event.key] as View | undefined;
-      if (!target) return;
+      const section = sectionShortcuts[event.key];
+      if (!section) return;
       event.preventDefault();
-      navigate(target);
+      navigate(sectionView(section, scheduleView));
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [navigate, viewKindForKeys, day, keyWeekStart, filterPlanIdForKeys]);
+  }, [
+    navigate,
+    viewKindForKeys,
+    day,
+    keyWeekStart,
+    filterPlanIdForKeys,
+    scheduleView,
+  ]);
 
   const plans = useMemo(
     () => summaries.map((summary) => summary.plan),
@@ -743,7 +803,10 @@ export default function App() {
     }
   }
 
-  const plannerCard = (planTitle?: string) => (
+  const plannerCard = (
+    planTitle?: string,
+    heading?: { kicker: string; title: string },
+  ) => (
     <PlannerCard
       status={status}
       command={command}
@@ -757,6 +820,108 @@ export default function App() {
       onClear={clearContext}
       onRefreshStatus={refreshStatus}
       planTitle={planTitle}
+      heading={heading}
+    />
+  );
+
+  const area = areaOf(view);
+  const pendingReview =
+    agentResponse?.kind === "proposal"
+      ? {
+          summary: agentResponse.summary,
+          changes: agentResponse.operations.length,
+        }
+      : null;
+
+  // The Assistant sees the whole day: the plan filter belongs to Schedule.
+  const assistantItems = agendaItems(
+    agenda.events,
+    agenda.blocks,
+    calendarDay?.events ?? [],
+    calendars,
+  );
+  // Work scheduled on a non-working day still counts as overbooked, as on Today.
+  const dayCapacityLine =
+    dayCapacity && dayCapacity.days[0]
+      ? capacityLine(capacityTotals(dayCapacity, { includePool: false }))
+      : null;
+  const nonWorkingDay = dayCapacity?.days[0]?.workingMinutes === 0;
+  const openDue = agenda.dueTasks.filter((task) => task.status !== "done");
+  const assistantContext: DayContext = {
+    day,
+    today,
+    loading: isLoading,
+    items: assistantItems,
+    focusKey: day === today ? focusItemKey(assistantItems, new Date()) : null,
+    tasksDone: agenda.tasks.filter((task) => task.status === "done").length,
+    tasksTotal: agenda.tasks.length,
+    dueOpen: openDue.length,
+    milestones: agenda.milestones.length,
+    capacityLabel: nonWorkingDay
+      ? "Not a working day"
+      : (dayCapacityLine?.label ?? null),
+  };
+  // Day-specific items only make sense for today; a broken calendar matters on any day.
+  const assistantAttention = worthAttention({
+    brokenCalendars: attention.map((calendar) => calendar.name),
+    overCapacityBy: day === today ? (dayCapacityLine?.overBy ?? 0) : 0,
+    unfinished:
+      day === today && board ? unfinishedTasks(board.tasks, today).length : 0,
+    dueOpen: day === today ? openDue.length : 0,
+    releasable: day === today ? offeredRelease.length : 0,
+    planningPrompt: day === today ? prompt : null,
+  });
+  function followAttention(target: AttentionTarget) {
+    if (target === "calendars") {
+      navigate({ kind: "calendars" });
+      return;
+    }
+    if (target !== "plan-week") setDay(today);
+    // The Assistant counts every plan, so Today must too or the flagged tasks could be hidden.
+    if (target === "today") setPlanFilter("all");
+    navigate({ kind: target });
+  }
+
+  const scheduleTabs = (
+    <SectionTabs
+      label="Schedule"
+      tabs={[
+        {
+          label: "Today",
+          active: view.kind === "today",
+          onSelect: () => navigate({ kind: "today" }),
+        },
+        {
+          label: "Week",
+          active: view.kind === "week",
+          onSelect: () => navigate({ kind: "week" }),
+        },
+      ]}
+    />
+  );
+  const projectTabs = (
+    <SectionTabs
+      label="Projects"
+      tabs={[
+        {
+          label: "Active",
+          active: view.kind === "plans" && !view.archived,
+          onSelect: () => navigate({ kind: "plans", archived: false }),
+          count: activePlans.length,
+        },
+        {
+          label: "Archived",
+          active: view.kind === "plans" && view.archived,
+          onSelect: () => navigate({ kind: "plans", archived: true }),
+          count: archivedCount,
+        },
+        {
+          label: "People",
+          active: view.kind === "people",
+          onSelect: () => navigate({ kind: "people" }),
+          count: people.length,
+        },
+      ]}
     />
   );
 
@@ -808,7 +973,12 @@ export default function App() {
     target: View,
     label: string,
     mark: { shape: MarkShape; size?: number; dashed?: boolean },
-    options: { active: boolean; shortcut?: string; count?: number },
+    options: {
+      active: boolean;
+      shortcut?: string;
+      count?: number;
+      countLabel?: string;
+    },
   ) => (
     <button
       className={`rail-link ${options.active ? "active" : ""}`}
@@ -831,7 +1001,16 @@ export default function App() {
       />
       {label}
       {options.count ? (
-        <span className="rail-count">{paddedCount(options.count)}</span>
+        <span
+          className="rail-count"
+          title={
+            options.countLabel
+              ? `${options.count} ${options.countLabel}`
+              : undefined
+          }
+        >
+          {paddedCount(options.count)}
+        </span>
       ) : null}
     </button>
   );
@@ -853,41 +1032,34 @@ export default function App() {
           </div>
           <nav aria-label="Workspace sections">
             {navLink(
-              { kind: "inbox" },
-              "Inbox",
-              { shape: "rhombus", dashed: true },
-              {
-                active: view.kind === "inbox",
-                shortcut: "5",
-                count: inbox.length,
-              },
-            )}
-            {navLink(
-              { kind: "today" },
-              "Today",
+              { kind: "assistant" },
+              "Assistant",
               { shape: "rhombus" },
               {
-                active: view.kind === "today" || view.kind === "plan-today",
-                shortcut: "1",
+                active: area === "assistant",
+                shortcut: sectionShortcutKey("assistant"),
+                count: pendingReview ? 1 : undefined,
+                countLabel: "proposal waiting for approval",
               },
             )}
             {navLink(
-              { kind: "week" },
-              "Week",
+              { kind: scheduleView },
+              "Schedule",
               { shape: "rule" },
               {
-                active: view.kind === "week" || view.kind === "plan-week",
-                shortcut: "2",
+                active: area === "schedule",
+                shortcut: sectionShortcutKey("schedule"),
               },
             )}
             {navLink(
               { kind: "plans", archived: false },
-              "Plans",
+              "Projects",
               { shape: "square" },
               {
-                active: view.kind === "plans" && !view.archived,
-                shortcut: "3",
+                active: area === "projects",
+                shortcut: sectionShortcutKey("projects"),
                 count: activePlans.length,
+                countLabel: "active",
               },
             )}
             <div className="rail-plans">
@@ -919,23 +1091,18 @@ export default function App() {
                 <Glyph>+</Glyph> New plan
               </button>
             </div>
+            <p className="rail-group" aria-hidden="true">
+              MORE
+            </p>
             {navLink(
-              { kind: "plans", archived: true },
-              "Archived",
-              { shape: "circle" },
+              { kind: "inbox" },
+              "Capture inbox",
+              { shape: "rhombus", dashed: true },
               {
-                active: view.kind === "plans" && view.archived,
-                count: archivedCount,
-              },
-            )}
-            {navLink(
-              { kind: "people" },
-              "People",
-              { shape: "ring", size: 7 },
-              {
-                active: view.kind === "people",
-                shortcut: "4",
-                count: people.length,
+                active: view.kind === "inbox",
+                shortcut: sectionShortcutKey("inbox"),
+                count: inbox.length,
+                countLabel: "captured",
               },
             )}
             {navLink(
@@ -944,15 +1111,18 @@ export default function App() {
               { shape: "square", dashed: true },
               {
                 active: view.kind === "calendars",
-                shortcut: "6",
+                shortcut: sectionShortcutKey("calendars"),
                 count: calendars.length,
               },
             )}
             {navLink(
               { kind: "knowledge" },
               "What it knows",
-              { shape: "rhombus", dashed: true },
-              { active: view.kind === "knowledge", shortcut: "7" },
+              { shape: "circle", dashed: true },
+              {
+                active: view.kind === "knowledge",
+                shortcut: sectionShortcutKey("knowledge"),
+              },
             )}
             <button
               className="rail-link"
@@ -979,6 +1149,28 @@ export default function App() {
         </aside>
 
         <section className="workspace">
+          {view.kind === "assistant" && (
+            <AssistantView
+              headingRef={assistantHeading}
+              context={assistantContext}
+              conversation={plannerCard(undefined, {
+                kicker: "LOCAL ASSISTANT",
+                title: "Say it messily.",
+              })}
+              attention={assistantAttention}
+              pendingReview={pendingReview}
+              inboxCount={inbox.length}
+              onAttention={followAttention}
+              onOpenSchedule={() => navigate({ kind: scheduleView })}
+              onOpenProjects={() =>
+                navigate({ kind: "plans", archived: false })
+              }
+              onOpenInbox={() => navigate({ kind: "inbox" })}
+              onBackToToday={() => setDay(today)}
+            />
+          )}
+          {(view.kind === "today" || view.kind === "week") && scheduleTabs}
+          {(view.kind === "plans" || view.kind === "people") && projectTabs}
           {view.kind === "inbox" && (
             <InboxView
               items={inbox}
@@ -1538,7 +1730,24 @@ export default function App() {
                 </section>
 
                 <aside className="ai-column">
-                  {plannerCard()}
+                  <section
+                    className="assistant-card assistant-nudge"
+                    aria-label="Assistant"
+                  >
+                    <p className="side-kicker">ASSISTANT</p>
+                    <p>
+                      {pendingReview
+                        ? `A proposal is waiting for your approval: ${pendingReview.summary}`
+                        : "Ask the local assistant to plan or change this day. It proposes; you decide."}
+                    </p>
+                    <button
+                      className="primary-button small"
+                      onClick={() => navigate({ kind: "assistant" })}
+                    >
+                      <Mark size={6} filled />
+                      {pendingReview ? "Review proposal" : "Ask the assistant"}
+                    </button>
+                  </section>
                   <CapacityCard
                     capacity={dayCapacity}
                     isToday={day === today}
@@ -1688,6 +1897,39 @@ export default function App() {
         )}
       </main>
     </OpenTasksContext.Provider>
+  );
+}
+
+/** The few places inside one main area, such as Today and Week inside Schedule. */
+function SectionTabs({
+  label,
+  tabs,
+}: {
+  label: string;
+  tabs: {
+    label: string;
+    active: boolean;
+    onSelect: () => void;
+    count?: number;
+  }[];
+}) {
+  return (
+    <nav className="section-tabs" aria-label={label}>
+      <span className="section-tabs-area" aria-hidden="true">
+        {label}
+      </span>
+      {tabs.map((tab) => (
+        <button
+          key={tab.label}
+          className={tab.active ? "active" : ""}
+          aria-current={tab.active ? "page" : undefined}
+          onClick={tab.onSelect}
+        >
+          {tab.label}
+          {tab.count ? <small>{tab.count}</small> : null}
+        </button>
+      ))}
+    </nav>
   );
 }
 
