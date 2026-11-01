@@ -104,9 +104,13 @@ As built by C (see `contracts/tools.v1.json` for the exact shapes):
 
 ### 2. Proposal drafts (E produces; Rust validates)
 
-The agent never writes. A draft is one of the operations the existing planner can already propose
-(`src-tauri/src/agent/draft.rs`, `db/proposals.rs`): create/update task, schedule task, change status, create
-milestone, create plan, create event, create task block. Shape:
+The agent never writes. A draft is exactly one variant of the existing `MutationOperation` enum in
+`src-tauri/src/model.rs` (the same operations the A0 planner proposes), with `op` as the snake_case variant name:
+`create_event`, `update_event`, `delete_event`, `reschedule_event`, `set_event_plan`, `create_plan`,
+`update_plan`, `create_milestone`, `update_milestone`, `delete_milestone`, `create_task`, `update_task`,
+`schedule_task`, `set_task_plan`, `delete_task`, `create_workstream`, `set_task_workstream`. Changing a task's
+status is `update_task` with `status`. No new operation types are added in waves 1–2 (time blocks, for example,
+stay manual-only); a later piece may propose one with its own Rust validation and tests. Shape:
 
 ```json
 { "op": "update_task", "target": { "id": "…", "revision": 7 }, "payload": { … }, "evidence": ["toolCallId", …] }
