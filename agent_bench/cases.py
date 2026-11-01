@@ -35,7 +35,7 @@ def case_problems(case: dict, path: Path | None = None) -> list[str]:
     problems = validate(case, schema)
     if problems:
         return problems
-    tools = load_tool_catalog()["tools"]
+    tools = load_tool_catalog()
     if path is not None:
         if path.stem != case["case_id"]:
             problems.append(f"file name {path.name} does not match case_id {case['case_id']}")
