@@ -209,3 +209,36 @@ def test_heldout_needs_confirmation(tmp_path, capsys):
 def test_config_names_the_frozen_model(name):
     assert experiment.CONFIG["model"]["name"] == "qwen3:8b"
     assert set(experiment.CONFIG["scoring"]["processChecks"]) == {"required_tools", "tool_order", "required_calls", "call_limits"}
+
+
+def _scored_dirs(tmp_path, a0_output: dict, a1_cases: list[dict]):
+    cases = list(CASES.values())
+    agent = A0ReplayAgent(a0_output, cases)
+    chosen = [c for c in cases if c["case_id"] in agent.case_ids()]
+    run_suite(chosen, agent, out_dir=tmp_path / "A0")
+    summary_path = tmp_path / "A0" / "summary.json"
+    data = json.loads(summary_path.read_text())
+    data["meta"]["a0"] = {k: v for k, v in a0_output.items() if k != "runs"}
+    summary_path.write_text(json.dumps(data))
+    rows = [run_case(case, A1BenchAgent(), ScriptedModel(case)) for case in a1_cases]
+    (tmp_path / "A1").mkdir()
+    (tmp_path / "A1" / "results.jsonl").write_text("\n".join(json.dumps({k: v for k, v in r.items() if k not in ("trace", "agentTrace")}) for r in rows))
+    (tmp_path / "A1" / "summary.json").write_text(json.dumps({"meta": {"repeats": 1, "model": {"model": "reference", "digest": None}}}))
+    return experiment.compare(tmp_path / "A0", tmp_path / "A1")
+
+
+def test_a0_is_held_to_the_wall_time_budget(tmp_path):
+    output = _a0_output(list(CASES.values()))
+    slow = next(r for r in output["runs"] if r["caseId"] == "ms-event-homepage-copy")
+    slow["latencyMs"] = 999_999
+    result = _scored_dirs(tmp_path, output, [CASES["ms-event-homepage-copy"]])
+    entry = next(e for e in result["cases"] if e["caseId"] == "ms-event-homepage-copy")
+    assert entry["A0"]["outcomePasses"] == 0 and "wall_time" in entry["A0"]["failedChecks"]
+
+
+def test_overlap_only_counts_cases_both_ran(tmp_path):
+    dev = [c for c in CASES.values() if c["split"] == "dev"]
+    result = _scored_dirs(tmp_path, _a0_output(list(CASES.values())), dev)
+    heldout_a0_only = [e for e in result["cases"] if e["split"] == "heldout"]
+    assert heldout_a0_only and all(not e["a0Applicable"] and e["verdict"].startswith("A0 only tested") for e in heldout_a0_only)
+    assert "heldout" not in result["bySplit"] or result["bySplit"]["heldout"]["overlap"]["cases"] == 0
