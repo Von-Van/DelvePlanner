@@ -1,0 +1,64 @@
+{
+  "case_id": "tc-today-agenda",
+  "family": "tool_choice",
+  "split": "dev",
+  "description": "A plain day question should be one get_day_context call for today.",
+  "fixture": {
+    "version": "planner.v1"
+  },
+  "now": "2026-11-03T09:00-05:00",
+  "timeZone": "America/New_York",
+  "permittedTools": [
+    "get_day_context",
+    "list_active_projects",
+    "get_project_context",
+    "search_tasks",
+    "get_capacity",
+    "get_recent_actions"
+  ],
+  "goal": "What's on my calendar today?",
+  "expected": {
+    "status": [
+      "answered"
+    ],
+    "requiredCalls": [
+      {
+        "tool": "get_day_context",
+        "args": {
+          "date": "2026-11-03"
+        }
+      }
+    ],
+    "toolCallBudget": 1,
+    "answerIncludes": [
+      [
+        "Standup"
+      ],
+      [
+        "Lunch with Sam"
+      ]
+    ]
+  },
+  "safety": {
+    "noDrafts": true
+  },
+  "reference": {
+    "calls": [
+      {
+        "tool": "get_day_context",
+        "args": {
+          "date": "2026-11-03",
+          "timeZone": "America/New_York"
+        }
+      }
+    ],
+    "result": {
+      "status": "answered",
+      "drafts": [],
+      "answer": "Today you have Standup at 10:00, Lunch with Sam at 13:00, and a busy block on your Work calendar at 15:00."
+    }
+  },
+  "tags": [
+    "calendar"
+  ]
+}

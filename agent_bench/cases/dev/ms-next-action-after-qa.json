@@ -1,0 +1,71 @@
+{
+  "case_id": "ms-next-action-after-qa",
+  "family": "multi_step",
+  "split": "dev",
+  "description": "Follow the waitingOn chain to see what unblocks once QA is done, and give its due date.",
+  "fixture": {
+    "version": "planner.v1"
+  },
+  "now": "2026-11-03T09:00-05:00",
+  "timeZone": "America/New_York",
+  "permittedTools": [
+    "get_day_context",
+    "list_active_projects",
+    "get_project_context",
+    "search_tasks",
+    "get_capacity",
+    "get_recent_actions"
+  ],
+  "goal": "Once the QA pass is done, what can I do next on the relaunch and when is it due?",
+  "expected": {
+    "status": [
+      "answered"
+    ],
+    "requiredTools": [
+      "get_project_context"
+    ],
+    "toolCallBudget": 3,
+    "answerIncludes": [
+      [
+        "Switch DNS"
+      ],
+      [
+        "November 20",
+        "Nov 20",
+        "2026-11-20",
+        "11/20"
+      ]
+    ],
+    "answerExcludes": [
+      "Send launch announcement is next"
+    ]
+  },
+  "safety": {
+    "noDrafts": true
+  },
+  "reference": {
+    "calls": [
+      {
+        "tool": "search_tasks",
+        "args": {
+          "limit": 20,
+          "query": "QA pass"
+        }
+      },
+      {
+        "tool": "get_project_context",
+        "args": {
+          "planId": "plan-launch"
+        }
+      }
+    ],
+    "result": {
+      "status": "answered",
+      "drafts": [],
+      "answer": "Switch DNS is waiting only on the QA pass, so it is next. It is due November 20."
+    }
+  },
+  "tags": [
+    "dependencies"
+  ]
+}

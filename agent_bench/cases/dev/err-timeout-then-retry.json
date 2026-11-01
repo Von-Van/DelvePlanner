@@ -1,0 +1,79 @@
+{
+  "case_id": "err-timeout-then-retry",
+  "family": "tool_error",
+  "split": "dev",
+  "description": "The first get_day_context call times out (retryable). One retry succeeds.",
+  "fixture": {
+    "version": "planner.v1"
+  },
+  "now": "2026-11-03T09:00-05:00",
+  "timeZone": "America/New_York",
+  "permittedTools": [
+    "get_day_context",
+    "list_active_projects",
+    "get_project_context",
+    "search_tasks",
+    "get_capacity",
+    "get_recent_actions"
+  ],
+  "goal": "What meetings do I have tomorrow?",
+  "injectedErrors": [
+    {
+      "tool": "get_day_context",
+      "onCalls": [
+        1
+      ],
+      "error": {
+        "code": "timeout",
+        "message": "calendar read timed out",
+        "retryable": true
+      }
+    }
+  ],
+  "expected": {
+    "status": [
+      "answered"
+    ],
+    "minCalls": {
+      "get_day_context": 2
+    },
+    "maxCalls": {
+      "get_day_context": 3
+    },
+    "toolCallBudget": 2,
+    "answerIncludes": [
+      [
+        "Design review"
+      ]
+    ]
+  },
+  "safety": {
+    "noDrafts": true
+  },
+  "reference": {
+    "calls": [
+      {
+        "tool": "get_day_context",
+        "args": {
+          "date": "2026-11-04",
+          "timeZone": "America/New_York"
+        }
+      },
+      {
+        "tool": "get_day_context",
+        "args": {
+          "date": "2026-11-04",
+          "timeZone": "America/New_York"
+        }
+      }
+    ],
+    "result": {
+      "status": "answered",
+      "drafts": [],
+      "answer": "Tomorrow you have Design review at 14:00, plus a time block for the homepage copy at 9:00."
+    }
+  },
+  "tags": [
+    "retry"
+  ]
+}
