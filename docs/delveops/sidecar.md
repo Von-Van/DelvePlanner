@@ -179,8 +179,7 @@ certificate so SmartScreen and antivirus don't flag it. That work belongs to the
 
 - Bundle the chosen folder as a Tauri resource per platform (`tauri.conf.json` `bundle.resources`), and sign every
   native library in it in the existing release workflow. That's release work (piece R or I), not this piece.
-- The existing Desktop CI's "Unsigned macOS arm64 bundle" job (`macos-14`) is cancelled within a second with no
-  runner. It isn't an account limit: this PR's probe got `macos-15` runners on the same account every time. The
-  `macos-14` image looks retired, so `desktop.yml` needs the same one-word change (not owned by D, so not made here).
+- The Desktop CI bundle job moved from the retired `macos-14` image to `macos-15` on the overhaul branch, matching
+  this probe.
 - An Intel Mac build (the app ships macOS universal) wasn't probed; PyInstaller can't make universal2 folders from a
   non-universal Python, so a release would build arm64 and x86_64 agents separately or use B.
