@@ -51,7 +51,8 @@ def _submodule(name: str) -> Any:
 
 
 class _ToolBridge:
-    """The benchmark's tool client (``{"ok", "data" | "error"}``) behind the agent's ``ToolClient``."""
+    """The benchmark's tool client (``{"ok", "result" | "error"}``, the tools.v1 envelope) behind the
+    agent's ``ToolClient``."""
 
     def __init__(self, bench_tools: Any) -> None:
         self.bench_tools = bench_tools
@@ -61,7 +62,7 @@ class _ToolBridge:
     def call(self, name: str, arguments: dict[str, Any]) -> Any:
         reply = self.bench_tools.call(name, arguments)
         if reply.get("ok"):
-            return self._ToolResult(data=reply.get("data"))
+            return self._ToolResult(data=reply["result"] if "result" in reply else reply.get("data"))
         return self._ToolResult(error=self._ToolError.from_dict(reply.get("error") or {}))
 
 
@@ -121,11 +122,15 @@ def a1_model(port: int = 11434, model: str = "qwen3:8b", options: dict[str, Any]
 
 
 def starting_state(case: dict) -> dict:
-    """The planner state a case starts from: the fixture plus the case's overrides."""
+    """The planner state a case starts from: the fixture plus the case's overrides.
+
+    ``bundle`` is a Delve Planner export bundle, which ``a0_bench`` imports as is, so A0 sees the
+    benchmark's own ids and revisions.
+    """
     state = PlannerState(load_fixture(case["fixture"]["version"]))
     for change in case["fixture"].get("overrides", []):
         state.apply(change)
-    return state.data
+    return {"bundle": state.bundle, "externalBusy": state.external_busy, "workingHours": state.working_hours}
 
 
 def a0_applicable(case: dict) -> bool:
@@ -174,19 +179,26 @@ TARGET_FIELDS = {
 _ENTITIES = ("events", "plans", "milestones", "tasks", "workstreams", "taskBlocks")
 
 
+def known_records(state: dict) -> dict[str, int | None]:
+    """Record id -> revision for every record in a starting state."""
+    bundle = state["bundle"]
+    return {row["id"]: row.get("revision") for entity in _ENTITIES for row in bundle.get(entity, [])}
+
+
 def _revision_of(state: dict, record_id: str) -> int | None:
     for entity in _ENTITIES:
-        for row in state.get(entity, []):
+        for row in state["bundle"].get(entity, []):
             if row.get("id") == record_id:
                 return row.get("revision")
     return None
 
 
 def operation_to_draft(operation: dict, state: dict) -> dict:
-    """One A0 ``MutationOperation`` (already in fixture ids) as an agent_bench draft.
+    """One A0 ``MutationOperation`` as an agent_bench draft.
 
-    The database A0 ran against numbered revisions from 1; the revision a draft carries is the one the
-    record had in the case's starting state, which is what A0's snapshot showed it.
+    The target's revision is the one the record had in the case's starting state, which is what A0's
+    snapshot showed it (the operation's own ``expectedRevision`` is the same number, since the database
+    was imported from that state).
     """
     payload = copy.deepcopy(operation)
     op = payload.pop("type", None)
