@@ -1,6 +1,7 @@
 mod agent;
 mod availability;
 mod capture;
+mod conversation;
 mod horizons;
 mod planning;
 mod profile;
@@ -24,6 +25,7 @@ use chrono::{
     DateTime, Duration as ChronoDuration, LocalResult, NaiveDate, NaiveDateTime, NaiveTime, Offset,
     TimeZone, Utc,
 };
+use conversation::ensure_conversation_schema;
 use planning::{
     ensure_plan_exists, milestone_plan_mismatch, validate_milestone_shape, validate_plan_shape,
     validate_task_shape, TaskShape,
@@ -45,17 +47,21 @@ use uuid::Uuid;
 
 pub use agent::{
     ActionDraft, ActionOutcome, ActionResult, AgentRun, AgentRunDetail, AgentRunFilter, AgentStep,
-    DraftDecision, DraftState, DraftTarget, ExecutionState, ExperimentRun, ExperimentStatus,
-    NewActionDraft, NewAgentRun, NewExperimentRun, RecentAgentAction, RunOutcome, RunSource,
-    RunStatus, RunUsage, StepKind,
+    DecidedActionSeed, DraftDecision, DraftState, DraftTarget, ExecutionState, ExperimentRun,
+    ExperimentStatus, NewActionDraft, NewAgentRun, NewExperimentRun, RecentAgentAction, RunOutcome,
+    RunSource, RunStatus, RunUsage, StepKind,
 };
 pub use availability::CapacityFacts;
+pub use conversation::{
+    AgentMessage, AgentThread, AgentThreadDetail, ConversationContext, ConversationTurn,
+    MessageRole, MessageRunStatus, NewAgentMessage, DEFAULT_THREAD_TITLE,
+};
 pub use proposals::{
     accepted_operations, edited_proposal, mentions_inbox, validate_model_response, CandidateRequest,
 };
 pub(crate) use proposals::{fold, planning_tokens, title_matches};
 
-pub const CURRENT_SCHEMA_VERSION: u32 = 9;
+pub const CURRENT_SCHEMA_VERSION: u32 = 10;
 pub const EXPORT_FORMAT_VERSION: u32 = 7;
 const BACKUP_RETENTION: usize = 5;
 const REMINDER_DELIVERY_GRACE_MINUTES: i64 = 15;
@@ -1043,6 +1049,7 @@ fn migrate(connection: &Connection, from_version: u32) -> AppResult<()> {
         ensure_profile_schema(connection)?;
         ensure_task_details_schema(connection)?;
         ensure_agent_schema(connection)?;
+        ensure_conversation_schema(connection)?;
         connection.pragma_update(None, "user_version", CURRENT_SCHEMA_VERSION)?;
         Ok::<(), AppError>(())
     })();

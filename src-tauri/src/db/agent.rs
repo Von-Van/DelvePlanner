@@ -504,10 +504,32 @@ pub struct AgentRunFilter {
 pub struct RecentAgentAction {
     pub draft_id: String,
     pub run_id: String,
+    /// What the person asked for in the run that drafted this change.
+    pub request: String,
     pub op: String,
     pub target: Option<DraftTarget>,
+    /// The target's title as the planner has it now, if it still exists.
+    pub target_title: Option<String>,
+    pub payload: Value,
     pub state: DraftState,
     pub execution_state: Option<ExecutionState>,
+    pub error: Option<String>,
+    pub at: String,
+}
+
+/// A change the person already decided on, as `get_recent_actions` reports it, for seeding a
+/// fixture database (benchmarks and the tool server). Not used by the app itself.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DecidedActionSeed {
+    pub op: String,
+    /// `applied`, `failed`, `stale`, `approved` or `rejected`.
+    pub outcome: String,
+    pub request: String,
+    pub target_id: Option<String>,
+    #[serde(default)]
+    pub change: Value,
+    #[serde(default)]
     pub error: Option<String>,
     pub at: String,
 }
@@ -897,11 +919,12 @@ impl PlannerDatabase {
         Ok(())
     }
 
-    /// Forgets all agent history: every run, trace, draft, result and experiment.
+    /// Forgets all agent history: every conversation, run, trace, draft, result and experiment.
     pub fn clear_agent_history(&mut self) -> AppResult<()> {
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        transaction.execute("DELETE FROM agent_thread", [])?;
         transaction.execute("DELETE FROM agent_run", [])?;
         transaction.execute("DELETE FROM experiment_run", [])?;
         transaction.commit()?;
@@ -1022,11 +1045,92 @@ impl PlannerDatabase {
 
     /// Recently decided drafts from live assistant runs and what came of them, newest first.
     /// Benchmark runs are left out: they never touch the user's planner.
+    /// Writes already-decided drafts straight into history, each under its own finished
+    /// assistant run, with the given times. For fixtures only: real drafts are recorded during a
+    /// run and decided through [`Self::decide_action_draft`].
+    pub fn seed_decided_actions(&mut self, actions: &[DecidedActionSeed]) -> AppResult<()> {
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        for action in actions {
+            let op = action.op.trim();
+            if !DRAFT_OPERATIONS.contains(&op) {
+                return Err(invalid(&format!("'{op}' is not a planner operation.")));
+            }
+            let (state, execution) = match action.outcome.as_str() {
+                "applied" => ("approved", Some("applied")),
+                "failed" => ("approved", Some("failed")),
+                "stale" => ("stale", Some("stale")),
+                "approved" => ("approved", None),
+                "rejected" => ("rejected", None),
+                other => return Err(invalid(&format!("Can't seed a '{other}' outcome."))),
+            };
+            let at = timestamp(&action.at)?;
+            let run_id = Uuid::new_v4().to_string();
+            transaction.execute(
+                "INSERT INTO agent_run (id, source, goal, architecture_id, model_name, trigger,
+                     status, started_at, finished_at)
+                 VALUES (?1, 'assistant', ?2, 'fixture', 'fixture', 'fixture', 'drafted', ?3, ?3)",
+                params![
+                    run_id,
+                    bounded(action.request.trim(), "A request", MAX_GOAL_CHARS)?,
+                    at
+                ],
+            )?;
+            let target = action
+                .target_id
+                .clone()
+                .map(|id| DraftTarget { id, revision: 1 });
+            let payload = object_or_empty(action.change.clone());
+            let draft_id = Uuid::new_v4().to_string();
+            transaction.execute(
+                "INSERT INTO agent_action_draft (id, run_id, op, target_id, target_revision,
+                     payload_json, payload_digest, state, created_at, expires_at, decided_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9, ?9)",
+                params![
+                    draft_id,
+                    run_id,
+                    op,
+                    target.as_ref().map(|target| target.id.as_str()),
+                    target.as_ref().map(|target| target.revision),
+                    json_text(&payload, MAX_JSON_BYTES, "A draft payload")?,
+                    payload_digest(op, target.as_ref(), &payload),
+                    state,
+                    at,
+                ],
+            )?;
+            if let Some(execution) = execution {
+                transaction.execute(
+                    "INSERT INTO agent_action_result (id, draft_id, execution_state, error,
+                         recorded_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                    params![
+                        Uuid::new_v4().to_string(),
+                        draft_id,
+                        execution,
+                        action.error,
+                        at
+                    ],
+                )?;
+            }
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
     pub fn recent_agent_actions(&self, limit: u32) -> AppResult<Vec<RecentAgentAction>> {
         let limit = list_limit(Some(limit), MAX_RECENT_AGENT_ACTIONS)?;
         let mut statement = self.connection.prepare(
             "SELECT d.id, d.run_id, d.op, d.target_id, d.target_revision, d.state,
-                    x.execution_state, x.error, COALESCE(x.recorded_at, d.decided_at) AS at
+                    x.execution_state, x.error, COALESCE(x.recorded_at, d.decided_at) AS at,
+                    r.goal, d.payload_json,
+                    COALESCE(
+                        (SELECT title FROM schedule_events WHERE id = d.target_id),
+                        (SELECT title FROM tasks WHERE id = d.target_id),
+                        (SELECT title FROM plans WHERE id = d.target_id),
+                        (SELECT title FROM milestones WHERE id = d.target_id),
+                        (SELECT name FROM workstreams WHERE id = d.target_id)
+                    )
              FROM agent_action_draft d
              JOIN agent_run r ON r.id = d.run_id
              LEFT JOIN agent_action_result x ON x.draft_id = d.id
@@ -1039,8 +1143,11 @@ impl PlannerDatabase {
                 Ok(RecentAgentAction {
                     draft_id: row.get(0)?,
                     run_id: row.get(1)?,
+                    request: row.get(9)?,
                     op: row.get(2)?,
                     target: target_from(row.get(3)?, row.get(4)?),
+                    target_title: row.get(11)?,
+                    payload: parse_json(row.get(10)?)?,
                     state: DraftState::parse(&row.get::<_, String>(5)?)?,
                     execution_state: execution
                         .as_deref()
@@ -1844,7 +1951,8 @@ mod tests {
         let connection = Connection::open(&path).unwrap();
         connection
             .execute_batch(
-                "DROP TABLE agent_action_result; DROP TABLE agent_action_draft;
+                "DROP TABLE agent_message; DROP TABLE agent_thread;
+                 DROP TABLE agent_action_result; DROP TABLE agent_action_draft;
                  DROP TABLE agent_step; DROP TABLE agent_run; DROP TABLE experiment_run;
                  PRAGMA user_version = 8;",
             )
@@ -1852,7 +1960,10 @@ mod tests {
         drop(connection);
 
         let mut migrated = PlannerDatabase::open(&path).unwrap();
-        assert_eq!(migrated.schema_version().unwrap(), 9);
+        assert_eq!(
+            migrated.schema_version().unwrap(),
+            crate::db::CURRENT_SCHEMA_VERSION
+        );
         assert!(migrated.list_backups().unwrap()[0]
             .name
             .contains("migration"));

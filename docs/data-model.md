@@ -6,7 +6,7 @@ Delve Planner keeps everything on the device. Planner records live in one SQLite
 
 | Store                                               | Location                                    | Holds                                                                                                                               | Exported | Backed up |
 | --------------------------------------------------- | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | -------- | --------- |
-| `dayplan.sqlite3`                                   | App data directory                          | Plans, workstreams, milestones, tasks, events, people, inbox, time blocks, working hours, profile                                   | Partly¹  | Yes       |
+| `dayplan.sqlite3`                                   | App data directory                          | Plans, workstreams, milestones, tasks, events, people, inbox, time blocks, working hours, profile, assistant history                | Partly¹  | Yes       |
 | `backups/dayplan-v<schema>-<time>-<reason>.sqlite3` | App data directory                          | Copies of the planner database taken before migrations, imports, and restores (newest five kept)                                    | —        | —         |
 | `calendars.sqlite3`                                 | App data directory                          | Subscribed and connected calendars, accounts, cached occurrences, last fetched iCalendar document                                   | No       | No        |
 | `ai-models/`                                        | App data directory                          | Models Delve Planner downloaded itself                                                                                              | No       | No        |
@@ -16,7 +16,7 @@ Delve Planner keeps everything on the device. Planner records live in one SQLite
 | `dayplan*.log`                                      | App log directory                           | Redacted event codes such as `app_started` (see [privacy](privacy.md#logs-and-diagnostics))                                         | No       | No        |
 | `localStorage`                                      | The app's WebView storage                   | UI conveniences only: onboarding done, dismissed planning prompts, kept time blocks, week start, and the Today and Week plan filter | No       | No        |
 
-¹ Exports include people, plans, workstreams, milestones, events, tasks, inbox items, and time blocks. Working hours, the planning profile, and the carry-forward history are device preferences and are left out.
+¹ Exports include people, plans, workstreams, milestones, events, tasks, inbox items, and time blocks. Working hours, the planning profile, and the carry-forward history are device preferences and are left out, and so is [agent storage](#agent-storage).
 
 The app data directory is Tauri's `app_data_dir` for the bundle identifier `com.vonvan.dayplan.desktop`: `~/Library/Application Support/com.vonvan.dayplan.desktop/` on macOS and `%APPDATA%\com.vonvan.dayplan.desktop\` on Windows. The identifier and the `dayplan` file names above date from before the app was renamed from DayPlan, and they stay as they are so existing installs keep their data. The planner database runs in WAL mode with foreign keys enforced.
 
@@ -242,6 +242,36 @@ A **task** is work that needs doing, kept separate from a **schedule event** (a 
 - The **quick-capture shortcut** and, in the WebView's storage, the **week start** and the Today and Week **plan filter** are kept per device and never exported.
 - Observations (**What it noticed** on What Delve Planner knows) are computed from these records each time they are requested and are never stored. None is shown until at least five records support it. Blocked time counts on the local day it started, in the zone it was made in.
 
+## Agent storage
+
+The assistant's own records sit in the planner database next to planner data, but they are not planner data: exports leave them out, imports leave them alone, and every record can be deleted. The model never writes any of them; the app records them as the assistant works. Tables come from [`db/agent.rs`](../src-tauri/src/db/agent.rs) (schema 9) and [`db/conversation.rs`](../src-tauri/src/db/conversation.rs) (schema 10).
+
+```mermaid
+erDiagram
+  EXPERIMENT_RUN ||--o{ AGENT_RUN : "benchmark cases"
+  AGENT_RUN ||--o{ AGENT_STEP : "trace"
+  AGENT_RUN ||--o{ AGENT_ACTION_DRAFT : "proposes"
+  AGENT_ACTION_DRAFT ||--o| AGENT_ACTION_RESULT : "what happened"
+  AGENT_THREAD ||--o{ AGENT_MESSAGE : "in order"
+  AGENT_MESSAGE }o--o| AGENT_RUN : "answered by"
+```
+
+| Table                 | One row is                                                                                                                                                                                           |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `experiment_run`      | One benchmark or regression run: benchmark version, config hash, model and digest, runtime, hardware, split, and where the full result files are                                                     |
+| `agent_run`           | One attempt at one request, either live in the Assistant or one benchmark case: model, budget, usage, final status, and for benchmark cases whether it passed or broke a safety rule                 |
+| `agent_step`          | One step of a run's trace (`seq`, `kind`, `at`, `durationMs`, a short summary, and capped `data`), in the shared trace shape                                                                         |
+| `agent_action_draft`  | A change the assistant proposed: exactly one planner operation with its target revision and a digest of the payload. It is `pending` until the person approves, rejects, or it expires or goes stale |
+| `agent_action_result` | What happened when an approved draft was carried out by the planner's own code: `applied`, `failed`, or `stale`                                                                                      |
+| `agent_thread`        | One conversation in the Assistant: its title (taken from the first message unless the person renames it) and when it was last used                                                                   |
+| `agent_message`       | One message in a conversation, from the person or the assistant, numbered in order. An assistant message can point at the run that produced it and says how that run ended                           |
+
+- **Retention.** The newest 500 live runs are kept; older finished runs are forgotten. A message whose run was forgotten keeps its text and loses only the link. Benchmark runs are kept until their experiment is deleted. Conversations are kept until the person deletes them.
+- **Deleting.** Deleting a conversation deletes its messages and the runs it started, with their traces, drafts, and results, so nothing typed in it is left behind. **Clear agent history** removes every conversation, run, and experiment.
+- **What the assistant sees of a conversation.** Never the whole thing. Each request carries the most recent turns (at most 20) and a short digest of older ones, built from the stored messages without a model call. A turn that drafted changes notes whether the person approved them and they were applied, so a follow-up such as "move it 30 minutes later" starts from the approved time.
+- **History as a tool.** `get_recent_actions` reads decided drafts, newest first: what was asked, the operation, the target's id and current title, the changed fields, and the outcome. It leaves out record revisions (a new change has to read the record again) and descriptions and notes unless the privacy setting allows them.
+- **Sizes.** Goals are capped at 2,000 characters, messages at 8,000, step data at 16 KB, and payloads at 64 KB, so full prompts and model responses don't end up stored by accident.
+
 ## Consistency rules
 
 - **Revisions.** Every mutable record carries a `revision`. Updates and deletes name the revision they were based on and fail with a conflict if the record has changed since, so a stale manual edit or AI proposal can't overwrite newer data. Background calendar bookkeeping never bumps a calendar's revision.
@@ -251,7 +281,7 @@ A **task** is work that needs doing, kept separate from a **schedule event** (a 
 
 ## Schema versions and migrations
 
-The planner database schema is version 8 (`CURRENT_SCHEMA_VERSION` in [`db.rs`](../src-tauri/src/db.rs), stored in SQLite's `user_version`). Opening an older database checkpoints it, copies it to `backups/`, and migrates it in one transaction; a newer, unknown version is refused rather than guessed at. Each step is covered by a test that migrates a database from the previous shape.
+The planner database schema is version 10 (`CURRENT_SCHEMA_VERSION` in [`db.rs`](../src-tauri/src/db.rs), stored in SQLite's `user_version`). Opening an older database checkpoints it, copies it to `backups/`, and migrates it in one transaction; a newer, unknown version is refused rather than guessed at. Each step is covered by a test that migrates a database from the previous shape.
 
 | Schema | Adds                                                                                                                                                           |
 | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -263,6 +293,8 @@ The planner database schema is version 8 (`CURRENT_SCHEMA_VERSION` in [`db.rs`](
 | 6      | `task_blocks` and the `working_hours` record                                                                                                                   |
 | 7      | The `planning_profile` record and the empty `task_moves` history                                                                                               |
 | 8      | Each task's `recurrence` and `checklist`, the `task_dependencies` table, and each plan's `links`                                                               |
+| 9      | [Agent storage](#agent-storage): `experiment_run`, `agent_run`, `agent_step`, `agent_action_draft`, and `agent_action_result`                                  |
+| 10     | Assistant conversations: `agent_thread` and `agent_message`                                                                                                    |
 
 The calendar cache has its own, independent version (`STORE_VERSION` in [`calendar/store.rs`](../src-tauri/src/calendar/store.rs)).
 
