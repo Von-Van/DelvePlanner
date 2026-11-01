@@ -3,6 +3,7 @@ pub mod calendar;
 pub mod capacity;
 pub mod db;
 pub mod error;
+pub mod evaluation;
 pub mod model;
 pub mod recurrence;
 pub mod runtime;
@@ -1561,6 +1562,9 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            evaluation::list_evaluation_runs,
+            evaluation::get_evaluation_run,
+            evaluation::get_evaluation_trace,
             list_agenda,
             list_week,
             database_status,

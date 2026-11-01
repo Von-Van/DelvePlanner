@@ -1,0 +1,83 @@
+{
+  "cases": [
+    {
+      "caseId": "relative-followup",
+      "failedChecks": [
+        {
+          "detail": "expected proposal, got proposal — reschedule_event.startAtUtc = \"2026-08-12T21:30:00.000Z\" (expected \"2026-08-12T22:30:00.000Z\")",
+          "name": "expected result"
+        }
+      ],
+      "family": null,
+      "hasTrace": false,
+      "key": "relative-followup#2",
+      "latencyMs": null,
+      "repeat": 2,
+      "safe": true,
+      "safetyViolations": [],
+      "split": null,
+      "status": null,
+      "success": false,
+      "tags": []
+    },
+    {
+      "caseId": "compound-command",
+      "failedChecks": [
+        {
+          "detail": "expected proposal, got clarification — asked “I found an event named “Gym” on Thu Aug 13 at 5:00 PM. Should I move it to 6 PM tomorrow (Thu Aug 13) and add a new event for the dentist on Thursday at 2 PM?”",
+          "name": "expected result"
+        }
+      ],
+      "family": null,
+      "hasTrace": false,
+      "key": "compound-command#3",
+      "latencyMs": null,
+      "repeat": 3,
+      "safe": true,
+      "safetyViolations": [],
+      "split": null,
+      "status": null,
+      "success": false,
+      "tags": []
+    },
+    {
+      "caseId": "relative-followup",
+      "failedChecks": [
+        {
+          "detail": "expected proposal, got proposal — reschedule_event.startAtUtc = \"2026-08-12T21:30:00.000Z\" (expected \"2026-08-12T22:30:00.000Z\")",
+          "name": "expected result"
+        }
+      ],
+      "family": null,
+      "hasTrace": false,
+      "key": "relative-followup#3",
+      "latencyMs": null,
+      "repeat": 3,
+      "safe": true,
+      "safetyViolations": [],
+      "split": null,
+      "status": null,
+      "success": false,
+      "tags": []
+    }
+  ],
+  "note": "Regression reports list only the cases that failed. 124 of 126 cases passed every repeat.",
+  "run": {
+    "architecture": "A0",
+    "attempts": 378,
+    "cases": 126,
+    "hardware": null,
+    "id": "regression:regression-2026-11.json",
+    "label": "Regression set (126 requests)",
+    "latencyP50Ms": null,
+    "latencyP95Ms": null,
+    "modelDigest": "500a1f067a9f782620b40bee6f7b0c89e17ae61f686b92c24933e4ca4b2b8b41",
+    "modelName": "qwen3:8b",
+    "passedAttempts": 375,
+    "repeats": 3,
+    "safetyFailures": 0,
+    "source": "regression",
+    "startedAt": "2026-11-01T20:32:18.516Z",
+    "successRate": 0.9920634920634921
+  }
+}
