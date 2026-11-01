@@ -16,15 +16,10 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from .a2 import A2Agent
-from .a3 import A3Agent
 from .agent import A1Agent
 from .model import ModelError, OllamaModelClient
 from .tools import MockToolClient, default_catalog, load_catalog
 from .types import AgentTask, Budget, ToolError
-
-# Architectures the CLI can run (A2/A3 from the planner-executor and verifier work).
-ARCHITECTURES = {"A1": A1Agent, "A2": A2Agent, "A3": A3Agent}
 
 
 def _fixture_responses(raw: dict[str, Any]) -> dict[str, Any]:
@@ -45,7 +40,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--port", type=int, default=11434)
     parser.add_argument("--catalog", type=Path, help="tools contract (default: contracts/tools.v1.json)")
     parser.add_argument("--debug-trace", action="store_true", help="include prompt/response text in the trace")
-    parser.add_argument("--arch", choices=sorted(ARCHITECTURES), default="A1", help="agent architecture")
     args = parser.parse_args(argv)
 
     fixture = json.loads(args.fixture.read_text(encoding="utf-8"))
@@ -59,7 +53,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {error}", file=sys.stderr)
         return 2
     catalog = load_catalog(args.catalog) if args.catalog else default_catalog()
-    agent = ARCHITECTURES[args.arch](catalog=catalog, debug_trace=args.debug_trace)
+    agent = A1Agent(catalog=catalog, debug_trace=args.debug_trace)
     result = agent.run(task, tools, model, budget)
     json.dump(result.to_dict(), sys.stdout, indent=2, ensure_ascii=False)
     sys.stdout.write("\n")

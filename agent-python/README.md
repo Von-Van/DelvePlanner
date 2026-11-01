@@ -17,9 +17,6 @@ Standard library only. No agent frameworks, no web server.
 | `delveops_agent/trace.py`   | Trace events in the shared shape (plan contract 5); text only in opt-in debug traces.                     |
 | `delveops_agent/prompts.py` | Versioned prompt (`a1-v2`) and the JSON step format the model must reply in.                              |
 | `delveops_agent/cli.py`     | Run A1 once against a fixture file and a local Ollama, print the result and trace.                        |
-| `delveops_agent/a2.py`      | A2 planner-executor: plan the reads, code runs them (one automatic retry), then finish.                   |
-| `delveops_agent/a3.py`      | A3: A1's loop with the draft verifier in front of the exit.                                               |
-| `delveops_agent/verify/`    | Draft verifier: full problem list, safe rewrites, time warnings, freshness re-reads.                      |
 | `delveops_agent/protocol/`  | Python end of the Rust ↔ Python link. Owned by piece D, not this package's code.                          |
 
 ## How A1 works
@@ -68,10 +65,7 @@ ruff check . && ruff format --check .
 
 # Try A1 by hand (needs Ollama running locally with the model pulled):
 python -m delveops_agent.cli examples/reschedule_overdue.json --model qwen3:8b --port 11434
-python -m delveops_agent.cli examples/reschedule_overdue.json --arch A3   # or A2
 ```
-
-A2 and A3 are compared with A1 in `docs/research/experiments/a2-a3-2026-11/`.
 
 ## Not yet
 
