@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from . import github_tools
 from .jsonschema_lite import validate
 from .trace import TraceRecorder
 
@@ -29,7 +30,9 @@ WRITE_PREFIXES = ("create", "update", "delete", "remove", "schedule", "apply", "
 
 
 def load_tool_catalog() -> dict:
-    return json.loads(TOOLS_PATH.read_text())
+    catalog = json.loads(TOOLS_PATH.read_text())
+    catalog["tools"].update(copy.deepcopy(github_tools.CATALOG))  # piece M: read-only GitHub context
+    return catalog
 
 
 def load_fixture(version: str) -> dict:
@@ -288,6 +291,21 @@ TOOL_IMPLS = {
 }
 
 
+def _github_tool(fn):
+    """Adapts a GitHub mock tool (piece M) to the (state, args) signature and this module's errors."""
+
+    def run(state: PlannerState, args: dict) -> dict:
+        try:
+            return fn(state.data, args)
+        except github_tools.GitHubToolError as err:
+            raise ToolError(err.code, err.message, err.retryable) from err
+
+    return run
+
+
+TOOL_IMPLS.update({name: _github_tool(fn) for name, fn in github_tools.TOOL_IMPLS.items()})
+
+
 def collect_records(value: Any, out: dict[str, int | None] | None = None) -> dict[str, int | None]:
     """Every ``{"id": ..., "revision": ...}`` found anywhere in a tool result."""
     out = {} if out is None else out
@@ -353,6 +371,7 @@ class MockToolClient:
         self.case = case
         self.catalog = load_tool_catalog()
         self.state = PlannerState(load_fixture(case["fixture"]["version"]))
+        self.state.data.update(github_tools.state_entries(github_tools.load_github_fixture()))
         for change in case["fixture"].get("overrides", []):
             self.state.apply(change)
         self.permitted = set(case["permittedTools"])
