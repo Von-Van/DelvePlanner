@@ -151,6 +151,29 @@ def test_target_without_a_seen_revision_is_rejected():
     assert "no revision was seen" in model.requests[2].messages[-1]["content"]
 
 
+def test_reread_refreshes_the_revision_a_draft_must_cite():
+    responses = {
+        "search_tasks": [
+            {"tasks": [{"id": "task-42", "revision": 3}]},
+            {"tasks": [{"id": "task-42", "revision": 4}]},
+        ]
+    }
+    fresh = _bad_draft(target={"id": "task-42", "revision": 4}, evidence=["tc-2"])
+    result, _, _ = run([search(), search("again"), fresh], responses=responses)
+    assert result.status == "drafted"
+    assert result.drafts[0].target == {"id": "task-42", "revision": 4}
+
+
+def test_summary_without_revision_does_not_erase_a_seen_revision():
+    responses = {
+        "search_tasks": TASK_SEARCH,
+        "list_active_projects": {"plans": [{"id": "plan-7", "tasks": [{"id": "task-42"}]}]},
+    }
+    projects = {"action": "call_tool", "tool": "list_active_projects", "arguments": {}}
+    result, _, _ = run([search(), projects, SCHEDULE_DRAFT], responses=responses)
+    assert result.status == "drafted"
+
+
 # -- stop conditions ------------------------------------------------------------------------------
 
 
@@ -305,6 +328,27 @@ def test_routine_trace_has_no_prompt_or_result_text():
     assert "Draft grant budget" not in dumped
     assert "Schedule my grant budget" not in dumped
     assert "debug" not in dumped
+
+
+def test_routine_trace_has_no_tool_argument_values_or_error_messages():
+    private = "dentist appointment for Riley"
+    step = {"action": "call_tool", "tool": "search_tasks", "arguments": {"query": private, "limit": 5}}
+    err = ToolError("not_found", f"nothing matches {private}")
+    result, _, _ = run([step, {"action": "answer", "answer": "none"}], responses={"search_tasks": err})
+    dumped = json.dumps(result.trace)
+    assert private not in dumped
+    call = next(e for e in result.trace if e["kind"] == "tool_call")
+    assert call["data"]["argumentNames"] == ["limit", "query"]
+
+
+def test_model_calls_get_the_remaining_wall_clock_budget(clock):
+    def tick():
+        clock.now += 30
+
+    model = ScriptedModel([search(), search("b"), {"action": "answer", "answer": "ok"}], on_call=tick)
+    agent = A1Agent(clock=clock)
+    agent.run(make_task(), MockToolClient({"search_tasks": TASK_SEARCH}), model, Budget(max_wall_seconds=100))
+    assert [r.timeout_seconds for r in model.requests] == [100, 70, 40]
 
 
 def test_debug_trace_includes_text_when_opted_in():

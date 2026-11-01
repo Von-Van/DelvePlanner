@@ -18,6 +18,9 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+# Metadata lookups (version, digest) are small; never let them eat a run's budget.
+METADATA_TIMEOUT_SECONDS = 3.0
+
 
 class ModelError(Exception):
     """The model could not produce a response (unreachable, bad reply, refused endpoint)."""
@@ -33,6 +36,8 @@ class ModelRequest:
     # JSON Schema for structured output, the string "json", or None for free text.
     format: dict[str, Any] | str | None = None
     options: dict[str, Any] = field(default_factory=dict)
+    # Upper bound for this call, usually the run's remaining wall-clock budget. None = client default.
+    timeout_seconds: float | None = None
 
 
 @dataclass(frozen=True)
@@ -126,13 +131,13 @@ class OllamaModelClient:
 
     # -- HTTP -----------------------------------------------------------------------------------
 
-    def _request(self, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
+    def _request(self, path: str, body: dict[str, Any] | None = None, timeout: float | None = None) -> dict[str, Any]:
         url = self.base_url + path
         data = None if body is None else json.dumps(body).encode("utf-8")
         request = urllib.request.Request(url, data=data, method="GET" if body is None else "POST")
         request.add_header("Content-Type", "application/json")
         try:
-            with self._opener.open(request, timeout=self.timeout_seconds) as response:
+            with self._opener.open(request, timeout=timeout or self.timeout_seconds) as response:
                 return json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as error:
             detail = error.read().decode("utf-8", "replace")[:500]
@@ -149,11 +154,11 @@ class OllamaModelClient:
             return
         self._described = True
         try:
-            self._version = self._request("/api/version").get("version")
+            self._version = self._request("/api/version", timeout=METADATA_TIMEOUT_SECONDS).get("version")
         except ModelError:
             self._version = None
         try:
-            for entry in self._request("/api/tags").get("models", []):
+            for entry in self._request("/api/tags", timeout=METADATA_TIMEOUT_SECONDS).get("models", []):
                 if entry.get("name") == self.model or entry.get("model") == self.model:
                     self._digest = entry.get("digest")
                     break
@@ -187,7 +192,12 @@ class OllamaModelClient:
         if self.think is not None:
             body["think"] = self.think
         started = time.monotonic()
-        reply = self._request("/api/chat", body)
+        timeout = self.timeout_seconds
+        if request.timeout_seconds is not None:
+            if request.timeout_seconds <= 0:
+                raise ModelError("no time left in the run budget for a model call")
+            timeout = min(timeout, request.timeout_seconds)
+        reply = self._request("/api/chat", body, timeout=timeout)
         latency_ms = int((time.monotonic() - started) * 1000)
         message = reply.get("message") or {}
         content = message.get("content")

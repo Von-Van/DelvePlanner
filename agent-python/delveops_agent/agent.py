@@ -166,7 +166,8 @@ class _Run:
 
     def step(self) -> tuple[ResultStatus | None, str | None, list[Draft]]:
         self.check_budget()
-        request = ModelRequest(messages=list(self.messages), format=STEP_SCHEMA)
+        remaining = self.budget.max_wall_seconds - (self.agent.clock() - self.started)
+        request = ModelRequest(messages=list(self.messages), format=STEP_SCHEMA, timeout_seconds=remaining)
         self.usage.model_calls += 1
         started = self.agent.clock()
         try:
@@ -245,7 +246,11 @@ class _Run:
 
         self.usage.tool_calls += 1
         self.tracer.emit(
-            "tool_call", f"{call_id} {name}", {"toolCallId": call_id, "tool": name, "arguments": arguments}
+            "tool_call",
+            f"{call_id} {name}",
+            # Argument values can carry private text (a search query); names only unless debugging.
+            {"toolCallId": call_id, "tool": name, "argumentNames": sorted(arguments)},
+            debug_data={"arguments": arguments},
         )
         started = self.agent.clock()
         try:
@@ -272,8 +277,14 @@ class _Run:
         self.tracer.emit(
             "tool_result",
             f"{call_id} {result.error.code}",
-            {"toolCallId": call_id, "tool": name, "ok": False, "error": result.error.to_dict()},
+            {
+                "toolCallId": call_id,
+                "tool": name,
+                "ok": False,
+                "error": {"code": result.error.code, "retryable": result.error.retryable},
+            },
             duration_ms=elapsed,
+            debug_data={"message": result.error.message},
         )
         self.handle_tool_error(name, arguments, result.error, call_id)
 
