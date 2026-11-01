@@ -1,6 +1,6 @@
 """Read-tool catalog and clients (overhaul plan, contract 1).
 
-The catalog below mirrors the v0 table in docs/delveops/overhaul-plan.md. When piece C merges
+The catalog below mirrors the v0 tool table in the overhaul plan. When piece C merges
 `contracts/tools.v1.json`, `load_catalog` reads that file instead, so the agent and the Rust broker
 share one definition. All tools are read-only; the agent has no write tool at all.
 """
