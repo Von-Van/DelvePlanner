@@ -8,6 +8,7 @@ import {
   Proposal,
 } from "./api";
 import {
+  fallbackReason,
   newRunKey,
   runMeasures,
   runStatusLabels,
@@ -33,10 +34,16 @@ import {
 export function AssistantAgentPanel({
   onChanged,
   onMessage,
+  onFallback,
 }: {
   /** Called after applied changes, so the rest of the app reloads. */
   onChanged: () => void;
   onMessage: (message: string) => void;
+  /**
+   * Hands the request to the old planner when the agent can't run it: the agent isn't in this
+   * build, or the run failed (no agent process, model unreachable, a crash).
+   */
+  onFallback?: (request: string, reason: string) => void;
 }) {
   const [status, setStatus] = useState<AssistantStatus | null>(null);
   const [goal, setGoal] = useState("");
@@ -81,6 +88,13 @@ export function AssistantAgentPanel({
     event.preventDefault();
     const request = goal.trim();
     if (!request || running) return;
+    if (status && !status.available) {
+      if (onFallback) {
+        setGoal("");
+        onFallback(request, "it isn't included in this build");
+      }
+      return;
+    }
     const key = newRunKey();
     setLive({ key, steps: [] });
     setSelectedKey(key);
@@ -88,9 +102,13 @@ export function AssistantAgentPanel({
       const run = await api.runAssistant(request, localTimeZone, key);
       setRuns((current) => withRun(current, run));
       setGoal("");
+      // The failed run stays in the list with its steps; the planner answers the request.
+      const reason = fallbackReason(run);
+      if (reason && onFallback) onFallback(request, reason);
     } catch (cause) {
-      onMessage(messageOf(cause));
       setSelectedKey(runs[0]?.runKey ?? null);
+      if (onFallback) onFallback(request, messageOf(cause));
+      else onMessage(messageOf(cause));
     } finally {
       setLive(null);
       setCancelling(false);
@@ -131,7 +149,11 @@ export function AssistantAgentPanel({
         <span />
         <div>
           <strong>
-            {available ? "Agent ready" : "Agent not available in this build"}
+            {available
+              ? "Agent ready"
+              : onFallback
+                ? "Agent not available · the planner will answer"
+                : "Agent not available in this build"}
           </strong>
           <p>
             {status?.detail ??
@@ -149,7 +171,7 @@ export function AssistantAgentPanel({
           aria-keyshortcuts={commandAriaShortcut("Enter")}
           aria-label="Ask the agent"
           placeholder="“What's overdue in the launch project?” or “Move the budget draft to Thursday.”"
-          disabled={!available || running}
+          disabled={running || (!available && !onFallback)}
         />
         <div>
           <span>
@@ -167,7 +189,7 @@ export function AssistantAgentPanel({
           ) : (
             <button
               className="primary-button small"
-              disabled={!goal.trim() || !available}
+              disabled={!goal.trim() || (!available && !onFallback)}
               title={`Ask (${commandShortcutText("↩")})`}
             >
               <Mark size={6} filled />

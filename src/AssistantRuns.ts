@@ -122,3 +122,13 @@ export function newRunKey() {
 export function runSummaryLine(run: AgentRun) {
   return `${durationLabel(run.usage.durationMs)} · ${run.usage.modelCalls} model · ${run.usage.toolCalls} tool calls`;
 }
+
+/**
+ * Why a finished run should hand its request to the old planner, or null when it shouldn't.
+ * Only a failed run falls back: one the user stopped, or one that answered, drafted, asked a
+ * question or honestly couldn't complete, stands as the agent's result.
+ */
+export function fallbackReason(run: AgentRun): string | null {
+  if (run.status !== "failed" || run.cancelled) return null;
+  return run.error?.trim() || "the run failed";
+}

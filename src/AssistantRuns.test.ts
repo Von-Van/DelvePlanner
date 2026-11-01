@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { agentRunSchema, AgentRun } from "./api";
 import {
   durationLabel,
+  fallbackReason,
   runMeasures,
   runTone,
   shortDigest,
@@ -14,6 +15,7 @@ function run(overrides: Partial<AgentRun> = {}): AgentRun {
   return agentRunSchema.parse({
     runKey: "key-1",
     runId: "run-1",
+    storedRunId: null,
     architecture: "A1",
     goal: "What's due this week?",
     startedAt: "2026-11-02T15:00:00.000Z",
@@ -104,6 +106,21 @@ describe("agent runs", () => {
     expect(runTone(run({ status: "needs_clarification" }))).toBe("attention");
     expect(runTone(run({ status: "failed" }))).toBe("problem");
     expect(runTone(run({ status: "failed", cancelled: true }))).toBe("neutral");
+  });
+
+  it("hands only failed runs to the old planner", () => {
+    expect(fallbackReason(run())).toBeNull();
+    expect(fallbackReason(run({ status: "cannot_complete" }))).toBeNull();
+    expect(fallbackReason(run({ status: "needs_clarification" }))).toBeNull();
+    expect(
+      fallbackReason(run({ status: "failed", error: "model unreachable" })),
+    ).toBe("model unreachable");
+    expect(fallbackReason(run({ status: "failed", error: null }))).toBe(
+      "the run failed",
+    );
+    expect(
+      fallbackReason(run({ status: "failed", cancelled: true })),
+    ).toBeNull();
   });
 
   it("keeps live steps in order and ignores repeats", () => {

@@ -13,6 +13,11 @@
 //! changes for review. Applying them goes through the same repository code, revision checks, and
 //! single transaction as the planner's own proposals.
 
+use crate::db::{
+    ActionOutcome, AgentStep, DraftDecision, DraftTarget, ExecutionState, NewActionDraft,
+    NewAgentRun, PlannerDatabase, RunOutcome as StoredOutcome, RunSource, RunStatus,
+    RunUsage as StoredUsage,
+};
 use crate::error::{AppError, AppResult};
 use crate::model::{
     ModelResponse, MutationOperation, PlannerResponse, ProposalReference, ProposedOperation,
@@ -405,6 +410,21 @@ pub struct AgentRunRecord {
     /// Validated changes, in the planner's own review shape, while they can still be applied.
     pub proposal: Option<PlannerResponse>,
     pub trace: Vec<Value>,
+    /// The run's id in the run history, once saved there.
+    pub stored_run_id: Option<String>,
+    /// The drafts behind `proposal`, as the agent sent them, for the run history.
+    #[serde(skip)]
+    pub checked_drafts: Vec<Value>,
+    /// The saved drafts behind `proposal`, in the same order as its changes.
+    #[serde(skip)]
+    pub stored_drafts: Vec<StoredDraft>,
+}
+
+/// One draft as the run history saved it: its id and the digest an approval must match.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StoredDraft {
+    pub id: String,
+    pub digest: String,
 }
 
 /// The facts about a run known before it starts.
@@ -552,6 +572,9 @@ pub fn finish_run(
         review: ReviewState::None,
         proposal: None,
         trace,
+        stored_run_id: None,
+        checked_drafts: Vec::new(),
+        stored_drafts: Vec::new(),
     };
     let outcome = match outcome {
         Ok(outcome) => outcome,
@@ -631,8 +654,181 @@ pub fn finish_run(
         references: references(&operations, observed),
         expires_at: iso(expires_at),
     });
+    let response = ModelResponse::proposal(summary, operations);
+    // The same checks the planner's own proposals pass before anyone sees them.
+    if let Err(error) = crate::db::validate_model_response(&response) {
+        if let Some(check) = record.draft_check.as_mut() {
+            check.passed = 0;
+            check.problems.push(error.to_string());
+        }
+        record.proposal = None;
+        return (record, None);
+    }
     record.review = ReviewState::Pending;
-    (record, Some(ModelResponse::proposal(summary, operations)))
+    record.checked_drafts = drafts;
+    (record, Some(response))
+}
+
+// ------------------------------------------------------------------------------------------------
+// The run history
+
+/// The longest text the run history keeps for a summary or a reason.
+const MAX_STORED_TEXT: usize = 500;
+
+fn clipped(text: Option<&str>) -> Option<String> {
+    text.map(|text| {
+        text.trim()
+            .chars()
+            .take(MAX_STORED_TEXT)
+            .collect::<String>()
+    })
+    .filter(|text| !text.is_empty())
+}
+
+fn stored_status(record: &AgentRunRecord) -> RunStatus {
+    if record.cancelled {
+        return RunStatus::Cancelled;
+    }
+    match record.status.as_str() {
+        "answered" => RunStatus::Answered,
+        "drafted" => RunStatus::Drafted,
+        "needs_clarification" => RunStatus::NeedsClarification,
+        "cannot_complete" => RunStatus::CannotComplete,
+        _ => RunStatus::Failed,
+    }
+}
+
+/// Saves a finished run in the run history: the run, every step, and the drafts it offers for
+/// review. Fills in `stored_run_id` and `stored_drafts`. The Evaluation view and the
+/// `get_recent_actions` tool read from here.
+pub fn store_run(
+    database: &mut PlannerDatabase,
+    record: &mut AgentRunRecord,
+    budget: &Value,
+) -> AppResult<()> {
+    let model = record.model.as_ref();
+    let run = database.start_agent_run(NewAgentRun {
+        source: RunSource::Assistant,
+        experiment_run_id: None,
+        case_id: None,
+        case_family: None,
+        goal: record.goal.clone(),
+        architecture_id: record.architecture.clone(),
+        model_name: model.map_or_else(|| "unknown".into(), |model| model.name.clone()),
+        model_digest: model.map(|model| model.digest.clone()),
+        trigger: "user_message".into(),
+        budget: budget.clone(),
+        started_at: Some(record.started_at.clone()),
+    })?;
+    for event in &record.trace {
+        // A step the history can't hold (too large, odd shape) is left out, not the whole run.
+        if let Ok(step) = serde_json::from_value::<AgentStep>(event.clone()) {
+            let _ = database.append_agent_step(&run.id, step);
+        }
+    }
+    let expires_at = match &record.proposal {
+        Some(PlannerResponse::Proposal { expires_at, .. }) => Some(expires_at.clone()),
+        _ => None,
+    };
+    let mut stored = Vec::new();
+    if let Some(expires_at) = expires_at {
+        for draft in &record.checked_drafts {
+            let target = draft
+                .get("target")
+                .filter(|target| !target.is_null())
+                .map(|target| serde_json::from_value::<DraftTarget>(target.clone()))
+                .transpose()?;
+            let saved = database.record_action_draft(
+                &run.id,
+                NewActionDraft {
+                    op: draft
+                        .get("op")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .into(),
+                    target,
+                    payload: draft.get("payload").cloned().unwrap_or(Value::Null),
+                    evidence: draft
+                        .get("evidence")
+                        .and_then(Value::as_array)
+                        .map(|items| {
+                            items
+                                .iter()
+                                .filter_map(|item| item.as_str().map(str::to_string))
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                    expires_at: expires_at.clone(),
+                },
+            )?;
+            stored.push(StoredDraft {
+                id: saved.id,
+                digest: saved.payload_digest,
+            });
+        }
+    }
+    let usage = &record.usage;
+    database.finish_agent_run(
+        &run.id,
+        StoredOutcome {
+            status: stored_status(record),
+            outcome_summary: clipped(record.answer.as_deref()),
+            failure_reason: clipped(record.error.as_deref().or(record.stop_reason.as_deref())),
+            usage: StoredUsage {
+                model_calls: i64::from(usage.model_calls),
+                tool_calls: i64::from(usage.tool_calls),
+                input_tokens: i64::try_from(usage.prompt_tokens).unwrap_or(i64::MAX),
+                output_tokens: i64::try_from(usage.completion_tokens).unwrap_or(i64::MAX),
+                latency_ms: i64::try_from(usage.duration_ms).ok(),
+            },
+            passed: None,
+            safety_failure: false,
+            finished_at: Some(record.finished_at.clone()),
+        },
+    )?;
+    record.stored_run_id = Some(run.id);
+    record.stored_drafts = stored;
+    Ok(())
+}
+
+/// Records the user's decision on each saved draft and, for the ones applied, how it went.
+/// `accepted` holds the review handles kept (all when `None`); `outcome` is how applying went.
+pub fn store_decisions(
+    database: &mut PlannerDatabase,
+    drafts: &[StoredDraft],
+    accepted: Option<&[String]>,
+    outcome: Option<&Result<Value, AppError>>,
+) -> AppResult<()> {
+    for (index, draft) in drafts.iter().enumerate() {
+        let handle = ProposedOperation::handle(index);
+        let approved = outcome.is_some() && accepted.is_none_or(|kept| kept.contains(&handle));
+        let decision = if approved {
+            DraftDecision::Approve
+        } else {
+            DraftDecision::Reject
+        };
+        database.decide_action_draft(&draft.id, decision, &draft.digest)?;
+        if let (true, Some(outcome)) = (approved, outcome) {
+            let result = match outcome {
+                Ok(effects) => ActionOutcome {
+                    execution_state: ExecutionState::Applied,
+                    effects: effects.clone(),
+                    error: None,
+                },
+                Err(error) => ActionOutcome {
+                    execution_state: if matches!(error, AppError::Conflict | AppError::NotFound) {
+                        ExecutionState::Stale
+                    } else {
+                        ExecutionState::Failed
+                    },
+                    effects: Value::Null,
+                    error: clipped(Some(&error.to_string())),
+                },
+            };
+            database.record_action_result(&draft.id, result)?;
+        }
+    }
+    Ok(())
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -656,6 +852,7 @@ struct PendingReview {
     response: ModelResponse,
     expires_at: DateTime<Utc>,
     claimed: bool,
+    stored: Vec<StoredDraft>,
 }
 
 pub struct AssistantRuntime {
@@ -752,6 +949,7 @@ impl AssistantRuntime {
                     response,
                     expires_at: Utc::now() + ChronoDuration::minutes(REVIEW_TTL_MINUTES),
                     claimed: false,
+                    stored: record.stored_drafts.clone(),
                 })
             }
             _ => None,
@@ -803,8 +1001,8 @@ impl AssistantRuntime {
         }
     }
 
-    /// Takes the changes for applying. Each set can be applied once.
-    pub fn claim(&self, proposal_id: &str) -> AppResult<ModelResponse> {
+    /// Takes the changes for applying, with their saved drafts. Each set can be applied once.
+    pub fn claim(&self, proposal_id: &str) -> AppResult<(ModelResponse, Vec<StoredDraft>)> {
         self.expire();
         let mut slot = self.pending.lock().map_err(|_| poisoned())?;
         let Some(pending) = slot.as_mut() else {
@@ -814,7 +1012,7 @@ impl AssistantRuntime {
             return Err(AppError::ProposalUnavailable);
         }
         pending.claimed = true;
-        Ok(pending.response.clone())
+        Ok((pending.response.clone(), pending.stored.clone()))
     }
 
     /// Records how applying went: how many changes were applied, or why it failed. The changes
@@ -842,20 +1040,22 @@ impl AssistantRuntime {
         }
     }
 
-    pub fn discard(&self, proposal_id: &str) -> AppResult<()> {
-        let run_key = {
+    /// Drops the changes unapplied, and gives back their saved drafts.
+    pub fn discard(&self, proposal_id: &str) -> AppResult<Vec<StoredDraft>> {
+        let pending = {
             let mut slot = self.pending.lock().map_err(|_| poisoned())?;
             match slot.as_ref() {
                 Some(pending) if pending.proposal_id == proposal_id && !pending.claimed => {
-                    slot.take().map(|pending| pending.run_key)
+                    slot.take()
                 }
                 _ => return Err(AppError::ProposalUnavailable),
             }
         };
-        if let Some(run_key) = run_key {
-            self.set_review(&run_key, ReviewState::Discarded);
-        }
-        Ok(())
+        let Some(pending) = pending else {
+            return Ok(Vec::new());
+        };
+        self.set_review(&pending.run_key, ReviewState::Discarded);
+        Ok(pending.stored)
     }
 
     fn set_review(&self, run_key: &str, state: ReviewState) {

@@ -16,15 +16,15 @@ fn observed() -> Observed {
         "tool": "search_tasks",
         "ok": true,
         "result": { "tasks": [
-            { "id": "task-1", "revision": 4, "title": "Draft budget", "planId": "plan-1" },
-            { "id": "task-2", "revision": 1, "title": "Call venue" }
+            { "id": "00000000-0000-4000-8000-0000000000a1", "revision": 4, "title": "Draft budget", "planId": "00000000-0000-4000-8000-0000000000b1" },
+            { "id": "00000000-0000-4000-8000-0000000000a2", "revision": 1, "title": "Call venue" }
         ] }
     }));
     observed.note_tool_result(&json!({
         "callId": "call-2",
         "tool": "get_project_context",
         "ok": true,
-        "result": { "plan": { "id": "plan-1", "revision": 2, "title": "Grant" } }
+        "result": { "plan": { "id": "00000000-0000-4000-8000-0000000000b1", "revision": 2, "title": "Grant" } }
     }));
     observed.note_tool_result(&json!({
         "callId": "call-3",
@@ -53,14 +53,23 @@ fn observed_records_come_only_from_successful_calls() {
     let observed = observed();
     assert!(observed.calls.contains("call-1") && observed.calls.contains("call-2"));
     assert!(!observed.calls.contains("call-3"));
-    assert_eq!(observed.records["task-1"].revision, Some(4));
-    assert_eq!(observed.title("plan-1"), Some("Grant"));
+    assert_eq!(
+        observed.records["00000000-0000-4000-8000-0000000000a1"].revision,
+        Some(4)
+    );
+    assert_eq!(
+        observed.title("00000000-0000-4000-8000-0000000000b1"),
+        Some("Grant")
+    );
 }
 
 #[test]
 fn a_grounded_draft_becomes_the_planners_own_operation() {
     let operation = draft_operation(
-        &schedule(json!({ "id": "task-1", "revision": 4 }), json!(["call-1"])),
+        &schedule(
+            json!({ "id": "00000000-0000-4000-8000-0000000000a1", "revision": 4 }),
+            json!(["call-1"]),
+        ),
         &observed(),
     )
     .unwrap();
@@ -70,7 +79,7 @@ fn a_grounded_draft_becomes_the_planners_own_operation() {
             expected_revision,
             ..
         } => {
-            assert_eq!(task_id, "task-1");
+            assert_eq!(task_id, "00000000-0000-4000-8000-0000000000a1");
             assert_eq!(expected_revision, 4);
         }
         other => panic!("unexpected {other:?}"),
@@ -80,15 +89,21 @@ fn a_grounded_draft_becomes_the_planners_own_operation() {
 #[test]
 fn ungrounded_or_malformed_drafts_are_refused() {
     let observed = observed();
-    let target = json!({ "id": "task-1", "revision": 4 });
+    let target = json!({ "id": "00000000-0000-4000-8000-0000000000a1", "revision": 4 });
     let cases = [
         (
             "unseen record",
-            schedule(json!({ "id": "task-9", "revision": 1 }), json!(["call-1"])),
+            schedule(
+                json!({ "id": "00000000-0000-4000-8000-0000000000a9", "revision": 1 }),
+                json!(["call-1"]),
+            ),
         ),
         (
             "stale revision",
-            schedule(json!({ "id": "task-1", "revision": 3 }), json!(["call-1"])),
+            schedule(
+                json!({ "id": "00000000-0000-4000-8000-0000000000a1", "revision": 3 }),
+                json!(["call-1"]),
+            ),
         ),
         ("no evidence", schedule(target.clone(), json!([]))),
         ("failed call", schedule(target.clone(), json!(["call-3"]))),
@@ -103,7 +118,7 @@ fn ungrounded_or_malformed_drafts_are_refused() {
         ),
         (
             "two records",
-            json!({ "op": "delete_task", "target": target, "payload": { "taskId": "task-2" },
+            json!({ "op": "delete_task", "target": target, "payload": { "taskId": "00000000-0000-4000-8000-0000000000a2" },
                     "evidence": ["call-1"] }),
         ),
         (
@@ -119,7 +134,7 @@ fn ungrounded_or_malformed_drafts_are_refused() {
         (
             "create with a target",
             json!({ "op": "create_workstream", "target": target,
-                    "payload": { "plan": { "id": "plan-1" }, "name": "Ops" }, "evidence": [] }),
+                    "payload": { "plan": { "id": "00000000-0000-4000-8000-0000000000b1" }, "name": "Ops" }, "evidence": [] }),
         ),
     ];
     for (name, draft) in cases {
@@ -133,8 +148,14 @@ fn ungrounded_or_malformed_drafts_are_refused() {
 #[test]
 fn one_bad_draft_holds_back_the_whole_set() {
     let observed = observed();
-    let good = schedule(json!({ "id": "task-1", "revision": 4 }), json!(["call-1"]));
-    let bad = schedule(json!({ "id": "task-2", "revision": 9 }), json!(["call-1"]));
+    let good = schedule(
+        json!({ "id": "00000000-0000-4000-8000-0000000000a1", "revision": 4 }),
+        json!(["call-1"]),
+    );
+    let bad = schedule(
+        json!({ "id": "00000000-0000-4000-8000-0000000000a2", "revision": 9 }),
+        json!(["call-1"]),
+    );
     let (check, operations) = check_drafts(&[good.clone(), bad], &observed);
     assert_eq!(
         (check.drafted, check.passed, check.problems.len()),
@@ -177,7 +198,7 @@ fn a_drafted_run_offers_its_changes_in_the_planners_review_shape() {
         Ok(outcome(json!({
             "status": "drafted",
             "answer": "Schedule the budget for Thursday.",
-            "drafts": [schedule(json!({ "id": "task-1", "revision": 4 }), json!(["call-1"]))],
+            "drafts": [schedule(json!({ "id": "00000000-0000-4000-8000-0000000000a1", "revision": 4 }), json!(["call-1"]))],
             "usage": { "promptTokens": 300, "completionTokens": 40 }
         }))),
         &observed(),
@@ -259,7 +280,7 @@ fn drafted(run_key: &str) -> (AgentRunRecord, Option<ModelResponse>) {
         },
         Ok(outcome(json!({
             "status": "drafted",
-            "drafts": [schedule(json!({ "id": "task-1", "revision": 4 }), json!(["call-1"]))],
+            "drafts": [schedule(json!({ "id": "00000000-0000-4000-8000-0000000000a1", "revision": 4 }), json!(["call-1"]))],
         }))),
         &observed(),
         Vec::new(),
@@ -299,6 +320,31 @@ fn changes_can_be_applied_once_and_newer_changes_replace_older_ones() {
         ReviewState::Applied { changes: 1 }
     );
     assert!(runtime.runs()[0].proposal.is_none());
+}
+
+#[test]
+fn changes_the_planner_would_refuse_are_never_offered() {
+    // Well formed and grounded, but the planner's own checks reject an id that isn't one of its
+    // record ids, so nothing reaches review.
+    let mut observed = Observed::default();
+    observed.note_tool_result(&json!({
+        "callId": "call-1", "ok": true,
+        "result": { "tasks": [{ "id": "task-1", "revision": 1, "title": "Odd" }] }
+    }));
+    let (record, response) = finish_run(
+        start(),
+        Ok(outcome(json!({
+            "status": "drafted",
+            "drafts": [schedule(json!({ "id": "task-1", "revision": 1 }), json!(["call-1"]))],
+        }))),
+        &observed,
+        Vec::new(),
+        Utc::now(),
+    );
+    assert!(response.is_none() && record.proposal.is_none());
+    let check = record.draft_check.unwrap();
+    assert_eq!(check.passed, 0);
+    assert_eq!(check.problems.len(), 1);
 }
 
 #[test]
@@ -453,7 +499,7 @@ async fn the_python_agent_reads_drafts_and_its_change_applies_through_the_planne
         .await;
     sidecar.shutdown().await;
     let (observed, trace) = host.into_parts();
-    let (record, response) = finish_run(
+    let (mut record, response) = finish_run(
         RunStart {
             run_key: "key".into(),
             goal: request.goal.clone(),
@@ -493,6 +539,26 @@ async fn the_python_agent_reads_drafts_and_its_change_applies_through_the_planne
     };
     assert_eq!(references[0].title, "Finalize homepage mockups");
 
+    // The run, every step and the offered draft go into the run history.
+    store_run(
+        &mut fixture.database.lock().unwrap(),
+        &mut record,
+        &json!({}),
+    )
+    .unwrap();
+    let stored_id = record.stored_run_id.clone().unwrap();
+    let detail = fixture
+        .database
+        .lock()
+        .unwrap()
+        .agent_run_detail(&stored_id)
+        .unwrap();
+    assert_eq!(detail.steps.len(), record.trace.len());
+    assert_eq!(detail.run.usage.model_calls, 2);
+    assert_eq!(detail.run.model_name, "test-model");
+    assert_eq!(detail.drafts.len(), 1);
+    assert_eq!(record.stored_drafts.len(), 1);
+
     // Nothing has changed yet; applying goes through the planner's own code.
     let applied = fixture
         .database
@@ -501,6 +567,24 @@ async fn the_python_agent_reads_drafts_and_its_change_applies_through_the_planne
         .apply_proposal(&response.unwrap())
         .unwrap();
     assert_eq!(applied.task_ids, [MOCKUPS]);
+    store_decisions(
+        &mut fixture.database.lock().unwrap(),
+        &record.stored_drafts,
+        None,
+        Some(&Ok(serde_json::to_value(&applied).unwrap())),
+    )
+    .unwrap();
+    let detail = fixture
+        .database
+        .lock()
+        .unwrap()
+        .agent_run_detail(&stored_id)
+        .unwrap();
+    assert_eq!(detail.drafts[0].state, crate::db::DraftState::Approved);
+    assert_eq!(
+        detail.drafts[0].result.as_ref().unwrap().execution_state,
+        crate::db::ExecutionState::Applied
+    );
     let mut session = ToolSession::new(SessionConfig::new(now, "America/Chicago".parse().unwrap()));
     let after = read_from(&fixture)(
         &mut session,

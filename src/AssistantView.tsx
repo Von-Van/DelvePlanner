@@ -1,4 +1,4 @@
-import { ReactNode, RefObject, useState } from "react";
+import { ReactNode, RefObject } from "react";
 import {
   AgendaItem,
   agendaItemEnd,
@@ -137,6 +137,9 @@ export function AssistantView({
   context,
   conversation,
   agent,
+  surface = "agent",
+  onSurface,
+  fallbackNote,
   attention,
   pendingReview,
   inboxCount,
@@ -152,6 +155,11 @@ export function AssistantView({
   conversation: ReactNode;
   /** The local agent, with its live steps and run measurements; shown first when given. */
   agent?: ReactNode;
+  /** Which of the two is showing; the agent hands a request to the planner when it can't run. */
+  surface?: "agent" | "planner";
+  onSurface?: (surface: "agent" | "planner") => void;
+  /** Why the planner is answering a request the agent couldn't run, or null. */
+  fallbackNote?: string | null;
   attention: AttentionItem[];
   /** How many changes in the open proposal wait for approval, or null when none is open. */
   pendingReview: { summary: string; changes: number } | null;
@@ -163,7 +171,6 @@ export function AssistantView({
   onBackToToday: () => void;
 }) {
   const isToday = context.day === context.today;
-  const [surface, setSurface] = useState<"agent" | "planner">("agent");
   const showAgent = agent != null && surface === "agent";
   return (
     <div className="assistant-home">
@@ -196,7 +203,7 @@ export function AssistantView({
                 role="tab"
                 aria-selected={showAgent}
                 className={showAgent ? "selected" : ""}
-                onClick={() => setSurface("agent")}
+                onClick={() => onSurface?.("agent")}
               >
                 Agent
               </button>
@@ -204,11 +211,17 @@ export function AssistantView({
                 role="tab"
                 aria-selected={!showAgent}
                 className={showAgent ? "" : "selected"}
-                onClick={() => setSurface("planner")}
+                onClick={() => onSurface?.("planner")}
               >
                 Planner
               </button>
             </div>
+          )}
+          {!showAgent && agent != null && fallbackNote && (
+            <p className="assistant-fallback" role="status">
+              The agent couldn't run this time ({fallbackNote}), so the planner
+              answered instead.
+            </p>
           )}
           {showAgent ? agent : conversation}
         </div>

@@ -740,6 +740,7 @@ export const agentRunSchema = z
   .object({
     runKey: z.string().min(1),
     runId: z.string().nullable(),
+    storedRunId: z.string().nullable(),
     architecture: z.string(),
     goal: z.string(),
     startedAt: timestampSchema,

@@ -1364,7 +1364,7 @@ async fn run_assistant(
     let outcome = sidecar.run(&request, &host, &cancel).await;
     state.assistant.end();
     let (observed, trace) = host.into_parts();
-    let (record, response) = assistant::finish_run(
+    let (mut record, response) = assistant::finish_run(
         assistant::RunStart {
             run_key,
             goal,
@@ -1376,6 +1376,13 @@ async fn run_assistant(
         trace,
         chrono::Utc::now(),
     );
+    let budget_json = serde_json::to_value(&budget).unwrap_or_default();
+    if let Err(error) = with_database(&state, |database| {
+        assistant::store_run(database, &mut record, &budget_json)
+    }) {
+        // The answer still reaches the user; only its place in the run history is lost.
+        tauri_plugin_log::log::warn!("assistant_run_not_stored code={}", error.code);
+    }
     tauri_plugin_log::log::info!("assistant_run_finished status={}", record.status);
     Ok(state.assistant.record(record, response))
 }
@@ -1434,7 +1441,7 @@ fn apply_assistant_changes(
     proposal_id: String,
     accepted: Option<Vec<String>>,
 ) -> Result<AppliedProposal, CommandError> {
-    let proposal = state.assistant.claim(&proposal_id)?;
+    let (proposal, stored) = state.assistant.claim(&proposal_id)?;
     let mut applied_count = 0;
     let result = accepted_operations(&proposal, accepted.as_deref())
         .map_err(CommandError::from)
@@ -1451,6 +1458,19 @@ fn apply_assistant_changes(
             Err(error) => Err(error.message.clone()),
         },
     );
+    if !stored.is_empty() {
+        let outcome = match &result {
+            Ok(applied) => Ok(serde_json::to_value(applied).unwrap_or_default()),
+            Err(error) if error.code == "conflict" => Err(AppError::Conflict),
+            Err(error) if error.code == "not_found" => Err(AppError::NotFound),
+            Err(error) => Err(AppError::Internal(error.message.clone())),
+        };
+        if let Err(error) = with_database(&state, |database| {
+            assistant::store_decisions(database, &stored, accepted.as_deref(), Some(&outcome))
+        }) {
+            tauri_plugin_log::log::warn!("assistant_decision_not_stored code={}", error.code);
+        }
+    }
     result
 }
 
@@ -1459,10 +1479,18 @@ fn discard_assistant_changes(
     state: State<'_, AppState>,
     proposal_id: String,
 ) -> Result<(), CommandError> {
-    state
+    let stored = state
         .assistant
         .discard(&proposal_id)
-        .map_err(CommandError::from)
+        .map_err(CommandError::from)?;
+    if !stored.is_empty() {
+        if let Err(error) = with_database(&state, |database| {
+            assistant::store_decisions(database, &stored, Some(&[]), None)
+        }) {
+            tauri_plugin_log::log::warn!("assistant_decision_not_stored code={}", error.code);
+        }
+    }
+    Ok(())
 }
 
 async fn reminder_worker(app: AppHandle) {
