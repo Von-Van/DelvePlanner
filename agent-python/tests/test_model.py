@@ -95,3 +95,11 @@ def test_unreachable_server_is_a_model_error():
     with pytest.raises(ModelError):
         client.complete(ModelRequest(messages=[{"role": "user", "content": "x"}]))
     assert client.describe()["digest"] is None
+
+
+def test_request_timeout_is_capped_by_run_budget(ollama):
+    client = OllamaModelClient(ollama, timeout_seconds=120)
+    with pytest.raises(ModelError, match="no time left"):
+        client.complete(ModelRequest(messages=[{"role": "user", "content": "x"}], timeout_seconds=0))
+    ok = client.complete(ModelRequest(messages=[{"role": "user", "content": "x"}], timeout_seconds=5))
+    assert ok.content
