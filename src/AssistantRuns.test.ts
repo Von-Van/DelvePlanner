@@ -110,7 +110,19 @@ describe("agent runs", () => {
 
   it("hands only failed runs to the old planner", () => {
     expect(fallbackReason(run())).toBeNull();
-    expect(fallbackReason(run({ status: "cannot_complete" }))).toBeNull();
+    expect(
+      fallbackReason(
+        run({ status: "cannot_complete", stopReason: "ambiguous_target" }),
+      ),
+    ).toBeNull();
+    expect(
+      fallbackReason(
+        run({ status: "cannot_complete", stopReason: "model_error" }),
+      ),
+    ).toBe("the model call failed");
+    expect(
+      fallbackReason(run({ status: "cannot_complete", stopReason: "error" })),
+    ).toBe("the agent stopped with an error");
     expect(fallbackReason(run({ status: "needs_clarification" }))).toBeNull();
     expect(
       fallbackReason(run({ status: "failed", error: "model unreachable" })),

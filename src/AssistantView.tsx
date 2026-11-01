@@ -223,7 +223,9 @@ export function AssistantView({
               answered instead.
             </p>
           )}
-          {showAgent ? agent : conversation}
+          {/* Both stay mounted so a running agent keeps its live steps while the planner shows. */}
+          {agent != null && <div hidden={!showAgent}>{agent}</div>}
+          <div hidden={showAgent}>{conversation}</div>
         </div>
 
         <aside className="assistant-side">

@@ -125,10 +125,18 @@ export function runSummaryLine(run: AgentRun) {
 
 /**
  * Why a finished run should hand its request to the old planner, or null when it shouldn't.
- * Only a failed run falls back: one the user stopped, or one that answered, drafted, asked a
- * question or honestly couldn't complete, stands as the agent's result.
+ * A failed run falls back, and so does one whose model call failed or that crashed. One the user
+ * stopped, or one that answered, drafted, asked a question or honestly couldn't complete, stands
+ * as the agent's result.
  */
 export function fallbackReason(run: AgentRun): string | null {
-  if (run.status !== "failed" || run.cancelled) return null;
-  return run.error?.trim() || "the run failed";
+  if (run.cancelled) return null;
+  if (run.status === "failed") return run.error?.trim() || "the run failed";
+  // The agent reports a broken model call or its own crash as "couldn't complete"; those are
+  // the agent failing, not an honest refusal, so the planner still gets the request.
+  if (run.status === "cannot_complete" && run.stopReason === "model_error")
+    return "the model call failed";
+  if (run.status === "cannot_complete" && run.stopReason === "error")
+    return run.error?.trim() || "the agent stopped with an error";
+  return null;
 }

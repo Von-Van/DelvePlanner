@@ -1319,13 +1319,19 @@ async fn run_assistant(
     }
     let zone = parse_zone(&time_zone)?;
     let sidecar = state.assistant.sidecar()?;
-    state.ollama.ensure_started(&state.agent).await?;
+    // The run is active (and can be stopped) from here, including while the model starts.
+    let cancel = state.assistant.begin()?;
+    let _active = ActiveRun(&state.assistant);
+    tokio::select! {
+        started = state.ollama.ensure_started(&state.agent) => started?,
+        // Stopped while the model was starting: the sidecar run below ends as cancelled at once.
+        () = cancel.cancelled() => {}
+    }
     state.ollama.note_used();
     let model = state.ollama.model_identity();
     let broker = model
         .clone()
         .and_then(|identity| sidecar::ModelBroker::new(state.ollama.endpoint(), identity).ok());
-    let cancel = state.assistant.begin()?;
 
     let started_at = chrono::Utc::now();
     let budget = sidecar::RunBudget::default();
@@ -1362,7 +1368,7 @@ async fn run_assistant(
         },
     );
     let outcome = sidecar.run(&request, &host, &cancel).await;
-    state.assistant.end();
+    drop(_active);
     let (observed, trace) = host.into_parts();
     let (mut record, response) = assistant::finish_run(
         assistant::RunStart {
@@ -1385,6 +1391,16 @@ async fn run_assistant(
     }
     tauri_plugin_log::log::info!("assistant_run_finished status={}", record.status);
     Ok(state.assistant.record(record, response))
+}
+
+/// Ends the active assistant run however `run_assistant` returns, so a failed start never
+/// leaves the assistant stuck as busy.
+struct ActiveRun<'a>(&'a assistant::AssistantRuntime);
+
+impl Drop for ActiveRun<'_> {
+    fn drop(&mut self) {
+        self.0.end();
+    }
 }
 
 /// Answers one read-tool call from the live planner database and read-only calendars.
