@@ -252,10 +252,38 @@ def observed_records(tool_data: Iterable[Any]) -> dict[str, Any]:
     return records
 
 
+# Foreign-key fields in tool results whose values name real records (a task's planId, ...).
+REFERENCE_FIELDS = frozenset({"planId", "milestoneId", "taskId", "workstreamId", "eventId"})
+
+
+def _collect_references(value: Any, out: set[str]) -> None:
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if key in REFERENCE_FIELDS and isinstance(child, str) and child:
+                out.add(child)
+            _collect_references(child, out)
+    elif isinstance(value, list):
+        for child in value:
+            _collect_references(child, out)
+
+
+def observed_references(tool_data: Iterable[Any]) -> set[str]:
+    """Every record id a tool result showed: records themselves plus foreign keys pointing at them.
+
+    Good enough for naming a record in a payload (`{"id": ...}`); a target still needs the record
+    itself and its revision.
+    """
+    data = list(tool_data)
+    refs = set(observed_records(data))
+    for item in data:
+        _collect_references(item, refs)
+    return refs
+
+
 # -- parsing --------------------------------------------------------------------------------------
 
 
-def _check_payload(op: str, payload: dict[str, Any], records: dict[str, Any]) -> None:
+def _check_payload(op: str, payload: dict[str, Any], references: set[str]) -> None:
     spec = OP_SPECS[op]
     unknown = sorted(set(payload) - set(spec))
     if unknown:
@@ -273,11 +301,15 @@ def _check_payload(op: str, payload: dict[str, Any], records: dict[str, Any]) ->
         value = payload[name]
         if not _CHECKS[kind](value):
             raise DraftError(f"{op}: payload.{name} must be {TYPE_HELP[kind]}")
-        if kind == "record_ref" and "id" in value and value["id"] not in records:
+        if kind == "record_ref" and "id" in value and value["id"] not in references:
             raise DraftError(f"{op}: payload.{name} refers to {value['id']}, which no tool result showed")
 
 
-def parse_draft(raw: Any, tool_call_ids: set[str], records: dict[str, Any]) -> Draft:
+def parse_draft(
+    raw: Any, tool_call_ids: set[str], records: dict[str, Any], references: set[str] | None = None
+) -> Draft:
+    """Validate one draft. `records` maps seen record ids to revisions (for targets); `references`
+    is every id seen, including foreign keys (for ids named in the payload; defaults to `records`)."""
     if not isinstance(raw, dict):
         raise DraftError("each draft must be an object")
     op = raw.get("op")
@@ -317,7 +349,7 @@ def parse_draft(raw: Any, tool_call_ids: set[str], records: dict[str, Any]) -> D
         target = None
 
     payload = dict(payload)
-    _check_payload(op, payload, records)
+    _check_payload(op, payload, set(records) if references is None else references)
     return Draft(op=op, target=target, payload=payload, evidence=tuple(evidence))
 
 

@@ -375,3 +375,38 @@ def test_debug_trace_includes_text_when_opted_in():
     result, _, _ = run([search(), {"action": "answer", "answer": "ok"}], debug=True)
     dumped = json.dumps(result.trace)
     assert "Draft grant budget" in dumped
+
+
+def test_payload_may_name_a_record_seen_only_as_a_foreign_key():
+    # search_tasks shows plan-7 only as a task's planId; that is enough to file a new event under it,
+    # but not enough to target plan-7 itself (no revision was seen).
+    create = {
+        "action": "draft",
+        "summary": "Add a work session.",
+        "drafts": [
+            {
+                "op": "create_event",
+                "target": None,
+                "payload": {
+                    "title": "Grant budget",
+                    "notes": "",
+                    "startAtUtc": "2026-11-05T17:00:00Z",
+                    "timeZone": "America/Chicago",
+                    "durationMinutes": 60,
+                    "plan": {"id": "plan-7"},
+                },
+                "evidence": ["tc-1"],
+            }
+        ],
+    }
+    result, _, _ = run([search(), create])
+    assert result.status == "drafted"
+    update_plan = {
+        "action": "draft",
+        "summary": "x",
+        "drafts": [
+            {"op": "update_plan", "target": {"id": "plan-7", "revision": 1}, "payload": {}, "evidence": ["tc-1"]}
+        ],
+    }
+    result, _, _ = run([search(), update_plan, update_plan])
+    assert result.stop_reason == "invalid_draft"
