@@ -6,6 +6,7 @@
 //! `contracts/tools.v1.json` is generated from `registry` and is the published contract.
 
 pub mod error;
+pub mod github;
 pub mod read;
 pub mod registry;
 
@@ -22,6 +23,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Instant;
 
 /// Where busy time from read-only calendars comes from. The app uses its calendar service; the
@@ -124,6 +126,9 @@ pub struct SessionConfig {
     pub permitted_tools: Option<BTreeSet<ToolName>>,
     pub budget: ToolBudget,
     pub privacy: PrivacyPolicy,
+    /// The repositories the user shared and their synced snapshot. `None` (the default) or an
+    /// empty selection turns the GitHub tools off: they answer `permission_denied`.
+    pub github: Option<Arc<github::GitHubContext>>,
 }
 
 impl SessionConfig {
@@ -134,6 +139,7 @@ impl SessionConfig {
             permitted_tools: None,
             budget: ToolBudget::default(),
             privacy: PrivacyPolicy::default(),
+            github: None,
         }
     }
 }
@@ -307,6 +313,9 @@ impl ToolSession {
                 format!("{tool} is reserved and not available yet."),
             ));
         }
+        if name.reads_github() {
+            self.connected_github()?;
+        }
         if self.calls_made >= self.config.budget.max_tool_calls {
             return Err(ToolError::budget(format!(
                 "This run has used all {} of its tool calls.",
@@ -368,7 +377,35 @@ impl ToolSession {
                 ToolErrorCode::Unavailable,
                 "get_memory is reserved and not available yet.",
             )),
+            ToolName::ListGitHubRepos => encode(github::list_repos(
+                self.connected_github()?,
+                parse(arguments)?,
+            )),
+            ToolName::SearchGitHubItems => encode(github::search_items(
+                self.connected_github()?,
+                parse(arguments)?,
+            )?),
+            ToolName::GetGitHubItem => encode(github::get_item(
+                self.connected_github()?,
+                parse(arguments)?,
+            )?),
         }
+    }
+}
+
+impl ToolSession {
+    /// The shared GitHub snapshot, or `permission_denied` if the user selected no repositories.
+    fn connected_github(&self) -> Result<&github::GitHubContext, ToolError> {
+        self.config
+            .github
+            .as_deref()
+            .filter(|context| context.connected())
+            .ok_or_else(|| {
+                ToolError::new(
+                    ToolErrorCode::PermissionDenied,
+                    "GitHub context is off: the user has not selected any repositories.",
+                )
+            })
     }
 }
 
