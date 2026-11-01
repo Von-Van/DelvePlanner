@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..agent import _Run, _Stop
-from ..drafts import OP_SPECS, TYPE_HELP, DraftError, observed_records, parse_draft, payload_help
+from ..drafts import OP_SPECS, TYPE_HELP, DraftError, observed_records, observed_references, parse_draft, payload_help
 from ..types import AgentResult, Draft, ToolError
 from .freshness import plan_rereads, stale_targets
 from .review import Observation, VerifierConfig, format_findings, normalize_drafts, shape_findings, time_findings
@@ -128,10 +128,11 @@ class VerifyingRun(_Run):
             raw, notes = normalize_drafts(raw, self.task.time_zone)
         findings = shape_findings(raw) if config.check_payloads else []
         records = observed_records(self.tool_results.values())
+        references = observed_references(self.tool_results.values())
         drafts: list[Draft] = []
         grounding: str | None = None
         try:
-            drafts = [parse_draft(item, set(self.tool_results), records) for item in raw]
+            drafts = [parse_draft(item, set(self.tool_results), records, references) for item in raw]
         except DraftError as error:
             grounding = str(error)
         if findings or grounding:
