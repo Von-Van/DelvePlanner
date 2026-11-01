@@ -23,7 +23,13 @@ class Child:
             stderr=subprocess.PIPE,
             env={"PYTHONUTF8": "1", **({"SYSTEMROOT": os.environ["SYSTEMROOT"]} if "SYSTEMROOT" in os.environ else {})},
         )
-        self.send(Envelope("h-1", wire.HELLO, {"protocolVersions": [1], "limits": limits or {"toolTimeoutMs": 2000, "modelTimeoutMs": 2000}}))
+        self.send(
+            Envelope(
+                "h-1",
+                wire.HELLO,
+                {"protocolVersions": [1], "limits": limits or {"toolTimeoutMs": 2000, "modelTimeoutMs": 2000}},
+            )
+        )
         self.hello = self.receive()
 
     def send(self, message):
@@ -81,14 +87,31 @@ class LinkTests(unittest.TestCase):
         call = self.child.receive()
         self.assertEqual(call.type, wire.TOOL_CALL)
         self.assertEqual(call.payload, {"tool": "get_day_context", "arguments": {}})
-        self.child.send(Envelope(call.id, wire.TOOL_RESULT, {"callId": "call-1", "tool": "get_day_context", "ok": True, "result": {"events": []}, "durationMs": 3}))
+        self.child.send(
+            Envelope(
+                call.id,
+                wire.TOOL_RESULT,
+                {"callId": "call-1", "tool": "get_day_context", "ok": True, "result": {"events": []}, "durationMs": 3},
+            )
+        )
         result = self.child.receive()
         self.assertEqual(json.loads(result.payload["answer"]), {"callId": "call-1", "result": {"events": []}})
 
     def test_tool_error_becomes_cannot_complete(self):
         self.child.start("run-1", "tool:get_day_context")
         call = self.child.receive()
-        self.child.send(Envelope(call.id, wire.TOOL_RESULT, {"callId": "call-1", "tool": "get_day_context", "ok": False, "error": {"code": "not_found", "message": "gone", "retryable": False}}))
+        self.child.send(
+            Envelope(
+                call.id,
+                wire.TOOL_RESULT,
+                {
+                    "callId": "call-1",
+                    "tool": "get_day_context",
+                    "ok": False,
+                    "error": {"code": "not_found", "message": "gone", "retryable": False},
+                },
+            )
+        )
         result = self.child.receive()
         self.assertEqual(result.payload["status"], "cannot_complete")
         self.assertEqual(result.payload["error"]["code"], "not_found")
@@ -98,7 +121,19 @@ class LinkTests(unittest.TestCase):
         call = self.child.receive()
         self.assertEqual(call.type, wire.MODEL_CALL)
         self.assertEqual(call.payload["runId"], "run-1")
-        self.child.send(Envelope(call.id, wire.MODEL_RESULT, {"ok": True, "result": {"message": {"role": "assistant", "content": "ok"}, "usage": {"promptTokens": 4, "completionTokens": 1}}}))
+        self.child.send(
+            Envelope(
+                call.id,
+                wire.MODEL_RESULT,
+                {
+                    "ok": True,
+                    "result": {
+                        "message": {"role": "assistant", "content": "ok"},
+                        "usage": {"promptTokens": 4, "completionTokens": 1},
+                    },
+                },
+            )
+        )
         result = self.child.receive()
         self.assertEqual(result.payload["answer"], "ok")
         self.assertEqual(result.payload["usage"]["promptTokens"], 4)
@@ -161,7 +196,10 @@ class HandshakeTests(unittest.TestCase):
     def test_refuses_an_app_without_version_one(self):
         process = subprocess.Popen(
             [sys.executable, "-s", "-m", "delveops_agent.protocol"],
-            cwd=AGENT_DIR, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            cwd=AGENT_DIR,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
         )
         out, _ = process.communicate(wire.encode(Envelope("h-1", wire.HELLO, {"protocolVersions": [2]})), timeout=10)
         reply = wire.decode(out.splitlines()[0], allowed=wire.SENT_BY_AGENT)

@@ -91,9 +91,7 @@ def _check(envelope: Envelope) -> None:
 def encode(envelope: Envelope) -> bytes:
     """One line, newline included. Raises ``ProtocolError`` past the size limit."""
     _check(envelope)
-    data = json.dumps(
-        envelope.to_json(), ensure_ascii=False, separators=(",", ":"), allow_nan=False
-    ).encode("utf-8")
+    data = json.dumps(envelope.to_json(), ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")
     if len(data) > MAX_MESSAGE_BYTES:
         raise ProtocolError(f"message of {len(data)} bytes is over the {MAX_MESSAGE_BYTES}-byte limit")
     return data + b"\n"
