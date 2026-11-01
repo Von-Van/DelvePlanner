@@ -14,7 +14,7 @@ import uuid
 from collections.abc import Callable
 from typing import Any, Protocol
 
-from .drafts import DraftError, observed_records, parse_draft
+from .drafts import DraftError, observed_records, observed_references, parse_draft
 from .model import ModelClient, ModelError, ModelRequest
 from .prompts import PROMPT_VERSION, STEP_SCHEMA, system_prompt, task_message
 from .tools import ToolClient, ToolSpec, check_arguments, default_catalog
@@ -321,10 +321,11 @@ class _Run:
             self.repair("invalid_draft", 'A draft step needs a non-empty "drafts" list.')
             return None
         records = observed_records(self.tool_results.values())
+        references = observed_references(self.tool_results.values())
         drafts: list[Draft] = []
         try:
             for item in raw:
-                drafts.append(parse_draft(item, set(self.tool_results), records))
+                drafts.append(parse_draft(item, set(self.tool_results), records, references))
         except DraftError as error:
             self.repair("invalid_draft", f"Draft rejected: {error}.")
             return None
