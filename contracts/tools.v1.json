@@ -271,6 +271,7 @@
           ]
         },
         "commentCount": {
+          "description": "Comments on GitHub; the synced snapshot may hold fewer (see commentsTruncated).",
           "minimum": 0,
           "type": "integer"
         },
@@ -384,6 +385,7 @@
           ]
         },
         "commentCount": {
+          "description": "Comments on GitHub; the synced snapshot may hold fewer (see commentsTruncated).",
           "minimum": 0,
           "type": "integer"
         },
@@ -456,6 +458,10 @@
     "githubRepo": {
       "additionalProperties": false,
       "properties": {
+        "countsComplete": {
+          "description": "False when the snapshot kept only recently updated items, so openIssues and openPullRequests may be low.",
+          "type": "boolean"
+        },
         "defaultBranch": {
           "type": [
             "string",
@@ -478,6 +484,13 @@
           "minimum": 0,
           "type": "integer"
         },
+        "openItemsTotal": {
+          "description": "GitHub's own total of open issues plus open pull requests, when known.",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "openPullRequests": {
           "minimum": 0,
           "type": "integer"
@@ -497,6 +510,8 @@
         "private",
         "openIssues",
         "openPullRequests",
+        "countsComplete",
+        "openItemsTotal",
         "trust",
         "injectionSignals"
       ],

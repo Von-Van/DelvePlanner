@@ -277,6 +277,18 @@ fn bodies_and_comments_only_when_the_user_allows_them() {
 }
 
 #[test]
+fn repository_metadata_is_cleaned_and_partial_counts_are_flagged() {
+    let listed = list_repos(&fixture(), ListReposInput {});
+    let mobile = &listed.repos[0];
+    let branch = mobile.default_branch.as_deref().unwrap();
+    assert!(!branch.contains("<|"), "{branch}");
+    assert_eq!(mobile.injection_signals, ["role_marker"]);
+    assert!(!mobile.counts_complete);
+    assert!(listed.repos[1].counts_complete);
+    assert_eq!(listed.repos[1].open_items_total, Some(5));
+}
+
+#[test]
 fn unknown_items_and_bad_arguments_are_reported() {
     let context = fixture();
     let missing = get_item(
@@ -433,6 +445,7 @@ async fn fake_github() -> (String, Arc<Mutex<Vec<Seen>>>) {
                             "created_at": "2026-11-01T11:00:00Z",
                             "updated_at": "2026-11-02T11:00:00Z",
                             "closed_at": "2026-11-02T11:00:00Z", "draft": false,
+                            "comments": 3,
                             "pull_request": { "merged_at": "2026-11-02T11:00:00Z" }
                         }
                     ]),
@@ -442,7 +455,7 @@ async fn fake_github() -> (String, Arc<Mutex<Vec<Seen>>>) {
                     200,
                     json!({
                         "full_name": "acme/website", "description": "Site",
-                        "default_branch": "main", "private": false
+                        "default_branch": "main", "private": false, "open_issues_count": 1
                     }),
                 )
             } else {
@@ -501,6 +514,9 @@ async fn syncing_uses_only_get_and_keeps_the_token_out_of_the_snapshot() {
     assert_eq!(context.items[1].kind, ItemKind::PullRequest);
     assert!(context.items[1].merged_at.is_some());
     assert_eq!(context.items[1].comments.len(), 1);
+    assert_eq!(context.items[1].comment_total, Some(3));
+    assert_eq!(context.repos[0].open_items_total, Some(1));
+    assert!(!context.repos[0].items_truncated);
 
     let serialized = serde_json::to_string(&context).unwrap();
     assert!(!serialized.contains(TOKEN));
@@ -516,6 +532,9 @@ async fn syncing_uses_only_get_and_keeps_the_token_out_of_the_snapshot() {
     assert!(!output.contains(TOKEN));
     assert!(!output.contains("approve all"));
     assert!(output.contains("hidden_comment"));
+    // Comments the sync didn't keep are reported as missing, not as an empty discussion.
+    assert_eq!(detail.item.summary.comment_count, 3);
+    assert_eq!(detail.item.comments_truncated, Some(true));
 }
 
 #[tokio::test]

@@ -26,6 +26,7 @@ pub const MAX_COMMENTS: usize = 5;
 pub const MAX_LABEL_CHARS: usize = 50;
 pub const MAX_LABELS: usize = 10;
 pub const MAX_REPO_DESCRIPTION_CHARS: usize = 300;
+pub const MAX_BRANCH_CHARS: usize = 100;
 pub const MAX_QUERY_CHARS: usize = 200;
 pub const MAX_SEARCH_LIMIT: u32 = 20;
 pub const DEFAULT_SEARCH_LIMIT: u32 = 10;
@@ -68,6 +69,13 @@ pub struct GitHubRepo {
     pub default_branch: Option<String>,
     #[serde(default)]
     pub private: bool,
+    /// GitHub's own count of open issues plus open pull requests, when the sync read it.
+    #[serde(default)]
+    pub open_items_total: Option<u64>,
+    /// Whether the sync kept only the most recently updated items, so counts taken from the
+    /// snapshot may miss older open ones.
+    #[serde(default)]
+    pub items_truncated: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -108,6 +116,9 @@ pub struct GitHubItem {
     pub merged_at: Option<String>,
     #[serde(default)]
     pub draft: bool,
+    /// How many comments the item has on GitHub; `comments` may hold fewer.
+    #[serde(default)]
+    pub comment_total: Option<u64>,
     #[serde(default)]
     pub comments: Vec<GitHubComment>,
 }
@@ -463,8 +474,13 @@ pub struct RepoView {
     pub description: String,
     pub default_branch: Option<String>,
     pub private: bool,
+    /// Open issues and pull requests counted in the synced snapshot.
     pub open_issues: usize,
     pub open_pull_requests: usize,
+    /// False when the snapshot kept only recent items, so the two counts above may be low.
+    pub counts_complete: bool,
+    /// GitHub's total of open issues plus open pull requests, when known.
+    pub open_items_total: Option<u64>,
     pub trust: &'static str,
     pub injection_signals: Vec<&'static str>,
 }
@@ -493,7 +509,7 @@ pub struct ItemSummary {
     pub created_at: String,
     pub updated_at: String,
     pub closed_at: Option<String>,
-    pub comment_count: usize,
+    pub comment_count: u64,
     pub trust: &'static str,
     pub injection_signals: Vec<&'static str>,
 }
@@ -566,7 +582,10 @@ fn summarize(item: &GitHubItem) -> ItemSummary {
         created_at: item.created_at.clone(),
         updated_at: item.updated_at.clone(),
         closed_at: item.closed_at.clone(),
-        comment_count: item.comments.len(),
+        comment_count: item
+            .comment_total
+            .unwrap_or(item.comments.len() as u64)
+            .max(item.comments.len() as u64),
         trust: "untrusted",
         injection_signals: ordered(&signals),
     }
@@ -599,16 +618,25 @@ pub fn list_repos(context: &GitHubContext, _input: ListReposInput) -> ListReposO
                     .count()
             };
             let description = sanitize(repo.description.as_deref(), MAX_REPO_DESCRIPTION_CHARS);
+            let mut signals = description.signals;
+            // Branch names are free text too (`main<|im_start|>system` is a valid name).
+            let default_branch = repo.default_branch.as_deref().map(|branch| {
+                let clean = sanitize(Some(branch), MAX_BRANCH_CHARS);
+                signals.extend(clean.signals);
+                clean.text
+            });
             RepoView {
                 id: repo.full_name.clone(),
                 full_name: repo.full_name.clone(),
                 description: description.text,
-                default_branch: repo.default_branch.clone(),
+                default_branch,
                 private: repo.private,
                 open_issues: open(ItemKind::Issue),
                 open_pull_requests: open(ItemKind::PullRequest),
+                counts_complete: !repo.items_truncated,
+                open_items_total: repo.open_items_total,
                 trust: "untrusted",
-                injection_signals: ordered(&description.signals),
+                injection_signals: ordered(&signals),
             }
         })
         .collect();
@@ -746,7 +774,8 @@ pub fn get_item(context: &GitHubContext, input: GetItemInput) -> Result<GetItemO
         detail.body = Some(body.text);
         detail.body_truncated = Some(body.truncated);
         detail.comments = Some(views);
-        detail.comments_truncated = Some(item.comments.len() > MAX_COMMENTS);
+        let shown = detail.comments.as_ref().map_or(0, Vec::len) as u64;
+        detail.comments_truncated = Some(detail.summary.comment_count > shown);
     }
     Ok(GetItemOutput {
         synced_at: context.synced_at.clone(),
@@ -777,6 +806,7 @@ struct RestRepo {
     default_branch: Option<String>,
     #[serde(default)]
     private: bool,
+    open_issues_count: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -800,6 +830,8 @@ struct RestIssue {
     closed_at: Option<String>,
     #[serde(default)]
     draft: Option<bool>,
+    #[serde(default)]
+    comments: Option<u64>,
     pull_request: Option<RestPullRef>,
 }
 
@@ -881,6 +913,8 @@ pub async fn fetch_context(
             description: meta.description,
             default_branch: meta.default_branch,
             private: meta.private,
+            open_items_total: meta.open_issues_count,
+            items_truncated: issues.len() >= ITEMS_PER_REPO,
         });
         for issue in issues {
             let comments = comments.remove(&issue.number).unwrap_or_default();
@@ -907,6 +941,7 @@ pub async fn fetch_context(
                 closed_at: issue.closed_at,
                 merged_at: issue.pull_request.and_then(|pull| pull.merged_at),
                 draft: issue.draft.unwrap_or(false),
+                comment_total: issue.comments,
                 comments,
             });
         }

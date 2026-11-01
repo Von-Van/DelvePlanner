@@ -27,6 +27,7 @@ MAX_COMMENTS = 5
 MAX_LABEL_CHARS = 50
 MAX_LABELS = 10
 MAX_REPO_DESCRIPTION_CHARS = 300
+MAX_BRANCH_CHARS = 100
 MAX_QUERY_CHARS = 200
 MAX_SEARCH_LIMIT = 20
 DEFAULT_SEARCH_LIMIT = 10
@@ -274,6 +275,12 @@ def _labels(item: dict) -> tuple[list[str], list[str]]:
     return labels, signals
 
 
+def _comment_count(item: dict) -> int:
+    synced = len(item.get("comments", []))
+    total = item.get("commentTotal")
+    return max(synced if total is None else total, synced)
+
+
 def item_summary(item: dict) -> dict:
     title = sanitize(item.get("title"), MAX_TITLE_CHARS)
     labels, label_signals = _labels(item)
@@ -292,7 +299,7 @@ def item_summary(item: dict) -> dict:
         "createdAt": item["createdAt"],
         "updatedAt": item["updatedAt"],
         "closedAt": item.get("closedAt"),
-        "commentCount": len(item.get("comments", [])),
+        "commentCount": _comment_count(item),
         "trust": "untrusted",
         "injectionSignals": _merge(title["signals"], label_signals),
     }
@@ -312,18 +319,25 @@ def tool_list_github_repos(data: dict, args: dict) -> dict:
         if key not in selected:
             continue
         description = sanitize(repo.get("description"), MAX_REPO_DESCRIPTION_CHARS)
+        signals = description["signals"]
+        branch = None
+        if repo.get("defaultBranch") is not None:
+            clean = sanitize(repo["defaultBranch"], MAX_BRANCH_CHARS)
+            branch, signals = clean["text"], _merge(signals, clean["signals"])
         mine = [i for i in items if i["repo"].lower() == key and i["state"] == "open"]
         repos.append(
             {
                 "id": repo["fullName"],
                 "fullName": repo["fullName"],
                 "description": description["text"],
-                "defaultBranch": repo.get("defaultBranch"),
+                "defaultBranch": branch,
                 "private": bool(repo.get("private", False)),
                 "openIssues": sum(1 for i in mine if i["kind"] == "issue"),
                 "openPullRequests": sum(1 for i in mine if i["kind"] == "pull_request"),
+                "countsComplete": not repo.get("itemsTruncated", False),
+                "openItemsTotal": repo.get("openItemsTotal"),
                 "trust": "untrusted",
-                "injectionSignals": description["signals"],
+                "injectionSignals": signals,
             }
         )
     return {"syncedAt": data.get("githubSyncedAt"), "repos": repos}
@@ -377,7 +391,7 @@ def tool_get_github_item(data: dict, args: dict) -> dict:
                     "injectionSignals": clean["signals"],
                 }
             )
-        out["commentsTruncated"] = len(item.get("comments", [])) > MAX_COMMENTS
+        out["commentsTruncated"] = out["commentCount"] > len(out["comments"])
         out["injectionSignals"] = signals
     return {"syncedAt": data.get("githubSyncedAt"), "item": out}
 

@@ -390,7 +390,11 @@ fn github_item_summary_properties() -> Value {
         "createdAt": { "type": "string" },
         "updatedAt": { "type": "string" },
         "closedAt": nullable("string"),
-        "commentCount": { "type": "integer", "minimum": 0 },
+        "commentCount": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Comments on GitHub; the synced snapshot may hold fewer (see commentsTruncated)."
+        },
         "trust": { "$ref": "#/$defs/githubTrust" },
         "injectionSignals": { "$ref": "#/$defs/injectionSignals" }
     })
@@ -688,12 +692,20 @@ fn github_definitions() -> Value {
                 "private": { "type": "boolean" },
                 "openIssues": { "type": "integer", "minimum": 0 },
                 "openPullRequests": { "type": "integer", "minimum": 0 },
+                "countsComplete": {
+                    "type": "boolean",
+                    "description": "False when the snapshot kept only recently updated items, so openIssues and openPullRequests may be low."
+                },
+                "openItemsTotal": {
+                    "type": ["integer", "null"],
+                    "description": "GitHub's own total of open issues plus open pull requests, when known."
+                },
                 "trust": { "$ref": "#/$defs/githubTrust" },
                 "injectionSignals": { "$ref": "#/$defs/injectionSignals" }
             }),
             &[
                 "id", "fullName", "description", "defaultBranch", "private", "openIssues",
-                "openPullRequests", "trust", "injectionSignals",
+                "openPullRequests", "countsComplete", "openItemsTotal", "trust", "injectionSignals",
             ],
         ),
         "githubItemSummary": object(github_item_summary_properties(), GITHUB_ITEM_SUMMARY_REQUIRED),
