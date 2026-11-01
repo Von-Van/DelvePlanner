@@ -140,6 +140,16 @@ pub struct InstalledModel {
     pub selected: bool,
 }
 
+/// Exactly which model and runtime answered a request, so a result can be tied to them later.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelIdentity {
+    pub name: String,
+    /// The same digest Ollama lists for the model: the SHA-256 of its manifest, in hex.
+    pub digest: String,
+    pub ollama_version: String,
+}
+
 #[derive(Clone)]
 pub struct OllamaRuntime {
     inner: Arc<RuntimeInner>,
@@ -314,6 +324,19 @@ impl OllamaRuntime {
             .and_then(|model| self.model_dir_for(&model))
             .map(|(_, dir)| dir)
             .unwrap_or_else(|| self.inner.model_dir.clone())
+    }
+
+    /// The chosen model's name and digest and the runtime's version, read from the manifest on
+    /// disk. Starts and changes nothing.
+    pub fn model_identity(&self) -> Option<ModelIdentity> {
+        let name = self.chosen_model()?;
+        let (_, dir) = self.model_dir_for(&name)?;
+        let manifest = fs::read(manifest_path(&dir, &name)?).ok()?;
+        Some(ModelIdentity {
+            digest: manifest_digest(&manifest),
+            name,
+            ollama_version: BUNDLED_OLLAMA_VERSION.into(),
+        })
     }
 
     /// Remembers which model the planner should use. The server restarts on the next request if
@@ -1039,6 +1062,12 @@ fn manifest_path(model_dir: &Path, model: &str) -> Option<PathBuf> {
     )
 }
 
+/// Ollama names a model's version by the SHA-256 of its manifest file.
+fn manifest_digest(manifest: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    format!("{:x}", Sha256::digest(manifest))
+}
+
 /// One part of a model name: letters, digits, and `_ . -`, which is all Ollama's own names use.
 /// Anything else is refused, because a part that is a path of its own walks the manifest out of
 /// the models folder — joining an absolute path throws away everything before it.
@@ -1223,6 +1252,30 @@ mod tests {
         // A model that isn't installed is never chosen, and the choice already made stands.
         assert!(manager.choose_model("phantom:70b").is_err());
         assert_eq!(manager.chosen_model().as_deref(), Some("llama3.1:8b"));
+    }
+
+    #[test]
+    fn model_identity_reports_the_chosen_models_manifest_digest() {
+        let root = tempfile::tempdir().unwrap();
+        let system = root.path().join("home/.ollama/models");
+        let manager = manager_with(root.path(), Some(system.clone()));
+        assert_eq!(manager.model_identity(), None);
+
+        install(manager.model_dir(), MODEL_NAME, 5_200_000_100);
+        install(&system, "llama3.1:8b", 4_700_000_100);
+        manager.choose_model("llama3.1:8b").unwrap();
+
+        let identity = manager.model_identity().unwrap();
+        assert_eq!(identity.name, "llama3.1:8b");
+        assert_eq!(identity.ollama_version, BUNDLED_OLLAMA_VERSION);
+        let manifest = fs::read(manifest_path(&system, "llama3.1:8b").unwrap()).unwrap();
+        assert_eq!(identity.digest, manifest_digest(&manifest));
+        assert_eq!(identity.digest.len(), 64);
+        // The digest Ollama shows for an empty manifest, as a fixed point.
+        assert_eq!(
+            manifest_digest(b""),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
     }
 
     /// A model the user chose in one folder must not make a download into the other folder look
