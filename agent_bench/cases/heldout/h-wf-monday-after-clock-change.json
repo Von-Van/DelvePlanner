@@ -1,0 +1,125 @@
+{
+  "case_id": "h-wf-monday-after-clock-change",
+  "family": "multi_step",
+  "split": "heldout",
+  "description": "Ambiguous 'tomorrow' across a time-zone change: asked on Sunday 1 November, the day daylight saving time ends, about Monday morning. 9 am is now 14:00 UTC, not 13:00; blocks placed with last week's offset fall outside working hours. Any open work that isn't waiting on something is fine.",
+  "fixture": {
+    "version": "planner.v2"
+  },
+  "now": "2026-11-01T10:00-05:00",
+  "timeZone": "America/New_York",
+  "permittedTools": [
+    "get_day_context",
+    "list_active_projects",
+    "get_project_context",
+    "search_tasks",
+    "get_capacity",
+    "get_recent_actions",
+    "get_preferences"
+  ],
+  "goal": "I have two hours tomorrow morning. Help me pick what to work on and block it out.",
+  "expected": {
+    "status": [
+      "drafted"
+    ],
+    "requiredCalls": [
+      {
+        "tool": "get_day_context",
+        "args": {
+          "date": "2026-11-02"
+        }
+      }
+    ],
+    "anyOfTools": [
+      [
+        "list_active_projects",
+        "search_tasks",
+        "get_project_context"
+      ]
+    ],
+    "toolCallBudget": 5,
+    "drafts": [
+      {
+        "op": "create_task_block"
+      }
+    ],
+    "allowExtraDrafts": true,
+    "checks": [
+      {
+        "type": "draft_fits_free_time",
+        "op": "create_task_block"
+      },
+      {
+        "type": "drafts_do_not_overlap",
+        "op": "create_task_block"
+      },
+      {
+        "type": "drafts_total_minutes",
+        "op": "create_task_block",
+        "maxMinutes": 120
+      },
+      {
+        "type": "draft_time_window",
+        "op": "create_task_block",
+        "notBefore": "2026-11-02T09:00-05:00",
+        "notAfter": "2026-11-02T12:00-05:00"
+      }
+    ]
+  },
+  "safety": {
+    "noDraftTargets": [
+      "00000000-0000-4000-8000-000000000404",
+      "00000000-0000-4000-8000-000000000405",
+      "00000000-0000-4000-8000-000000000406"
+    ]
+  },
+  "reference": {
+    "calls": [
+      {
+        "tool": "get_day_context",
+        "args": {
+          "date": "2026-11-02",
+          "timeZone": "America/New_York"
+        }
+      },
+      {
+        "tool": "list_active_projects",
+        "args": {}
+      },
+      {
+        "tool": "get_project_context",
+        "args": {
+          "planId": "00000000-0000-4000-8000-000000000101"
+        }
+      }
+    ],
+    "result": {
+      "status": "drafted",
+      "answer": "Write homepage copy is due Thursday and already in progress, so it gets 9 to 11 tomorrow.",
+      "drafts": [
+        {
+          "op": "create_task_block",
+          "target": {
+            "id": "00000000-0000-4000-8000-000000000402",
+            "revision": 3
+          },
+          "payload": {
+            "startAtUtc": "2026-11-02T14:00:00Z",
+            "timeZone": "America/New_York",
+            "durationMinutes": 120
+          },
+          "evidence": [
+            "1",
+            "3"
+          ]
+        }
+      ]
+    }
+  },
+  "tags": [
+    "prioritize",
+    "time_blocks",
+    "dst",
+    "workflow"
+  ]
+}

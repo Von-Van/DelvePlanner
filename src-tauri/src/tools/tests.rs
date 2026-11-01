@@ -391,6 +391,82 @@ fn recent_actions_say_history_is_not_recorded_yet() {
 }
 
 #[test]
+fn preferences_say_when_the_person_has_set_nothing() {
+    let fixture = fixture();
+    let mut session = session();
+    let result = ok(call(&fixture, &mut session, "get_preferences", json!({})));
+    assert_eq!(result["profile"]["isSet"], false);
+    assert_eq!(result["profile"]["trust"], "user_confirmed");
+    assert_eq!(result["profile"]["preferredStart"], Value::Null);
+    assert_eq!(result["profile"]["noWorkDays"], json!([]));
+    assert_eq!(result["workingHours"]["startMinute"], 540);
+    assert_eq!(result["observations"], json!([]));
+    assert_eq!(
+        error_code(&call(
+            &fixture,
+            &mut session,
+            "get_preferences",
+            json!({"x": 1})
+        )),
+        "invalid_arguments"
+    );
+}
+
+#[test]
+fn preferences_keep_what_the_person_set_apart_from_what_was_observed() {
+    let mut fixture = fixture();
+    let profile = fixture.database.planning_profile().unwrap();
+    fixture
+        .database
+        .update_planning_profile(crate::model::UpdatePlanningProfileInput {
+            revision: profile.revision,
+            preferred_start_minute: Some(8 * 60 + 30),
+            preferred_end_minute: Some(15 * 60),
+            max_planned_minutes: Some(300),
+            focus_minutes: Some(50),
+            break_minutes: Some(10),
+            no_work_days: vec![7, 6],
+            energy: Some(crate::model::DayPreference::Morning),
+            muted_observations: vec![crate::model::ObservationKind::TypicalDailyLoad],
+        })
+        .unwrap();
+    // Five blocks at 9:00 on five days: enough for "usual start" and "typical daily load", the
+    // second of which the person muted.
+    for day in 2..7 {
+        fixture
+            .database
+            .create_task_block(crate::model::CreateTaskBlockInput {
+                task_id: MOCKUPS.into(),
+                start_at_utc: format!("2026-10-{:02}T14:00:00Z", day + 10),
+                time_zone: ZONE.into(),
+                duration_minutes: 60,
+            })
+            .unwrap();
+    }
+    let mut session = session();
+    let result = ok(call(&fixture, &mut session, "get_preferences", json!({})));
+    let profile = &result["profile"];
+    assert_eq!(profile["isSet"], true);
+    assert_eq!(profile["preferredStart"], "08:30");
+    assert_eq!(profile["preferredEnd"], "15:00");
+    assert_eq!(profile["maxPlannedMinutes"], 300);
+    assert_eq!(profile["focusMinutes"], 50);
+    assert_eq!(profile["breakMinutes"], 10);
+    assert_eq!(profile["noWorkDays"], json!(["saturday", "sunday"]));
+    assert_eq!(profile["energy"], "morning");
+    let observations = result["observations"].as_array().unwrap();
+    assert_eq!(
+        observations.len(),
+        1,
+        "muted observations stay out: {observations:?}"
+    );
+    assert_eq!(observations[0]["kind"], "usual_start");
+    assert_eq!(observations[0]["trust"], "verified");
+    // The five new blocks and the one the fixture already had.
+    assert_eq!(observations[0]["sample"], 6);
+}
+
+#[test]
 fn unknown_reserved_and_unpermitted_tools_are_refused_without_spending_budget() {
     let fixture = fixture();
     let mut config = SessionConfig::new(Utc::now(), ZONE.parse().unwrap());

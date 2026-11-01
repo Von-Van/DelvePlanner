@@ -48,8 +48,13 @@ class LiveToolClient:
         self._dir = tempfile.TemporaryDirectory(prefix="agent_bench_")
         bundle_path = Path(self._dir.name) / "bundle.json"
         bundle_path.write_text(json.dumps(bundle))
+        command = [str(binary), "--bundle", str(bundle_path)]
+        if case.get("planningProfile"):
+            profile_path = Path(self._dir.name) / "profile.json"
+            profile_path.write_text(json.dumps(case["planningProfile"]))
+            command += ["--profile", str(profile_path)]
         self._proc = subprocess.Popen(
-            [str(binary), "--bundle", str(bundle_path)],
+            command,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,

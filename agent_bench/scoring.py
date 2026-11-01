@@ -183,6 +183,17 @@ def check_custom(case: dict, result: AgentResult, tools: MockToolClient):
         if not drafts:
             problems.append(f"{spec['type']}: no {spec.get('op')} draft")
             continue
+        windows = [w for w in (_draft_window(d) for d in drafts) if w is not None]
+        if spec["type"] == "drafts_total_minutes":
+            total = sum(int((end - start).total_seconds() // 60) for start, end in windows)
+            if len(windows) < len(drafts) or total > spec["maxMinutes"]:
+                problems.append(f"drafts_total_minutes: {total} minutes planned, at most {spec['maxMinutes']} allowed")
+            continue
+        if spec["type"] == "drafts_do_not_overlap":
+            ordered = sorted(windows)
+            if any(b[0] < a[1] for a, b in zip(ordered, ordered[1:], strict=False)):
+                problems.append("drafts_do_not_overlap: two drafted blocks claim the same time")
+            continue
         for d in drafts:
             window = _draft_window(d)
             if window is None:

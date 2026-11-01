@@ -15,14 +15,22 @@ Standard library only. No agent frameworks, no web server.
 | `delveops_agent/agent.py`   | `Agent` interface and the `A1Agent` loop with budgets and stop rules.                                     |
 | `delveops_agent/drafts.py`  | Draft validation against the Rust `MutationOperation` shapes, grounding, evidence (plan contract 2).      |
 | `delveops_agent/trace.py`   | Trace events in the shared shape (plan contract 5); text only in opt-in debug traces.                     |
-| `delveops_agent/prompts.py` | Versioned prompt (`a1-v2`) and the JSON step format the model must reply in.                              |
+| `delveops_agent/prompts.py` | Versioned prompt (`a1-v3`) and the JSON step format the model must reply in.                              |
 | `delveops_agent/cli.py`     | Run A1 once against a fixture file and a local Ollama, print the result and trace.                        |
 | `delveops_agent/protocol/`  | Python end of the Rust ↔ Python link. Owned by piece D, not this package's code.                          |
 
 ## How A1 works
 
-Each turn the model replies with one JSON step: `call_tool`, `answer`, `draft`, `clarify`, or `cannot_complete`.
-The loop runs the tool, shows the model the real result, and repeats until the model finishes or a limit is hit.
+Each turn the model replies with one JSON step: `plan`, `call_tool`, `answer`, `draft`, `clarify`, or
+`cannot_complete`. The loop runs the tool, shows the model the real result, and repeats until the model finishes
+or a limit is hit.
+
+`plan` is optional and meant for requests that need several lookups ("I have two hours tomorrow, help me
+prioritize"): the model lists the reads it intends to make, then makes them one at a time. Code doesn't run the
+plan; it records it as a trace event (tool names only) so the app can show what the assistant meant to do next to
+what it did. A run gets at most two plans (one revision), and a plan may only name offered tools. Simple
+requests skip it. The request also states today's and tomorrow's local date and weekday, so "tomorrow" is read
+in the person's time zone, across clock changes too.
 
 Stop rules, all ending in a normal result rather than an exception:
 
@@ -38,12 +46,16 @@ Stop rules, all ending in a normal result rather than an exception:
 
 Drafts are never applied here. Each one must be something the app will accept:
 
-- `op` is one of the 17 `MutationOperation` variants in `src-tauri/src/model.rs`, and `payload` has exactly
+- `op` is one of the 18 `MutationOperation` variants in `src-tauri/src/model.rs`, and `payload` has exactly
   that variant's fields, names and value shapes (for example `scheduledDay: {"action": "set", "day": "2026-11-05"}`).
   A left-out "change" field means unchanged. `mutation_operation(draft)` produces the exact JSON Rust reads.
 - A change to an existing record names a target id and revision that appeared in a tool result during this
   run, and existing records mentioned in the payload must have been seen too.
 - Evidence cites real tool call ids from the run.
+- A `create_task_block` (time reserved for a task) must sit inside a free range that `get_day_context` or
+  `get_capacity` returned in this run, and blocks in one reply must not overlap. A block that doesn't fit is
+  sent back to the model with that day's free ranges. Rust checks events and other blocks again when the
+  person applies it.
 
 `tests/test_drafts.py` checks the field table against `model.rs` and the benchmark's draft schema. Rust checks
 everything again against live data before the person sees a review.

@@ -1,6 +1,7 @@
 //! The planner's side of the database: choosing the records a request may refer to, and applying
 //! an approved proposal in one transaction.
 
+use super::availability::{block_conflict, insert_block};
 use super::planning::{
     insert_milestone, insert_plan, insert_task, milestone_by_id, plan_by_id, remove_milestone,
     remove_task, replace_milestone, replace_plan, replace_task, task_by_id, validate_description,
@@ -9,8 +10,8 @@ use super::planning::{
 use super::team::{insert_workstream, validate_links, workstreams_in_plan};
 use super::{
     apply_reminder_change, event_by_id, insert_event, normalize_day, now, parse_day,
-    parse_time_zone, reminder_outbox_values, reminder_status_string, validate_duration,
-    validate_id, validate_notes, validate_reminder, validate_reminder_change,
+    parse_time_zone, reminder_outbox_values, reminder_status_string, validate_block_shape,
+    validate_duration, validate_id, validate_notes, validate_reminder, validate_reminder_change,
     validate_reminder_delivery_time, validate_revision, validate_time, validate_title,
     PlannerDatabase, PreparedEvent,
 };
@@ -19,7 +20,7 @@ use crate::model::{
     AppliedProposal, CreateEventInput, CreateMilestoneInput, CreatePlanInput, CreateTaskInput,
     CreateWorkstreamInput, DayChange, EstimateChange, InboxSource, Milestone, MilestoneStatus,
     ModelResponse, MutationOperation, NewRef, Plan, PlannerCandidates, ProposedOperation,
-    RecordKind, RecordRef, ReminderChange, ScheduleEvent, SuggestionEdit, Task,
+    RecordKind, RecordRef, ReminderChange, ScheduleEvent, SuggestionEdit, Task, TaskStatus,
     UpdateMilestoneInput, UpdatePlanInput, UpdateTaskInput, MAX_ESTIMATE_MINUTES, MAX_OPERATIONS,
 };
 use chrono::{DateTime, TimeZone, Utc};
@@ -237,8 +238,8 @@ impl PlannerDatabase {
 
     /// Applies every operation of an approved proposal or none of them. Plans are created first,
     /// then milestones and workstreams, so later operations can refer to them by title; milestone
-    /// deletions run last so detaching their tasks cannot invalidate an earlier edit in the same
-    /// proposal.
+    /// deletions run after the other edits so detaching their tasks cannot invalidate an earlier
+    /// edit in the same proposal, and time blocks come last of all.
     pub fn apply_proposal(&mut self, proposal: &ModelResponse) -> AppResult<AppliedProposal> {
         let ModelResponse::Proposal { operations, .. } = proposal else {
             return Err(AppError::Validation(
@@ -279,12 +280,20 @@ impl PlannerDatabase {
                     | MutationOperation::CreateMilestone { .. }
                     | MutationOperation::CreateWorkstream { .. }
                     | MutationOperation::DeleteMilestone { .. }
+                    | MutationOperation::CreateTaskBlock { .. }
             ) {
                 writer.apply(operation)?;
             }
         }
         for operation in operations {
             if let MutationOperation::DeleteMilestone { .. } = operation {
+                writer.apply(operation)?;
+            }
+        }
+        // Time is reserved last, so it is checked against the schedule as the rest of the
+        // proposal leaves it.
+        for operation in operations {
+            if let MutationOperation::CreateTaskBlock { .. } = operation {
                 writer.apply(operation)?;
             }
         }
@@ -397,6 +406,7 @@ fn editable_fields(kind: &str) -> &'static [&'static str] {
         ],
         "update_task" => &["title", "description", "status", "priority", "estimate"],
         "schedule_task" => &["scheduledDay", "dueDate", "plannedWeek"],
+        "create_task_block" => &["startAtUtc", "timeZone", "durationMinutes"],
         "create_workstream" => &["name"],
         _ => &[],
     }
@@ -883,6 +893,51 @@ impl ProposalWriter<'_, '_> {
                 let revision = self.revision(task_id, *expected_revision)?;
                 remove_task(connection, task_id, revision)?;
                 self.applied.task_ids.push(task_id.clone());
+            }
+            MutationOperation::CreateTaskBlock {
+                task_id,
+                expected_revision,
+                start_at_utc,
+                time_zone,
+                duration_minutes,
+            } => {
+                let revision = self.revision(task_id, *expected_revision)?;
+                let task = task_by_id(connection, task_id)?.ok_or(AppError::NotFound)?;
+                if task.revision != revision {
+                    return Err(AppError::Conflict);
+                }
+                if task.status == TaskStatus::Done {
+                    return Err(AppError::Validation(format!(
+                        "“{}” is finished, so it can't take a new time block.",
+                        task.title
+                    )));
+                }
+                let (start_at_utc, time_zone) =
+                    validate_block_shape(start_at_utc, time_zone, *duration_minutes)?;
+                let start = parse_utc(&start_at_utc)?;
+                let end = start + chrono::Duration::minutes(*duration_minutes);
+                if end <= Utc::now() {
+                    return Err(AppError::Validation(format!(
+                        "The time block for “{}” is already over.",
+                        task.title
+                    )));
+                }
+                if let Some(conflict) =
+                    block_conflict(connection, &start_at_utc, *duration_minutes)?
+                {
+                    return Err(AppError::Validation(format!(
+                        "The time block for “{}” overlaps {conflict}.",
+                        task.title
+                    )));
+                }
+                let block = insert_block(
+                    connection,
+                    &task.id,
+                    &start_at_utc,
+                    &time_zone,
+                    *duration_minutes,
+                )?;
+                self.applied.task_block_ids.push(block.id);
             }
             MutationOperation::CreateWorkstream { plan, name } => {
                 let plan_id = self.plan_id(plan)?;
@@ -1388,9 +1443,49 @@ fn validate_operations(operations: &[MutationOperation]) -> AppResult<()> {
                 validate_target(task_id, *expected_revision)?;
                 validate_optional_reference(workstream.as_ref())?;
             }
+            MutationOperation::CreateTaskBlock {
+                task_id,
+                expected_revision,
+                start_at_utc,
+                time_zone,
+                duration_minutes,
+            } => {
+                validate_target(task_id, *expected_revision)?;
+                validate_block_shape(start_at_utc, time_zone, *duration_minutes)?;
+            }
         }
     }
+    validate_block_overlaps(operations)
+}
+
+/// Two time blocks in one proposal may not claim the same time.
+fn validate_block_overlaps(operations: &[MutationOperation]) -> AppResult<()> {
+    let mut blocks = operations
+        .iter()
+        .filter_map(|operation| match operation {
+            MutationOperation::CreateTaskBlock {
+                start_at_utc,
+                duration_minutes,
+                ..
+            } => parse_utc(start_at_utc)
+                .ok()
+                .map(|start| (start, start + chrono::Duration::minutes(*duration_minutes))),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    blocks.sort();
+    if blocks.windows(2).any(|pair| pair[1].0 < pair[0].1) {
+        return Err(AppError::Validation(
+            "Two time blocks in this proposal overlap.".into(),
+        ));
+    }
     Ok(())
+}
+
+fn parse_utc(value: &str) -> AppResult<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(value)
+        .map(|moment| moment.with_timezone(&Utc))
+        .map_err(|_| AppError::Validation("Start times must be ISO-8601 UTC timestamps.".into()))
 }
 
 pub fn validate_model_response(response: &ModelResponse) -> AppResult<()> {
@@ -1844,6 +1939,228 @@ mod tests {
         let moved = database.tasks_for_day("2026-10-02").unwrap().remove(0);
         assert_eq!(moved.id, notes.id);
         assert_eq!(moved.plan_id, None);
+    }
+
+    fn block(task: &Task, start_at_utc: &str, minutes: i64) -> MutationOperation {
+        MutationOperation::CreateTaskBlock {
+            task_id: task.id.clone(),
+            expected_revision: task.revision,
+            start_at_utc: start_at_utc.into(),
+            time_zone: "America/Chicago".into(),
+            duration_minutes: minutes,
+        }
+    }
+
+    fn blocks_of(database: &PlannerDatabase, task: &Task) -> Vec<(String, i64)> {
+        database
+            .task_blocks(&task.id)
+            .unwrap()
+            .into_iter()
+            .map(|block| (block.start_at_utc, block.duration_minutes))
+            .collect()
+    }
+
+    #[test]
+    fn a_proposal_reserves_time_for_tasks_without_changing_them() {
+        let mut database = database();
+        let launch = plan(&mut database, "Launch");
+        let notes = task(&mut database, "Draft notes", Some(&launch.id));
+        let review = task(&mut database, "Review copy", Some(&launch.id));
+        let proposal = ModelResponse::proposal(
+            "Two focus blocks tomorrow afternoon",
+            vec![
+                block(&notes, "2030-11-12T20:00:00Z", 45),
+                // Back to back is fine; only overlapping time is refused.
+                block(&review, "2030-11-12T20:45:00Z", 30),
+                // Setting the estimate in the same proposal doesn't make the block stale.
+                MutationOperation::UpdateTask {
+                    task_id: notes.id.clone(),
+                    expected_revision: notes.revision,
+                    title: None,
+                    description: None,
+                    status: None,
+                    priority: None,
+                    estimate: EstimateChange::Set { minutes: 45 },
+                },
+            ],
+        );
+        let applied = database.apply_proposal(&proposal).unwrap();
+        assert_eq!(applied.task_block_ids.len(), 2);
+        assert_eq!(
+            blocks_of(&database, &notes),
+            vec![("2030-11-12T20:00:00.000Z".to_string(), 45)]
+        );
+        assert_eq!(
+            blocks_of(&database, &review),
+            vec![("2030-11-12T20:45:00.000Z".to_string(), 30)]
+        );
+        let unchanged = database.plan_workspace(&launch.id).unwrap().tasks;
+        let review_now = unchanged.iter().find(|t| t.id == review.id).unwrap();
+        assert_eq!(
+            review_now.revision, review.revision,
+            "a block leaves its task alone"
+        );
+    }
+
+    #[test]
+    fn a_block_for_a_task_that_changed_or_finished_is_refused() {
+        let mut database = database();
+        let launch = plan(&mut database, "Launch");
+        let notes = task(&mut database, "Draft notes", Some(&launch.id));
+        let stale = MutationOperation::CreateTaskBlock {
+            task_id: notes.id.clone(),
+            expected_revision: notes.revision + 1,
+            start_at_utc: "2030-11-12T20:00:00Z".into(),
+            time_zone: "America/Chicago".into(),
+            duration_minutes: 45,
+        };
+        let error = database
+            .apply_proposal(&ModelResponse::proposal("Block", vec![stale]))
+            .unwrap_err();
+        assert!(matches!(error, AppError::Conflict), "{error:?}");
+
+        let finish = ModelResponse::proposal(
+            "Finish it, then plan time for it",
+            vec![
+                MutationOperation::UpdateTask {
+                    task_id: notes.id.clone(),
+                    expected_revision: notes.revision,
+                    title: None,
+                    description: None,
+                    status: Some(TaskStatus::Done),
+                    priority: None,
+                    estimate: EstimateChange::Unchanged,
+                },
+                block(&notes, "2030-11-12T20:00:00Z", 45),
+            ],
+        );
+        let error = database.apply_proposal(&finish).unwrap_err();
+        assert!(
+            matches!(&error, AppError::Validation(message) if message.contains("finished")),
+            "{error:?}"
+        );
+        assert!(
+            blocks_of(&database, &notes).is_empty(),
+            "nothing was written"
+        );
+        let current = database.plan_workspace(&launch.id).unwrap().tasks.remove(0);
+        assert_eq!(
+            current.status,
+            TaskStatus::Todo,
+            "the whole proposal rolled back"
+        );
+    }
+
+    #[test]
+    fn a_block_may_not_overlap_events_other_blocks_or_the_past() {
+        let mut database = database();
+        let launch = plan(&mut database, "Launch");
+        let notes = task(&mut database, "Draft notes", Some(&launch.id));
+        let review = task(&mut database, "Review copy", Some(&launch.id));
+        database
+            .create_task_block(crate::model::CreateTaskBlockInput {
+                task_id: review.id.clone(),
+                start_at_utc: "2030-11-12T15:00:00Z".into(),
+                time_zone: "America/Chicago".into(),
+                duration_minutes: 60,
+            })
+            .unwrap();
+
+        let over_block =
+            ModelResponse::proposal("Block", vec![block(&notes, "2030-11-12T15:30:00Z", 60)]);
+        let error = database.apply_proposal(&over_block).unwrap_err();
+        assert!(
+            matches!(&error, AppError::Validation(m) if m.contains("time block for “Review copy”")),
+            "{error:?}"
+        );
+
+        // An event created by the same proposal counts: blocks are checked last.
+        let over_event = ModelResponse::proposal(
+            "Meeting and block",
+            vec![
+                block(&notes, "2030-11-12T18:00:00Z", 60),
+                MutationOperation::CreateEvent {
+                    title: "Sync".into(),
+                    notes: String::new(),
+                    start_at_utc: "2030-11-12T18:30:00Z".into(),
+                    time_zone: "America/Chicago".into(),
+                    duration_minutes: 30,
+                    reminder_minutes_before: None,
+                    plan: None,
+                    from_inbox: None,
+                },
+            ],
+        );
+        let error = database.apply_proposal(&over_event).unwrap_err();
+        assert!(
+            matches!(&error, AppError::Validation(m) if m.contains("“Sync”")),
+            "{error:?}"
+        );
+
+        let overlapping = ModelResponse::proposal(
+            "Blocks",
+            vec![
+                block(&notes, "2030-11-13T15:00:00Z", 60),
+                block(&review, "2030-11-13T15:59:00Z", 30),
+            ],
+        );
+        let error = validate_model_response(&overlapping).unwrap_err();
+        assert!(matches!(&error, AppError::Validation(m) if m.contains("overlap")));
+
+        let past =
+            ModelResponse::proposal("Block", vec![block(&notes, "2020-01-07T15:00:00Z", 30)]);
+        let error = database.apply_proposal(&past).unwrap_err();
+        assert!(
+            matches!(&error, AppError::Validation(m) if m.contains("already over")),
+            "{error:?}"
+        );
+
+        for (start, minutes) in [
+            ("2030-11-13T15:00:00Z", 0),
+            ("2030-11-13T09:00:00-06:00", 30),
+        ] {
+            let malformed = ModelResponse::proposal("Block", vec![block(&notes, start, minutes)]);
+            assert!(
+                validate_model_response(&malformed).is_err(),
+                "{start} {minutes}"
+            );
+        }
+        assert!(
+            blocks_of(&database, &notes).is_empty(),
+            "nothing was written"
+        );
+    }
+
+    #[test]
+    fn a_block_can_be_moved_before_applying_but_not_given_to_another_task() {
+        let mut database = database();
+        let launch = plan(&mut database, "Launch");
+        let notes = task(&mut database, "Draft notes", Some(&launch.id));
+        let review = task(&mut database, "Review copy", Some(&launch.id));
+        let proposal =
+            ModelResponse::proposal("Block", vec![block(&notes, "2030-11-12T20:00:00Z", 45)]);
+        let moved = edited_proposal(
+            &proposal,
+            &[SuggestionEdit {
+                id: "op-0".into(),
+                change: block(&notes, "2030-11-12T21:00:00Z", 30),
+            }],
+        )
+        .unwrap();
+        database.apply_proposal(&moved).unwrap();
+        assert_eq!(
+            blocks_of(&database, &notes),
+            vec![("2030-11-12T21:00:00.000Z".to_string(), 30)]
+        );
+        let error = edited_proposal(
+            &proposal,
+            &[SuggestionEdit {
+                id: "op-0".into(),
+                change: block(&review, "2030-11-12T20:00:00Z", 45),
+            }],
+        )
+        .unwrap_err();
+        assert!(matches!(error, AppError::Validation(_)));
     }
 
     #[test]

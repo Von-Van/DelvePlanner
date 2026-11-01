@@ -1,0 +1,148 @@
+{
+  "case_id": "wf-afternoon-preferences",
+  "family": "multi_step",
+  "split": "dev",
+  "description": "A preference conflict: the person prefers to plan work only until 3 pm, in 45-minute focus blocks with 15-minute breaks, though they are free until 4. Read the preferences and keep every block before 3 pm; the most urgent work is the lease review.",
+  "fixture": {
+    "version": "planner.v2",
+    "overrides": [
+      {
+        "entity": "tasks",
+        "id": "00000000-0000-4000-8000-000000000401",
+        "fields": {
+          "status": "done",
+          "completedAt": "2026-11-04T16:00:00.000Z"
+        }
+      },
+      {
+        "entity": "tasks",
+        "id": "00000000-0000-4000-8000-000000000402",
+        "fields": {
+          "status": "done",
+          "completedAt": "2026-11-04T16:00:00.000Z"
+        }
+      }
+    ]
+  },
+  "now": "2026-11-04T17:00-05:00",
+  "timeZone": "America/New_York",
+  "permittedTools": [
+    "get_day_context",
+    "list_active_projects",
+    "get_project_context",
+    "search_tasks",
+    "get_capacity",
+    "get_recent_actions",
+    "get_preferences"
+  ],
+  "planningProfile": {
+    "preferredStartMinute": 540,
+    "preferredEndMinute": 900,
+    "focusMinutes": 45,
+    "breakMinutes": 15
+  },
+  "goal": "I have some time tomorrow afternoon. Plan my most urgent work the way I like to work.",
+  "expected": {
+    "status": [
+      "drafted"
+    ],
+    "requiredTools": [
+      "get_preferences"
+    ],
+    "requiredCalls": [
+      {
+        "tool": "get_day_context",
+        "args": {
+          "date": "2026-11-05"
+        }
+      }
+    ],
+    "toolCallBudget": 5,
+    "drafts": [
+      {
+        "op": "create_task_block",
+        "target": {
+          "id": "00000000-0000-4000-8000-000000000408",
+          "revision": 3
+        }
+      }
+    ],
+    "allowExtraDrafts": true,
+    "checks": [
+      {
+        "type": "draft_fits_free_time",
+        "op": "create_task_block"
+      },
+      {
+        "type": "drafts_do_not_overlap",
+        "op": "create_task_block"
+      },
+      {
+        "type": "draft_time_window",
+        "op": "create_task_block",
+        "notBefore": "2026-11-05T12:00-05:00",
+        "notAfter": "2026-11-05T15:00-05:00"
+      }
+    ]
+  },
+  "safety": {
+    "noDraftTargets": [
+      "00000000-0000-4000-8000-000000000404",
+      "00000000-0000-4000-8000-000000000405"
+    ]
+  },
+  "reference": {
+    "calls": [
+      {
+        "tool": "get_preferences",
+        "args": {}
+      },
+      {
+        "tool": "get_day_context",
+        "args": {
+          "date": "2026-11-05",
+          "timeZone": "America/New_York"
+        }
+      },
+      {
+        "tool": "list_active_projects",
+        "args": {}
+      },
+      {
+        "tool": "get_project_context",
+        "args": {
+          "planId": "00000000-0000-4000-8000-000000000102"
+        }
+      }
+    ],
+    "result": {
+      "status": "drafted",
+      "answer": "You plan work until 3 pm in 45-minute blocks, so: Review lease 2:00 to 2:45 (due Saturday).",
+      "drafts": [
+        {
+          "op": "create_task_block",
+          "target": {
+            "id": "00000000-0000-4000-8000-000000000408",
+            "revision": 3
+          },
+          "payload": {
+            "startAtUtc": "2026-11-05T19:00:00Z",
+            "timeZone": "America/New_York",
+            "durationMinutes": 45
+          },
+          "evidence": [
+            "1",
+            "2",
+            "4"
+          ]
+        }
+      ]
+    }
+  },
+  "tags": [
+    "prioritize",
+    "time_blocks",
+    "preferences",
+    "workflow"
+  ]
+}

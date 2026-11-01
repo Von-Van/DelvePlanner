@@ -17,10 +17,11 @@ pub enum ToolName {
     GetRecentActions,
     /// Reserved for memory experiments; always answers `unavailable` for now.
     GetMemory,
+    GetPreferences,
 }
 
 impl ToolName {
-    pub const ALL: [ToolName; 7] = [
+    pub const ALL: [ToolName; 8] = [
         Self::GetDayContext,
         Self::ListActiveProjects,
         Self::GetProjectContext,
@@ -28,6 +29,7 @@ impl ToolName {
         Self::GetCapacity,
         Self::GetRecentActions,
         Self::GetMemory,
+        Self::GetPreferences,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -39,6 +41,7 @@ impl ToolName {
             Self::GetCapacity => "get_capacity",
             Self::GetRecentActions => "get_recent_actions",
             Self::GetMemory => "get_memory",
+            Self::GetPreferences => "get_preferences",
         }
     }
 
@@ -79,6 +82,14 @@ impl ToolName {
                  agent outcomes are recorded, so an empty list may mean not recorded yet."
             }
             Self::GetMemory => "Reserved for memory experiments. Not available yet.",
+            Self::GetPreferences => {
+                "How the person likes to plan. profile is what they set themselves \
+                 (trust user_confirmed): preferred hours as local HH:MM, the most work per day, \
+                 focus and break lengths, days off, and when demanding work suits them; isSet is \
+                 false when they have set nothing. workingHours are the hours capacity counts. \
+                 observations are patterns computed from their own records (trust verified), \
+                 such as estimates running long: evidence about habits, not stated wishes."
+            }
         }
     }
 
@@ -89,6 +100,7 @@ impl ToolName {
             Self::GetCapacity => "planner_and_calendar_busy",
             Self::GetRecentActions => "agent_history",
             Self::GetMemory => "memory",
+            Self::GetPreferences => "planning_profile",
             _ => "planner",
         }
     }
@@ -99,6 +111,7 @@ impl ToolName {
             Self::GetDayContext | Self::GetCapacity => "planner.read+calendar.busy",
             Self::GetRecentActions => "agent_history.read",
             Self::GetMemory => "memory.read",
+            Self::GetPreferences => "profile.read",
             _ => "planner.read",
         }
     }
@@ -165,7 +178,7 @@ impl ToolName {
                 }),
                 &[],
             ),
-            Self::GetMemory => object(json!({}), &[]),
+            Self::GetMemory | Self::GetPreferences => object(json!({}), &[]),
         }
     }
 
@@ -240,6 +253,14 @@ impl ToolName {
                 &["actions", "historyAvailable"],
             ),
             Self::GetMemory => json!({ "not": {} }),
+            Self::GetPreferences => object(
+                json!({
+                    "profile": { "$ref": "#/$defs/planningProfile" },
+                    "workingHours": { "$ref": "#/$defs/workingHours" },
+                    "observations": array("#/$defs/observation")
+                }),
+                &["profile", "workingHours", "observations"],
+            ),
         }
     }
 }
@@ -432,6 +453,47 @@ fn definitions() -> Value {
                 "updatedAt": { "type": "string" }
             }),
             &["days", "startMinute", "endMinute", "revision", "updatedAt"],
+        ),
+        "planningProfile": object(
+            json!({
+                "trust": { "const": "user_confirmed" },
+                "isSet": { "type": "boolean" },
+                "preferredStart": nullable_ref("#/$defs/clockTime"),
+                "preferredEnd": nullable_ref("#/$defs/clockTime"),
+                "maxPlannedMinutes": nullable("integer"),
+                "focusMinutes": nullable("integer"),
+                "breakMinutes": nullable("integer"),
+                "noWorkDays": { "type": "array", "items": { "$ref": "#/$defs/weekday" } },
+                "energy": nullable_ref("#/$defs/dayPart")
+            }),
+            &[
+                "trust", "isSet", "preferredStart", "preferredEnd", "maxPlannedMinutes",
+                "focusMinutes", "breakMinutes", "noWorkDays", "energy",
+            ],
+        ),
+        "clockTime": {
+            "type": "string",
+            "pattern": "^\\d{2}:\\d{2}$",
+            "description": "Local time of day, HH:MM; 24:00 is the end of the day."
+        },
+        "weekday": {
+            "enum": ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+        },
+        "dayPart": { "enum": ["morning", "afternoon", "evening"] },
+        "observation": object(
+            json!({
+                "trust": { "const": "verified" },
+                "kind": {
+                    "enum": [
+                        "estimate_accuracy", "usual_start", "typical_daily_load", "deferred_days",
+                        "repeatedly_moved", "slipping_plan"
+                    ]
+                },
+                "summary": { "type": "string" },
+                "evidence": { "type": "string" },
+                "sample": { "type": "integer", "minimum": 0 }
+            }),
+            &["trust", "kind", "summary", "evidence", "sample"],
         ),
         "dayCapacity": object(
             json!({

@@ -6,6 +6,7 @@
 //! `contracts/tools.v1.json` is generated from `registry` and is the published contract.
 
 pub mod error;
+pub mod preferences;
 pub mod read;
 pub mod registry;
 
@@ -364,6 +365,9 @@ impl ToolSession {
                 ToolErrorCode::Unavailable,
                 "get_memory is reserved and not available yet.",
             )),
+            ToolName::GetPreferences => {
+                encode(preferences::get_preferences(sources, parse(arguments)?)?)
+            }
         }
     }
 }
