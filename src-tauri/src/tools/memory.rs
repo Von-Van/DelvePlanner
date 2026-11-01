@@ -113,7 +113,7 @@ pub fn select(candidates: Vec<MemoryRecord>, args: &GetMemoryArgs) -> Vec<Memory
         })
         .filter_map(|record| {
             let relevance = relevance(&terms, &record.content);
-            (terms.is_empty() || relevance > 0.0).then(|| MemoryView {
+            (terms.is_empty() || relevance > 0.0).then_some(MemoryView {
                 id: record.id,
                 kind: record.kind,
                 content: record.content,
@@ -264,9 +264,24 @@ mod tests {
     #[test]
     fn project_filter_keeps_general_records_and_drops_other_projects() {
         let (_dir, mut db) = database();
-        remember(&mut db, "General preference.", MemorySource::UserStated, None);
-        remember(&mut db, "This project.", MemorySource::UserStated, Some(PLAN));
-        remember(&mut db, "Other project.", MemorySource::UserStated, Some(OTHER_PLAN));
+        remember(
+            &mut db,
+            "General preference.",
+            MemorySource::UserStated,
+            None,
+        );
+        remember(
+            &mut db,
+            "This project.",
+            MemorySource::UserStated,
+            Some(PLAN),
+        );
+        remember(
+            &mut db,
+            "Other project.",
+            MemorySource::UserStated,
+            Some(OTHER_PLAN),
+        );
         let outcome = call(&db, json!({ "planId": PLAN }));
         let contents: Vec<&str> = outcome["result"]["records"]
             .as_array()
@@ -337,7 +352,12 @@ mod tests {
     fn limit_truncates_and_reports_total() {
         let (_dir, mut db) = database();
         for n in 0..5 {
-            remember(&mut db, &format!("Note {n}."), MemorySource::UserStated, None);
+            remember(
+                &mut db,
+                &format!("Note {n}."),
+                MemorySource::UserStated,
+                None,
+            );
         }
         let outcome = call(&db, json!({ "limit": 2 }));
         let result = &outcome["result"];

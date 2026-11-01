@@ -133,7 +133,20 @@ def _rate(flags: list[bool]) -> float | None:
     return round(sum(flags) / len(flags), 4) if flags else None
 
 
+def target_resolved(row: dict, case: dict) -> bool | None:
+    """For cases that expect a change: did any draft target the right record?
+
+    A1 prompt a1-v1 often gets the payload shape wrong (see the A0-vs-A1 report), which fails the
+    whole case whatever memory did. This separates "worked out what 'it' means" from "wrote a
+    payload the app accepts"."""
+    wanted = {d.get("target", {}).get("id") for d in case["expected"].get("drafts", []) if d.get("target")}
+    if not wanted:
+        return None
+    return any(isinstance(d.get("target"), dict) and d["target"].get("id") in wanted for d in row.get("drafts", []))
+
+
 def block(rows: list[dict]) -> dict:
+    target_rows = [r for r in rows if r.get("targetResolved") is not None]
     recall_rows = [r for r in rows if r["metrics"].get("outdatedRecall") is not None]
     usage = [r["metrics"]["agentUsage"] for r in rows]
     walls = [r["metrics"]["wallMs"] for r in rows]
@@ -142,6 +155,7 @@ def block(rows: list[dict]) -> dict:
         "successRate": _rate([r["success"] for r in rows]),
         "falseRecallRate": _rate([bool(r["metrics"]["outdatedRecall"]) for r in recall_rows]),
         "falseRecallRuns": len(recall_rows),
+        "targetResolvedRate": _rate([bool(r["targetResolved"]) for r in target_rows]),
         "abstentionRate": _rate([r["status"] in ("needs_clarification", "cannot_complete") for r in rows]),
         "unsafeRuns": sum(not r["safe"] for r in rows),
         "meanModelCalls": round(statistics.mean(u["modelCalls"] for u in usage), 2) if usage else None,
@@ -162,6 +176,9 @@ def compare(results: Path) -> dict:
     if not runs:
         raise FileNotFoundError(f"no strategy results under {results}")
     cases = {c["case_id"]: c for c in load_cases("all")}
+    for _, rows in runs.values():
+        for row in rows:
+            row["targetResolved"] = target_resolved(row, cases[row["caseId"]])
     case_ids = sorted({r["caseId"] for _, rows in runs.values() for r in rows}, key=lambda c: (cases[c]["split"], cases[c]["family"], c))
     per_case = []
     for case_id in case_ids:
@@ -176,6 +193,7 @@ def compare(results: Path) -> dict:
                 "passes": sum(r["success"] for r in mine),
                 "solved": sum(r["success"] for r in mine) * 2 > len(mine),
                 "outdatedRecall": sum(bool(r["metrics"].get("outdatedRecall")) for r in mine),
+                "targetResolved": sum(bool(r["targetResolved"]) for r in mine) if mine[0]["targetResolved"] is not None else None,
                 "unsafeRuns": sum(not r["safe"] for r in mine),
                 "statuses": dict(Counter(r["status"] for r in mine)),
                 "failedChecks": sorted({name for r in mine for name, c in r["checks"].items() if not c["passed"]}),
@@ -227,13 +245,13 @@ def render(result: dict) -> str:
         "",
         "## Headline (memory + continuity cases)",
         "",
-        "| Strategy | Success | False recall | Abstained | Unsafe runs | Solved cases | Mean model calls | Mean tool calls | Mean tokens | p50 ms |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        "| Strategy | Success | Right record (drafting cases) | False recall | Abstained | Unsafe runs | Solved cases | Mean model calls | Mean tool calls | Mean tokens | p50 ms |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for s in strategies:
         o = result["overall"][s]
         lines.append(
-            f"| {s} | {_fmt(o['successRate'])} | {_fmt(o['falseRecallRate'])} | {_fmt(o['abstentionRate'])} | {o['unsafeRuns']} | {result['solvedCases'][s]} "
+            f"| {s} | {_fmt(o['successRate'])} | {_fmt(o['targetResolvedRate'])} | {_fmt(o['falseRecallRate'])} | {_fmt(o['abstentionRate'])} | {o['unsafeRuns']} | {result['solvedCases'][s]} "
             f"| {o['meanModelCalls']} | {o['meanToolCalls']} | {o['meanTokens']} | {o['wallMsP50']} |"
         )
     lines += ["", "## By family", "", "| Family | " + " | ".join(f"{s} success / false recall" for s in strategies) + " |", "| --- |" + " --- |" * len(strategies)]

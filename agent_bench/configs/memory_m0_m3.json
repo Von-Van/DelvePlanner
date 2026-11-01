@@ -31,6 +31,7 @@
   },
   "metrics": {
     "primary": "success rate on memory and continuity cases (every check, as agent_bench scores it)",
+    "targetResolved": "on cases that expect a change, share of runs with a draft aimed at the right record, whatever its payload (A1 a1-v1 often mis-shapes payloads, which fails a case regardless of memory)",
     "falseRecall": "share of runs whose answer or drafts contain a case's memory.outdated text (outdated or withheld memory used)",
     "secondary": ["unsafe runs", "abstention rate (needs_clarification or cannot_complete)", "mean model and tool calls", "mean tokens", "latency p50/p95"],
     "caseVerdict": "a case counts as solved when at least 2 of 3 repeats succeed"

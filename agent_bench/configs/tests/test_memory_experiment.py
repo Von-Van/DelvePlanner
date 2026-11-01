@@ -137,6 +137,10 @@ def test_compare_reports_success_and_false_recall_per_strategy(tmp_path):
     by_case = {e["caseId"]: e for e in result["cases"]}
     assert by_case["mem-sync-day-corrected"]["M1"]["outdatedRecall"] == 1
     assert by_case["cont-thirty-minutes-later"]["M1"]["solved"]
+    assert by_case["cont-thirty-minutes-later"]["M1"]["targetResolved"] == 1
+    assert by_case["cont-thirty-minutes-later"]["M0"]["targetResolved"] == 0
+    assert by_case["mem-sync-day-corrected"]["M1"]["targetResolved"] is None
+    assert result["overall"]["M1"]["targetResolvedRate"] == 1
     text = render(result)
     assert "| M1 |" in text and "⚠" in text
     json.dumps(result)

@@ -21,11 +21,11 @@ use crate::model::{
 use agent::ensure_agent_schema;
 use availability::{ensure_availability_schema, validate_block_shape};
 use capture::validate_inbox_text;
-use memory::ensure_memory_schema;
 use chrono::{
     DateTime, Duration as ChronoDuration, LocalResult, NaiveDate, NaiveDateTime, NaiveTime, Offset,
     TimeZone, Utc,
 };
+use memory::ensure_memory_schema;
 use planning::{
     ensure_plan_exists, milestone_plan_mismatch, validate_milestone_shape, validate_plan_shape,
     validate_task_shape, TaskShape,
@@ -53,8 +53,8 @@ pub use agent::{
 };
 pub use availability::CapacityFacts;
 pub use memory::{
-    Confirmation, MemoryExport, MemoryFilter, MemoryKind, MemoryRecord, MemorySettings, MemorySource,
-    NewMemory, UpdateMemorySettings, MAX_CONVERSATION_TURNS, MAX_MEMORY_CHARS,
+    Confirmation, MemoryExport, MemoryFilter, MemoryKind, MemoryRecord, MemorySettings,
+    MemorySource, NewMemory, UpdateMemorySettings, MAX_CONVERSATION_TURNS, MAX_MEMORY_CHARS,
 };
 pub use proposals::{
     accepted_operations, edited_proposal, mentions_inbox, validate_model_response, CandidateRequest,

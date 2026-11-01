@@ -273,7 +273,11 @@ impl PlannerDatabase {
 
     /// Turns memory on or off for one project. Turning it off does not delete what is stored;
     /// `forget_project_memory` does.
-    pub fn set_project_memory(&mut self, plan_id: &str, enabled: bool) -> AppResult<MemorySettings> {
+    pub fn set_project_memory(
+        &mut self,
+        plan_id: &str,
+        enabled: bool,
+    ) -> AppResult<MemorySettings> {
         let plan_id = plan_id_text(plan_id)?;
         if enabled {
             self.connection.execute(
@@ -359,7 +363,11 @@ impl PlannerDatabase {
             return Ok(record);
         }
         let at = now();
-        if record.expires_at.as_deref().is_some_and(|expiry| expiry <= at.as_str()) {
+        if record
+            .expires_at
+            .as_deref()
+            .is_some_and(|expiry| expiry <= at.as_str())
+        {
             return Err(invalid("This memory has expired."));
         }
         self.connection.execute(
@@ -509,7 +517,11 @@ fn select_record(connection: &Connection, id: &str) -> AppResult<MemoryRecord> {
 }
 
 fn record_from_row(row: &Row<'_>) -> rusqlite::Result<MemoryRecord> {
-    fn text_enum<T>(row: &Row<'_>, index: usize, parse: fn(&str) -> Option<T>) -> rusqlite::Result<T> {
+    fn text_enum<T>(
+        row: &Row<'_>,
+        index: usize,
+        parse: fn(&str) -> Option<T>,
+    ) -> rusqlite::Result<T> {
         let value: String = row.get(index)?;
         parse(&value).ok_or_else(|| {
             rusqlite::Error::FromSqlConversionFailure(
@@ -619,7 +631,11 @@ mod tests {
     fn stated_memories_are_confirmed_and_inferences_are_not() {
         let (_dir, mut db) = database();
         let stated = db
-            .add_memory(note("Weekly sync is on Thursdays.", MemorySource::UserStated, None))
+            .add_memory(note(
+                "Weekly sync is on Thursdays.",
+                MemorySource::UserStated,
+                None,
+            ))
             .unwrap();
         assert_eq!(stated.confirmation, Confirmation::Confirmed);
         assert!(stated.confirmed_at.is_some());
@@ -646,9 +662,15 @@ mod tests {
     fn a_correction_supersedes_instead_of_editing() {
         let (_dir, mut db) = database();
         let old = db
-            .add_memory(note("Sync on Tuesdays.", MemorySource::UserStated, Some("p1")))
+            .add_memory(note(
+                "Sync on Tuesdays.",
+                MemorySource::UserStated,
+                Some("p1"),
+            ))
             .unwrap();
-        let new = db.correct_memory(&old.id, "Sync moved to Thursdays.").unwrap();
+        let new = db
+            .correct_memory(&old.id, "Sync moved to Thursdays.")
+            .unwrap();
         assert_eq!(new.source, MemorySource::UserCorrection);
         assert_eq!(new.source_ref.as_deref(), Some(old.id.as_str()));
         assert_eq!(new.plan_id.as_deref(), Some("p1"));
@@ -679,8 +701,12 @@ mod tests {
         let (_dir, mut db) = database();
         db.add_memory(note("General.", MemorySource::UserStated, None))
             .unwrap();
-        db.add_memory(note("Launch fact.", MemorySource::UserStated, Some("launch")))
-            .unwrap();
+        db.add_memory(note(
+            "Launch fact.",
+            MemorySource::UserStated,
+            Some("launch"),
+        ))
+        .unwrap();
         let (enabled, records) = db.memory_candidates(Utc::now()).unwrap();
         assert!(enabled);
         assert_eq!(records.len(), 2);
@@ -790,6 +816,39 @@ mod tests {
         assert_eq!(settings.conversation_turns, 0);
         assert_eq!(settings.inferred_ttl_days, 30);
         assert!(settings.enabled);
+    }
+
+    #[test]
+    fn schema_nine_gains_memory_with_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("dayplan.sqlite3");
+        drop(PlannerDatabase::open(&path).unwrap());
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .execute_batch(
+                "DROP TABLE memory_record; DROP TABLE memory_settings;
+                 DROP TABLE memory_project_setting; PRAGMA user_version = 9;",
+            )
+            .unwrap();
+        drop(connection);
+
+        let mut migrated = PlannerDatabase::open(&path).unwrap();
+        assert_eq!(
+            migrated.schema_version().unwrap(),
+            super::super::CURRENT_SCHEMA_VERSION
+        );
+        let settings = migrated.memory_settings().unwrap();
+        assert!(settings.enabled);
+        assert_eq!(settings.conversation_turns, 6);
+        assert_eq!(settings.inferred_ttl_days, 14);
+        assert!(settings.disabled_plan_ids.is_empty());
+        migrated
+            .add_memory(note(
+                "Works after the upgrade.",
+                MemorySource::UserStated,
+                None,
+            ))
+            .unwrap();
     }
 
     #[test]

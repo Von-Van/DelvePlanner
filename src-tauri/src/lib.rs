@@ -3,6 +3,7 @@ pub mod calendar;
 pub mod capacity;
 pub mod db;
 pub mod error;
+mod memory;
 pub mod model;
 pub mod recurrence;
 pub mod runtime;
@@ -1562,6 +1563,16 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            memory::get_memory_overview,
+            memory::update_memory_settings,
+            memory::set_project_memory,
+            memory::add_memory,
+            memory::confirm_memory,
+            memory::correct_memory,
+            memory::delete_memory,
+            memory::forget_project_memory,
+            memory::clear_memory,
+            memory::export_memory_file,
             list_agenda,
             list_week,
             database_status,
