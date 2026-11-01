@@ -4,10 +4,10 @@ from conftest import FakeClock, ScriptedModel
 
 from delveops_agent import A1Agent, A3Agent, AgentTask, Budget, MockToolClient
 from delveops_agent.prompts import system_prompt
-from delveops_agent.tools import V0_CATALOG
+from delveops_agent.tools import default_catalog
 from delveops_agent.verify import VerifierConfig
 
-ALL_TOOLS = tuple(spec.name for spec in V0_CATALOG)
+ALL_TOOLS = tuple(spec.name for spec in default_catalog())
 TZ = "America/New_York"
 
 DAY = {
@@ -76,7 +76,7 @@ def test_a1_shaped_event_is_normalised_and_passes():
     assert result.architecture_id == "A3"
     assert result.trace[0]["data"]["architectureId"] == "A3"
     assert result.trace[0]["data"]["promptVersion"] == "a3-v1"
-    assert "Value shapes" in model.requests[0].messages[0]["content"]
+    assert "Example, moving an event" in model.requests[0].messages[0]["content"]
     assert kinds(result, "verify")[-1]["data"]["passed"] is True
 
 
@@ -188,16 +188,21 @@ def test_reread_skipped_without_budget():
 def test_ablation_switches_turn_checks_off():
     config = VerifierConfig(normalize=False, check_payloads=False, check_times=False, check_freshness=False)
     a1_shaped = event_draft({"title": "Mockups", "start": "2026-11-04T10:00-05:00"})
-    result, _, _ = run([day_call(), a1_shaped], agent=A3Agent(verifier=config, clock=FakeClock()))
-    assert result.status == "drafted" and "start" in result.drafts[0].payload
+    agent = A3Agent(verifier=config, clock=FakeClock())
+    result, _, model = run([day_call(), a1_shaped, a1_shaped, a1_shaped], agent=agent)
+    # Without normalisation the A1-shaped draft stays wrong; A1's own parser still refuses it.
+    assert result.status == "cannot_complete" and result.stop_reason == "invalid_draft"
+    assert "unknown payload field(s) start" in model.requests[2].messages[-1]["content"]
 
 
 def test_everything_off_is_a1():
-    script = [day_call(), event_draft({"title": "Mockups", "start": "x"})]
-    a3 = A3Agent(use_verifier=False, payload_guide=False, max_repairs=2, clock=FakeClock())
+    good = {"title": "Mockups", "notes": "", "startAtUtc": "2026-11-04T15:00:00Z", "timeZone": TZ}
+    good["durationMinutes"] = 60
+    script = [day_call(), event_draft({"title": "Mockups", "start": "x"}), event_draft(good)]
+    a3 = A3Agent(use_verifier=False, prompt_notes=False, max_repairs=2, clock=FakeClock())
     a3_result, _, a3_model = run(list(script), agent=a3)
     a1_result, _, a1_model = run(list(script), agent=A1Agent(clock=FakeClock()))
     assert a3_model.requests[0].messages == a1_model.requests[0].messages
-    assert a3_model.requests[0].messages[0]["content"] == system_prompt(V0_CATALOG)
+    assert a3_model.requests[0].messages[0]["content"] == system_prompt(default_catalog())
     assert (a3_result.status, a3_result.drafts) == (a1_result.status, a1_result.drafts)
     assert [e["kind"] for e in a3_result.trace] == [e["kind"] for e in a1_result.trace]

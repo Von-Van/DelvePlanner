@@ -1,28 +1,14 @@
 from __future__ import annotations
 
-import json
-from pathlib import Path
+from delveops_agent.drafts import OP_SPECS
+from delveops_agent.verify.operations import normalize_payload, payload_problems
 
-import pytest
-
-from delveops_agent.drafts import ALLOWED_OPS, CREATE_OPS
-from delveops_agent.verify.operations import OPERATION_FIELDS, normalize_payload, payload_guide, payload_problems
-
-DRAFT_SCHEMA = Path(__file__).resolve().parents[2] / "agent_bench" / "schemas" / "draft.v0.json"
 TZ = "America/New_York"
 
 
-def test_every_operation_is_described():
-    assert set(OPERATION_FIELDS) == set(ALLOWED_OPS)
-
-
-@pytest.mark.skipif(not DRAFT_SCHEMA.is_file(), reason="agent_bench is not next to agent-python")
-def test_fields_match_the_benchmark_draft_schema():
-    table = json.loads(DRAFT_SCHEMA.read_text())["x-operations"]
-    assert set(table["targetless"]) == set(CREATE_OPS)
-    for op, fields in OPERATION_FIELDS.items():
-        assert sorted(f.name for f in fields if f.required) == sorted(table["fields"][op]["required"]), op
-        assert sorted(f.name for f in fields if not f.required) == sorted(table["fields"][op]["optional"]), op
+def test_every_operation_is_understood():
+    for op in OP_SPECS:
+        assert payload_problems(op, {"bogus": 1}), op
 
 
 def test_a1_style_event_payload_is_refused_with_hints():
@@ -99,9 +85,3 @@ def test_normalize_leaves_guesses_to_the_model():
     assert payload == {"start": "2026-11-04T15:00"} and notes == []
     payload, _ = normalize_payload("update_task", {"status": "finished"}, TZ)
     assert payload_problems("update_task", payload)
-
-
-def test_guide_lists_every_operation():
-    guide = payload_guide()
-    for op in OPERATION_FIELDS:
-        assert f"- {op}:" in guide

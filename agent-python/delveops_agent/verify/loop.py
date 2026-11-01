@@ -1,7 +1,7 @@
 """The verifier wired into an agent loop.
 
 `VerifyingRun` extends A1's run loop (`agent._Run`) without changing A1: it keeps a log of tool calls,
-optionally swaps in a system prompt that lists every operation's payload fields, and, when a verifier
+optionally swaps in another system prompt, and, when a verifier
 config is given, sends each draft step through the checks in `review.py` and `freshness.py` before the
 run may finish. A failed check goes back to the model as a normal repair message; a run whose model
 cannot fix its drafts within the repair limit ends in `cannot_complete`, as A1's does.
@@ -12,25 +12,16 @@ verifier optional.
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from typing import Any
 
 from ..agent import _Run, _Stop
-from ..drafts import DraftError, observed_records, parse_draft
+from ..drafts import OP_SPECS, TYPE_HELP, DraftError, observed_records, parse_draft, payload_help
 from ..types import AgentResult, Draft, ToolError
 from .freshness import plan_rereads, stale_targets
-from .operations import OPERATION_FIELDS, payload_guide
 from .review import Observation, VerifierConfig, format_findings, normalize_drafts, shape_findings, time_findings
 
-# Operations whose whole meaning is in the target; their payload is legitimately empty.
-NO_FIELD_OPS = frozenset(op for op, fields in OPERATION_FIELDS.items() if not fields)
-
-GUIDE_HEADER = """Draft payloads use exactly these fields (camelCase). The target's id and revision go in "target", \
-never in the payload. Leave out optional fields you are not changing.
-"""
-
-GUIDE_EXAMPLE = """Example, moving an event to 3 pm New York time on Nov 4 (20:00 UTC):
+CONVERSION_EXAMPLE = """Example, moving an event to 3 pm New York time on Nov 4 (20:00 UTC):
 {"op": "reschedule_event", "target": {"id": "ev-1", "revision": 2}, "payload": {"startAtUtc": \
 "2026-11-04T20:00:00Z", "timeZone": "America/New_York", "reminderChange": {"action": "unchanged"}}, \
 "evidence": ["tc-1"]}
@@ -38,8 +29,21 @@ Day-context tools show local "start"/"end" times; convert them to startAtUtc (UT
 durationMinutes."""
 
 
-def guide_text() -> str:
-    return f"{GUIDE_HEADER}{payload_guide()}\n{GUIDE_EXAMPLE}"
+VERIFY_NOTE = (
+    "Before your drafts reach the person they are checked against the planner's rules and their records are "
+    "re-read; if a check fails you will be told what to fix."
+)
+
+
+def draft_reference() -> str:
+    """The payload table from A1's prompt (same source: `drafts.OP_SPECS`), for prompts that are not A1's."""
+    ops = "\n".join(payload_help(op) for op in OP_SPECS)
+    used = sorted({kind for spec in OP_SPECS.values() for kind, _ in spec.values()})
+    types = "\n".join(f"- {kind}: {TYPE_HELP[kind]}" for kind in used if kind not in ("str", "int"))
+    return (
+        'Draft ops and their payload fields. "?" = optional; a left-out *_change field means unchanged.\n'
+        f"Use no other fields:\n{ops}\nField types:\n{types}"
+    )
 
 
 @dataclass(frozen=True)
@@ -52,7 +56,7 @@ class CallInfo:
 
 
 class VerifyingRun(_Run):
-    """A1's loop plus a call log, an optional payload guide, and an optional verifier."""
+    """A1's loop plus a call log, an optional replacement system prompt, and an optional verifier."""
 
     def __init__(
         self,
@@ -111,13 +115,6 @@ class VerifyingRun(_Run):
 
     # -- drafts ---------------------------------------------------------------------------------
 
-    def ground(self, item: Any, records: dict[str, Any]) -> Draft:
-        """A1's grounding rules, also accepting the empty payload of delete operations."""
-        if isinstance(item, dict) and item.get("op") in NO_FIELD_OPS and item.get("payload") in ({}, None):
-            draft = parse_draft({**item, "payload": {"none": True}}, set(self.tool_results), records)
-            return Draft(op=draft.op, target=draft.target, payload={}, evidence=draft.evidence)
-        return parse_draft(item, set(self.tool_results), records)
-
     def parse_drafts(self, raw: Any) -> list[Draft] | None:
         if self.verifier is None:
             return super().parse_drafts(raw)
@@ -134,11 +131,14 @@ class VerifyingRun(_Run):
         drafts: list[Draft] = []
         grounding: str | None = None
         try:
-            drafts = [self.ground(item, records) for item in raw]
+            drafts = [parse_draft(item, set(self.tool_results), records) for item in raw]
         except DraftError as error:
             grounding = str(error)
         if findings or grounding:
-            messages = [f.message for f in findings] + ([grounding] if grounding else [])
+            # A1's parser stops at the first problem; when the full list already names it, skip the repeat.
+            messages = [f.message for f in findings]
+            if grounding and not (findings and "payload" in grounding):
+                messages.append(grounding)
             self.tracer.emit(
                 "verify",
                 f"drafts rejected ({len(messages)} problem(s))",
@@ -246,7 +246,3 @@ def relabel(result: AgentResult, architecture_id: str, prompt_version: str, deta
             event["data"].update(details)
             break
     return result
-
-
-def json_step(value: Any) -> str:
-    return json.dumps(value, ensure_ascii=False)
