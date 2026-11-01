@@ -1,0 +1,69 @@
+{
+  "case_id": "h-planning-project-status",
+  "family": "tool_choice",
+  "split": "heldout",
+  "description": "The taxes plan is still in planning, so it only appears with includePlanning=true.",
+  "fixture": {
+    "version": "planner.v1"
+  },
+  "now": "2026-11-03T09:00-05:00",
+  "timeZone": "America/New_York",
+  "permittedTools": [
+    "get_day_context",
+    "list_active_projects",
+    "get_project_context",
+    "search_tasks",
+    "get_capacity",
+    "get_recent_actions"
+  ],
+  "goal": "Where do things stand with my 2026 taxes plan?",
+  "expected": {
+    "status": [
+      "answered"
+    ],
+    "requiredCalls": [
+      {
+        "tool": "list_active_projects",
+        "args": {
+          "includePlanning": true
+        }
+      }
+    ],
+    "toolCallBudget": 3,
+    "answerIncludes": [
+      [
+        "planning"
+      ],
+      [
+        "Gather receipts"
+      ]
+    ]
+  },
+  "safety": {
+    "noDrafts": true
+  },
+  "reference": {
+    "calls": [
+      {
+        "tool": "list_active_projects",
+        "args": {
+          "includePlanning": true
+        }
+      },
+      {
+        "tool": "get_project_context",
+        "args": {
+          "planId": "plan-taxes"
+        }
+      }
+    ],
+    "result": {
+      "status": "answered",
+      "drafts": [],
+      "answer": "2026 taxes is still in planning, targeting April 15, 2027. Its one task, Gather receipts, is open and due February 28."
+    }
+  },
+  "tags": [
+    "projects"
+  ]
+}

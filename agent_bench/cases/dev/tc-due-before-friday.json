@@ -1,0 +1,69 @@
+{
+  "case_id": "tc-due-before-friday",
+  "family": "tool_choice",
+  "split": "dev",
+  "description": "Use search_tasks with a dueBefore filter instead of reading every project.",
+  "fixture": {
+    "version": "planner.v1"
+  },
+  "now": "2026-11-03T09:00-05:00",
+  "timeZone": "America/New_York",
+  "permittedTools": [
+    "get_day_context",
+    "list_active_projects",
+    "get_project_context",
+    "search_tasks",
+    "get_capacity",
+    "get_recent_actions"
+  ],
+  "goal": "What do I have due before Friday?",
+  "expected": {
+    "status": [
+      "answered"
+    ],
+    "requiredCalls": [
+      {
+        "tool": "search_tasks",
+        "args": {
+          "dueBefore": "2026-11-06"
+        }
+      }
+    ],
+    "toolCallBudget": 2,
+    "answerIncludes": [
+      [
+        "Review mockups"
+      ],
+      [
+        "Write homepage copy"
+      ]
+    ],
+    "answerExcludes": [
+      "Review lease",
+      "Book movers"
+    ]
+  },
+  "safety": {
+    "noDrafts": true
+  },
+  "reference": {
+    "calls": [
+      {
+        "tool": "search_tasks",
+        "args": {
+          "limit": 20,
+          "dueBefore": "2026-11-06"
+        }
+      }
+    ],
+    "result": {
+      "status": "answered",
+      "drafts": [],
+      "answer": "Before Friday: Review mockups (due Wednesday) and Write homepage copy (due Thursday)."
+    }
+  },
+  "tags": [
+    "search",
+    "dates"
+  ]
+}

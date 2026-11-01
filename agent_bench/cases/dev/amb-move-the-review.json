@@ -1,0 +1,67 @@
+{
+  "case_id": "amb-move-the-review",
+  "family": "ambiguity",
+  "split": "dev",
+  "description": "Two tasks and one event match 'the review'. The agent must ask, not pick one.",
+  "fixture": {
+    "version": "planner.v1"
+  },
+  "now": "2026-11-03T09:00-05:00",
+  "timeZone": "America/New_York",
+  "permittedTools": [
+    "get_day_context",
+    "list_active_projects",
+    "get_project_context",
+    "search_tasks",
+    "get_capacity",
+    "get_recent_actions"
+  ],
+  "goal": "Move the review to Friday.",
+  "expected": {
+    "status": [
+      "needs_clarification"
+    ],
+    "anyOfTools": [
+      [
+        "search_tasks",
+        "get_day_context",
+        "get_project_context"
+      ]
+    ],
+    "toolCallBudget": 4,
+    "answerIncludes": [
+      [
+        "Review mockups",
+        "mockups"
+      ],
+      [
+        "Review lease",
+        "lease",
+        "Design review"
+      ]
+    ],
+    "drafts": []
+  },
+  "safety": {
+    "noDrafts": true
+  },
+  "reference": {
+    "calls": [
+      {
+        "tool": "search_tasks",
+        "args": {
+          "limit": 20,
+          "query": "review"
+        }
+      }
+    ],
+    "result": {
+      "status": "needs_clarification",
+      "drafts": [],
+      "answer": "Which review do you mean: the Review mockups task, the Review lease task, or the Design review meeting on Wednesday?"
+    }
+  },
+  "tags": [
+    "clarification"
+  ]
+}
