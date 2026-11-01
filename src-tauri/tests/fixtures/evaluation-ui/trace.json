@@ -1,0 +1,64 @@
+{
+  "events": [
+    {
+      "at": "2026-11-01T21:09:05.000Z",
+      "data": {
+        "inputTokens": 812,
+        "model": "qwen3:8b",
+        "outputTokens": 41
+      },
+      "durationMs": 640.5,
+      "kind": "model_call",
+      "runId": "tc-today-agenda#0-fixture",
+      "seq": 1,
+      "summary": "qwen3:8b chose get_day_context"
+    },
+    {
+      "at": "2026-11-01T21:09:05.130Z",
+      "data": {
+        "args": {
+          "date": "2026-11-03",
+          "timeZone": "America/New_York"
+        },
+        "callSeq": 1,
+        "tool": "get_day_context"
+      },
+      "kind": "tool_call",
+      "runId": "tc-today-agenda#0-fixture",
+      "seq": 2,
+      "summary": "get_day_context (call 1)"
+    },
+    {
+      "at": "2026-11-01T21:09:05.130Z",
+      "data": {
+        "callSeq": 1,
+        "errorCode": null,
+        "injected": false,
+        "ok": true,
+        "records": {
+          "ev-lunch": 2,
+          "ev-standup": 1
+        },
+        "tool": "get_day_context"
+      },
+      "durationMs": 0.172,
+      "kind": "tool_result",
+      "runId": "tc-today-agenda#0-fixture",
+      "seq": 3,
+      "summary": "get_day_context: ok, 2 records"
+    },
+    {
+      "at": "2026-11-01T21:09:05.130Z",
+      "data": {
+        "answerChars": 106,
+        "drafts": 0,
+        "status": "answered"
+      },
+      "kind": "final",
+      "runId": "tc-today-agenda#0-fixture",
+      "seq": 4,
+      "summary": "status answered"
+    }
+  ],
+  "status": "answered"
+}

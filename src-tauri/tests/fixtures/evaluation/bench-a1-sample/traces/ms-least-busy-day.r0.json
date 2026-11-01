@@ -1,0 +1,96 @@
+{
+  "runId": "ms-least-busy-day#0-fixture",
+  "trace": [
+    {
+      "runId": "ms-least-busy-day#0-fixture",
+      "seq": 1,
+      "kind": "tool_call",
+      "at": "2026-11-01T21:09:05.123Z",
+      "summary": "get_capacity (call 1)",
+      "data": {
+        "tool": "get_capacity",
+        "args": {
+          "weekStart": "2026-11-02",
+          "timeZone": "America/New_York"
+        },
+        "callSeq": 1
+      }
+    },
+    {
+      "runId": "ms-least-busy-day#0-fixture",
+      "seq": 2,
+      "kind": "tool_result",
+      "at": "2026-11-01T21:09:05.124Z",
+      "summary": "get_capacity: ok, 0 records",
+      "data": {
+        "tool": "get_capacity",
+        "callSeq": 1,
+        "ok": true,
+        "errorCode": null,
+        "injected": false,
+        "records": {}
+      },
+      "durationMs": 0.435
+    },
+    {
+      "runId": "ms-least-busy-day#0-fixture",
+      "seq": 3,
+      "kind": "tool_call",
+      "at": "2026-11-01T21:09:05.124Z",
+      "summary": "search_tasks (call 1)",
+      "data": {
+        "tool": "search_tasks",
+        "args": {
+          "limit": 20,
+          "query": "book movers"
+        },
+        "callSeq": 2
+      }
+    },
+    {
+      "runId": "ms-least-busy-day#0-fixture",
+      "seq": 4,
+      "kind": "tool_result",
+      "at": "2026-11-01T21:09:05.124Z",
+      "summary": "search_tasks: ok, 1 records",
+      "data": {
+        "tool": "search_tasks",
+        "callSeq": 2,
+        "ok": true,
+        "errorCode": null,
+        "injected": false,
+        "records": {
+          "t-movers": 2
+        }
+      },
+      "durationMs": 0.05
+    },
+    {
+      "runId": "ms-least-busy-day#0-fixture",
+      "seq": 5,
+      "kind": "draft",
+      "at": "2026-11-01T21:09:05.124Z",
+      "summary": "draft 0: schedule_task",
+      "data": {
+        "op": "schedule_task",
+        "target": {
+          "id": "t-movers",
+          "revision": 2
+        }
+      }
+    },
+    {
+      "runId": "ms-least-busy-day#0-fixture",
+      "seq": 6,
+      "kind": "final",
+      "at": "2026-11-01T21:09:05.124Z",
+      "summary": "status drafted",
+      "data": {
+        "status": "drafted",
+        "drafts": 1,
+        "answerChars": 94
+      }
+    }
+  ],
+  "agentTrace": []
+}
