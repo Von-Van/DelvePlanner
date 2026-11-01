@@ -408,7 +408,8 @@ impl PlannerDatabase {
                        LEFT JOIN agent_action_result x ON x.draft_id = d.id
                       WHERE d.run_id = m.run_id
                         AND (d.state IN ('stale', 'expired')
-                             OR x.execution_state IN ('failed', 'stale')))
+                             OR x.execution_state IN ('failed', 'stale'))),
+                    m.run_id IS NOT NULL
              FROM agent_message m WHERE m.thread_id = ?1 ORDER BY m.seq",
         )?;
         let messages = statement
@@ -420,15 +421,16 @@ impl PlannerDatabase {
                     .as_deref()
                     .map(MessageRunStatus::parse)
                     .transpose()?;
-                let outcome = DraftOutcome {
+                let outcome = row.get::<_, bool>(7)?.then_some(DraftOutcome {
                     applied: row.get(4)?,
                     rejected: row.get(5)?,
                     not_applied: row.get(6)?,
-                };
-                Ok(ConversationTurn {
+                });
+                Ok(StoredTurn {
                     role,
-                    text: with_outcome(role, text, status, outcome),
+                    text,
                     at: row.get(2)?,
+                    note: outcome_note(role, status, outcome),
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -437,7 +439,17 @@ impl PlannerDatabase {
         let summary = summarize(&messages[..split]);
         Ok(ConversationContext {
             thread_id: thread_id.to_string(),
-            turns: messages[split..].to_vec(),
+            turns: messages[split..]
+                .iter()
+                .map(|turn| ConversationTurn {
+                    role: turn.role,
+                    text: match &turn.note {
+                        Some(note) => format!("{} [{note}]", turn.text),
+                        None => turn.text.clone(),
+                    },
+                    at: turn.at.clone(),
+                })
+                .collect(),
             summary,
             turns_available: available,
         })
@@ -514,17 +526,29 @@ struct DraftOutcome {
     not_applied: i64,
 }
 
-/// An assistant turn that drafted changes says what the person did with them, so "move it 30
-/// minutes later" starts from the approved time, not the old one.
-fn with_outcome(
+/// One stored message and the note on what came of the changes it drafted, kept apart so the
+/// digest can clip the text without losing the note.
+struct StoredTurn {
     role: MessageRole,
     text: String,
+    at: String,
+    note: Option<String>,
+}
+
+/// An assistant turn that drafted changes says what the person did with them, so "move it 30
+/// minutes later" starts from the approved time, not the old one. `outcome` is `None` when the
+/// run behind the turn has since been forgotten: then that is all it says.
+fn outcome_note(
+    role: MessageRole,
     status: Option<MessageRunStatus>,
-    outcome: DraftOutcome,
-) -> String {
+    outcome: Option<DraftOutcome>,
+) -> Option<String> {
     if role != MessageRole::Assistant || status != Some(MessageRunStatus::Drafted) {
-        return text;
+        return None;
     }
+    let Some(outcome) = outcome else {
+        return Some("What came of the drafted change is no longer recorded.".to_string());
+    };
     let mut notes = Vec::new();
     if outcome.applied > 0 {
         notes.push(match outcome.applied {
@@ -541,22 +565,28 @@ fn with_outcome(
     if outcome.applied == 0 && outcome.rejected == 0 && outcome.not_applied == 0 {
         notes.push("The drafted change has not been approved yet.".to_string());
     }
-    format!("{text} [{}]", notes.join(" "))
+    Some(notes.join(" "))
 }
 
 /// A short digest of turns that no longer fit the window: what the person asked and how the
 /// assistant answered, one clipped line each, newest kept when space runs out. Built from the
 /// stored messages, so there is no model call and nothing new is made up.
-fn summarize(older: &[ConversationTurn]) -> Option<String> {
+fn summarize(older: &[StoredTurn]) -> Option<String> {
     if older.is_empty() {
         return None;
     }
     let mut lines: Vec<String> = older
         .iter()
-        .map(|turn| match turn.role {
-            MessageRole::User => format!("- Person: {}", clip(&turn.text, SUMMARY_USER_CHARS)),
-            MessageRole::Assistant => {
-                format!("- Assistant: {}", clip(&turn.text, SUMMARY_ASSISTANT_CHARS))
+        .map(|turn| {
+            let line = match turn.role {
+                MessageRole::User => format!("- Person: {}", clip(&turn.text, SUMMARY_USER_CHARS)),
+                MessageRole::Assistant => {
+                    format!("- Assistant: {}", clip(&turn.text, SUMMARY_ASSISTANT_CHARS))
+                }
+            };
+            match &turn.note {
+                Some(note) => format!("{line} [{note}]"),
+                None => line,
             }
         })
         .collect();
@@ -927,6 +957,68 @@ mod tests {
         assert_eq!(detail.messages[0].id, message.id);
         assert_eq!(detail.messages[0].run_id, None);
         assert_eq!(detail.messages[0].text, "Two meetings.");
+    }
+
+    #[test]
+    fn a_forgotten_run_is_never_reported_as_unapproved() {
+        let mut database = PlannerDatabase::open(&path()).unwrap();
+        let thread = database.create_agent_thread(None).unwrap();
+        let run_id = run(&mut database, "Move gym to 6 pm");
+        database
+            .append_agent_message(
+                &thread.id,
+                assistant("Drafted a move.", Some(&run_id), MessageRunStatus::Drafted),
+            )
+            .unwrap();
+        approved_and_applied(&mut database, &run_id);
+        database.delete_agent_run(&run_id).unwrap();
+        let turns = database.conversation_context(&thread.id, 6).unwrap().turns;
+        assert_eq!(
+            turns[0].text,
+            "Drafted a move. [What came of the drafted change is no longer recorded.]"
+        );
+    }
+
+    #[test]
+    fn the_digest_keeps_a_long_drafted_reply_s_outcome() {
+        let mut database = PlannerDatabase::open(&path()).unwrap();
+        let thread = database.create_agent_thread(None).unwrap();
+        let rejected = run(&mut database, "Delete gym");
+        let draft = database
+            .record_action_draft(
+                &rejected,
+                NewActionDraft {
+                    op: "delete_event".into(),
+                    target: Some(DraftTarget {
+                        id: "event-gym".into(),
+                        revision: 2,
+                    }),
+                    payload: json!({}),
+                    evidence: vec!["call-1".into()],
+                    expires_at: "2999-01-01T00:00:00Z".into(),
+                },
+            )
+            .unwrap();
+        database
+            .decide_action_draft(&draft.id, DraftDecision::Reject, &draft.payload_digest)
+            .unwrap();
+        let long_reply = format!("Drafted: delete Gym. {}", "Here is why. ".repeat(30));
+        database
+            .append_agent_message(
+                &thread.id,
+                assistant(&long_reply, Some(&rejected), MessageRunStatus::Drafted),
+            )
+            .unwrap();
+        database
+            .append_agent_message(&thread.id, user("Something else"))
+            .unwrap();
+        let summary = database
+            .conversation_context(&thread.id, 1)
+            .unwrap()
+            .summary
+            .unwrap();
+        assert!(summary.contains("- Assistant: Drafted: delete Gym."));
+        assert!(summary.contains("… [The person turned down the drafted change.]"));
     }
 
     #[test]
