@@ -466,6 +466,8 @@ def tool_get_memory(state: PlannerState, args: dict, s: Session) -> dict:
     memory = getattr(state, "memory", None) or {"records": []}
     if len(args.get("query", "")) > 200:
         raise ToolError("invalid_arguments", "query can be at most 200 characters")
+    if args.get("planId") is not None and not is_uuid(args["planId"]):
+        raise ToolError("invalid_arguments", "planId must be a plan id.")
     if not memory.get("enabled", True):
         return {"memoryEnabled": False, "records": [], "totalMatches": 0, "truncated": False}
     now = s.now

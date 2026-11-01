@@ -8,7 +8,9 @@ import { z } from "zod";
 
 export const memoryKinds = [
   "decision",
+  "priority",
   "project_fact",
+  "open_problem",
   "preference",
   "note",
 ] as const;
@@ -110,7 +112,9 @@ export type MemoryApi = typeof memoryApi;
 
 export const kindLabels: Record<MemoryKind, string> = {
   decision: "Decision",
+  priority: "Priority",
   project_fact: "Project fact",
+  open_problem: "Open problem",
   preference: "Preference",
   note: "Note",
 };

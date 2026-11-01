@@ -90,7 +90,7 @@ def test_default_catalog_is_the_rust_tools_contract(monkeypatch):
         pytest.skip("needs the full repository checkout")
     monkeypatch.delenv(CONTRACT_ENV, raising=False)
     catalog = {spec.name: spec for spec in default_catalog()}
-    assert set(catalog) == set(SPECS)  # get_memory is reserved (not implemented) and left out
+    assert set(catalog) == set(SPECS) | {"get_memory"}  # get_memory is implemented in Rust since M2
     day = catalog["get_day_context"]
     # $defs references are inlined, so formats are checked before a tool call is spent.
     assert day.input_schema["properties"]["date"]["type"] == "string"

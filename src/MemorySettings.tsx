@@ -115,7 +115,11 @@ export function MemorySettings({
         )
       }
       onDelete={(record) => {
-        if (!window.confirm("Delete this memory? This can't be undone."))
+        if (
+          !window.confirm(
+            "Delete this memory and its earlier versions? This can't be undone.",
+          )
+        )
           return;
         void act(() => memoryApi.remove(record.id), "Memory deleted.");
       }}

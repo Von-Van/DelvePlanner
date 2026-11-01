@@ -20,7 +20,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any
 
-from ..tools import V0_CATALOG, ToolClient, ToolSpec
+from ..tools import ToolClient, ToolSpec, default_catalog
 from ..types import AgentResult, AgentTask, Budget
 
 MEMORY_PROMPT_VERSION = "memory-v2"
@@ -107,8 +107,8 @@ def compose_goal(goal: str, *blocks: str) -> str:
 class MemoryAgent:
     """Runs an inner agent with the conversation window and the ``get_memory`` tool.
 
-    ``inner_factory(catalog)`` builds the inner agent with the tool catalog to offer; the assistant
-    agent takes the catalog as its first argument. ``run`` takes the usual arguments plus the
+    ``inner_factory(catalog)`` builds the inner agent with the tool catalog to offer (the tools
+    contract by default, which includes ``get_memory``). ``run`` takes the usual arguments plus the
     conversation so far. ``window_turns`` is the person's "recent conversation" setting (0 = none).
     """
 
@@ -116,10 +116,12 @@ class MemoryAgent:
         self,
         inner_factory: Any,
         window_turns: int = DEFAULT_WINDOW_TURNS,
-        base_catalog: tuple[ToolSpec, ...] = V0_CATALOG,
+        base_catalog: tuple[ToolSpec, ...] | None = None,
     ) -> None:
         self.window_turns = window_turns
-        catalog = (*(s for s in base_catalog if s.name != "get_memory"), GET_MEMORY_SPEC)
+        catalog = default_catalog() if base_catalog is None else base_catalog
+        if not any(s.name == "get_memory" for s in catalog):
+            catalog = (*catalog, GET_MEMORY_SPEC)  # an older contract without get_memory
         self.inner = inner_factory(catalog)
         self.architecture_id = f"{getattr(self.inner, 'architecture_id', 'agent')}+memory"
 
