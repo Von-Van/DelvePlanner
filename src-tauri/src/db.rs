@@ -53,8 +53,9 @@ pub use agent::{
 };
 pub use availability::CapacityFacts;
 pub use memory::{
-    Confirmation, MemoryExport, MemoryFilter, MemoryKind, MemoryRecord, MemorySettings,
-    MemorySource, NewMemory, UpdateMemorySettings, MAX_CONVERSATION_TURNS, MAX_MEMORY_CHARS,
+    Confirmation, ImportedMemorySettings, MemoryExport, MemoryFilter, MemoryImport, MemoryKind,
+    MemoryRecord, MemorySettings, MemorySource, NewMemory, UpdateMemorySettings,
+    MAX_CONVERSATION_TURNS, MAX_MEMORY_CHARS,
 };
 pub use proposals::{
     accepted_operations, edited_proposal, mentions_inbox, validate_model_response, CandidateRequest,

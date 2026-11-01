@@ -79,12 +79,13 @@ impl ToolName {
                  agent outcomes are recorded, so an empty list may mean not recorded yet."
             }
             Self::GetMemory => {
-                "Remembered decisions, project facts, and preferences, ranked by how well they \
-                 match the query, then confirmed before unconfirmed, then newest. Superseded and \
-                 expired memories are never returned. Each record says its source and whether \
-                 the person confirmed it; treat unconfirmed records as possibly wrong, and \
-                 prefer planner records when they disagree. memoryEnabled is false when the \
-                 person paused memory."
+                "Remembered decisions, priorities, project facts, open problems, and \
+                 preferences, ranked by how well they match the query, then confirmed before \
+                 unconfirmed, then newest. Superseded, deleted and expired memories are never \
+                 returned. Each record has a trust level: verified (from a change the person \
+                 approved), user_confirmed, or inferred (an unconfirmed guess: say it is a guess, \
+                 never present it as fact). Prefer planner records when they disagree. \
+                 memoryEnabled is false when the person paused memory."
             }
         }
     }
@@ -315,7 +316,9 @@ fn definitions() -> Value {
         "taskPriority": { "enum": ["low", "normal", "high", "critical"] },
         "planStatus": { "enum": ["planning", "active", "on_hold", "complete", "cancelled"] },
         "milestoneStatus": { "enum": ["pending", "complete", "skipped"] },
-        "memoryKind": { "enum": ["decision", "project_fact", "preference", "note"] },
+        "memoryKind": {
+            "enum": ["decision", "priority", "project_fact", "open_problem", "preference", "note"]
+        },
         "memory": object(
             json!({
                 "id": { "$ref": "#/$defs/id" },
@@ -326,11 +329,18 @@ fn definitions() -> Value {
                 },
                 "confirmation": { "enum": ["confirmed", "unconfirmed"] },
                 "planId": nullable_ref("#/$defs/id"),
+                "trust": {
+                    "enum": ["verified", "user_confirmed", "inferred"],
+                    "description": "verified: from a change the person approved. user_confirmed: the person said, corrected or confirmed it. inferred: the assistant's unconfirmed guess; never present it as fact."
+                },
                 "recordedAt": { "$ref": "#/$defs/instant" },
                 "expiresAt": { "$ref": "#/$defs/instant" },
                 "relevance": { "type": "number", "minimum": 0, "maximum": 1 }
             }),
-            &["id", "kind", "content", "source", "confirmation", "planId", "recordedAt", "relevance"],
+            &[
+                "id", "kind", "content", "source", "confirmation", "planId", "trust", "recordedAt",
+                "relevance",
+            ],
         ),
         "timeRange": object(
             json!({

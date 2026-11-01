@@ -358,6 +358,12 @@ impl PlannerDatabase {
             transaction.execute("DELETE FROM milestones WHERE plan_id = ?1", params![id])?;
         let deleted_workstreams =
             transaction.execute("DELETE FROM workstreams WHERE plan_id = ?1", params![id])?;
+        // The project's memories go with it (they are about a project that no longer exists).
+        transaction.execute("DELETE FROM agent_memory WHERE plan_id = ?1", params![id])?;
+        transaction.execute(
+            "DELETE FROM memory_project_setting WHERE plan_id = ?1",
+            params![id],
+        )?;
         transaction.execute("DELETE FROM plans WHERE id = ?1", params![id])?;
         transaction.commit()?;
         Ok(PlanDeletion {
@@ -1672,6 +1678,43 @@ mod tests {
         assert_eq!(workspace.tasks.len(), 1);
         assert_eq!(workspace.tasks[0].milestone_id, None);
         assert_eq!(workspace.tasks[0].revision, created.revision + 1);
+    }
+
+    #[test]
+    fn deleting_a_plan_forgets_its_memories() {
+        use crate::db::{MemoryFilter, MemoryKind, MemorySource, NewMemory};
+        let mut database = database();
+        let trip = plan(&mut database, "Vacation");
+        let remember = |database: &mut PlannerDatabase, plan_id: Option<String>| {
+            database
+                .add_memory(NewMemory {
+                    kind: MemoryKind::Decision,
+                    content: "Fly, don't drive.".into(),
+                    source: MemorySource::UserStated,
+                    source_ref: None,
+                    plan_id,
+                })
+                .unwrap()
+        };
+        remember(&mut database, Some(trip.id.clone()));
+        let general = remember(&mut database, None);
+        database.set_project_memory(&trip.id, false).unwrap();
+        let archived = archive(&mut database, &trip);
+        database
+            .delete_plan(&archived.id, archived.revision)
+            .unwrap();
+        let left = database
+            .list_memory(MemoryFilter {
+                plan_id: None,
+                include_history: true,
+            })
+            .unwrap();
+        assert_eq!(left, [general]);
+        assert!(database
+            .memory_settings()
+            .unwrap()
+            .disabled_plan_ids
+            .is_empty());
     }
 
     #[test]

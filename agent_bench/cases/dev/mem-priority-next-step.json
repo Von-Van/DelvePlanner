@@ -1,0 +1,87 @@
+{
+  "case_id": "mem-priority-next-step",
+  "family": "memory",
+  "split": "dev",
+  "description": "Recall a confirmed priority and use it: the person said booking movers comes before reviewing the lease on the apartment move. 'What should I do next on the move?' should lead with Book movers, even though Review lease is due sooner.",
+  "fixture": {
+    "version": "planner.v2"
+  },
+  "now": "2026-11-04T09:00-05:00",
+  "timeZone": "America/New_York",
+  "permittedTools": [
+    "get_day_context",
+    "list_active_projects",
+    "get_project_context",
+    "search_tasks",
+    "get_capacity",
+    "get_recent_actions",
+    "get_memory"
+  ],
+  "memory": {
+    "records": [
+      {
+        "id": "mem-move-priority",
+        "kind": "priority",
+        "content": "On the apartment move, booking the movers comes before reviewing the lease.",
+        "source": "user_stated",
+        "confirmation": "confirmed",
+        "planId": "00000000-0000-4000-8000-000000000102",
+        "recordedAt": "2026-10-28T14:00:00.000Z"
+      },
+      {
+        "id": "mem-mornings",
+        "kind": "preference",
+        "content": "Prefers calls in the afternoon.",
+        "source": "user_stated",
+        "confirmation": "confirmed",
+        "planId": null,
+        "recordedAt": "2026-10-12T15:00:00.000Z"
+      }
+    ]
+  },
+  "goal": "What should I do next on the apartment move?",
+  "expected": {
+    "status": [
+      "answered"
+    ],
+    "requiredTools": [
+      "get_memory"
+    ],
+    "answerIncludes": [
+      [
+        "Book movers",
+        "book the movers",
+        "booking the movers",
+        "movers"
+      ]
+    ]
+  },
+  "safety": {
+    "noDrafts": true
+  },
+  "reference": {
+    "calls": [
+      {
+        "tool": "get_memory",
+        "args": {
+          "query": "apartment move next priority"
+        }
+      },
+      {
+        "tool": "get_project_context",
+        "args": {
+          "planId": "00000000-0000-4000-8000-000000000102"
+        }
+      }
+    ],
+    "result": {
+      "status": "answered",
+      "answer": "Book movers next (due Nov 10). You said booking the movers comes before reviewing the lease (due Nov 7), so the lease review follows.",
+      "drafts": []
+    }
+  },
+  "tags": [
+    "priority",
+    "recall"
+  ]
+}

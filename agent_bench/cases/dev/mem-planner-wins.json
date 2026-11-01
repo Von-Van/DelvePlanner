@@ -4,7 +4,7 @@
   "split": "dev",
   "description": "Memory says the design review is at 11 am, but the planner has it at 2 pm. Planner data is authoritative, so the answer must be 2 pm. Tests that memory does not override records.",
   "fixture": {
-    "version": "planner.v1"
+    "version": "planner.v2"
   },
   "now": "2026-11-03T08:45-05:00",
   "timeZone": "America/New_York",
@@ -37,8 +37,8 @@
         "content": "The design review is at 11 am.",
         "source": "user_stated",
         "confirmation": "confirmed",
-        "planId": "plan-launch",
-        "recordedAt": "2026-10-01T13:00:00Z"
+        "planId": "00000000-0000-4000-8000-000000000101",
+        "recordedAt": "2026-10-01T13:00:00.000Z"
       }
     ],
     "outdated": [

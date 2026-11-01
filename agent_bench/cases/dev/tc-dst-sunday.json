@@ -4,7 +4,7 @@
   "split": "dev",
   "description": "Daylight saving ends on 2026-11-01. The 06:30 UTC event is 1:30 AM EST, the second 1:30 that night.",
   "fixture": {
-    "version": "planner.v1"
+    "version": "planner.v2"
   },
   "now": "2026-10-31T12:00-04:00",
   "timeZone": "America/New_York",

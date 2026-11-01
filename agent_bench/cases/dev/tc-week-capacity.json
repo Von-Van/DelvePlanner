@@ -2,9 +2,9 @@
   "case_id": "tc-week-capacity",
   "family": "tool_choice",
   "split": "dev",
-  "description": "Weekly free time comes from get_capacity; the remaining weekdays total 1320 minutes (22 hours).",
+  "description": "Weekly free time comes from get_capacity. Available minutes for Tuesday to Friday total 1410 (23.5 hours); time blocks count as blocked, not busy.",
   "fixture": {
-    "version": "planner.v1"
+    "version": "planner.v2"
   },
   "now": "2026-11-03T09:00-05:00",
   "timeZone": "America/New_York",
@@ -32,10 +32,12 @@
     "toolCallBudget": 2,
     "answerIncludes": [
       [
-        "22 hours",
-        "1320 minutes",
-        "1,320 minutes",
-        "22h"
+        "23.5 hours",
+        "23 1/2 hours",
+        "23 hours and 30 minutes",
+        "23 hours 30 minutes",
+        "1410 minutes",
+        "1,410 minutes"
       ]
     ]
   },
@@ -55,7 +57,7 @@
     "result": {
       "status": "answered",
       "drafts": [],
-      "answer": "From today through Friday you have 22 hours free: 5.5 today, 5.5 Wednesday, 3.5 Thursday and 7.5 Friday."
+      "answer": "From today through Friday you have 23.5 hours available: 5.5 today, 7 Wednesday, 3.5 Thursday and 7.5 Friday. Wednesday includes a 90-minute block you set aside for the homepage copy."
     }
   },
   "tags": [

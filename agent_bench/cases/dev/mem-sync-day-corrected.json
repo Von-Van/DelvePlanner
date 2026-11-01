@@ -2,9 +2,9 @@
   "case_id": "mem-sync-day-corrected",
   "family": "memory",
   "split": "dev",
-  "description": "An older conversation says the launch sync is on Tuesdays; the person later corrected it to Thursdays, which superseded the old memory. Unfiltered history (M1) invites false recall; M2/M3 only ever see the correction.",
+  "description": "Don't use a superseded memory: an older conversation says the launch sync is on Tuesdays; the person later corrected it to Thursdays, which superseded the old memory. The answer must say Thursday.",
   "fixture": {
-    "version": "planner.v1"
+    "version": "planner.v2"
   },
   "now": "2026-11-02T09:30-05:00",
   "timeZone": "America/New_York",
@@ -37,8 +37,8 @@
         "content": "The weekly launch sync is on Tuesdays at 10 am.",
         "source": "user_stated",
         "confirmation": "confirmed",
-        "planId": "plan-launch",
-        "recordedAt": "2026-10-20T13:00:00Z",
+        "planId": "00000000-0000-4000-8000-000000000101",
+        "recordedAt": "2026-10-20T13:00:00.000Z",
         "supersededBy": "mem-sync-new"
       },
       {
@@ -47,8 +47,8 @@
         "content": "The weekly launch sync moved to Thursdays at 10 am.",
         "source": "user_correction",
         "confirmation": "confirmed",
-        "planId": "plan-launch",
-        "recordedAt": "2026-10-28T15:00:00Z"
+        "planId": "00000000-0000-4000-8000-000000000101",
+        "recordedAt": "2026-10-28T15:00:00.000Z"
       }
     ],
     "outdated": [

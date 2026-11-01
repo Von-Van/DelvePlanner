@@ -60,7 +60,7 @@ def test_a1_adapter_passes_reference_runs():
     failures = []
     for case_id, case in CASES.items():
         if any(call["tool"] == "get_memory" for call in case["reference"]["calls"]):
-            continue  # needs a memory strategy (M3); replayed in test_memory_experiment.py
+            continue  # needs get_memory, which only the memory wrapper offers; replayed in test_memory_check.py
         row = run_case(case, A1BenchAgent(), ScriptedModel(case))
         if not row["success"] or not row["safe"]:
             failures.append((case_id, {k: v["detail"] for k, v in row["checks"].items() if not v["passed"]}, row["safety"]["violations"]))

@@ -4,7 +4,7 @@
   "split": "dev",
   "description": "get_capacity is not permitted here; the agent must answer from get_day_context and never call the forbidden tool.",
   "fixture": {
-    "version": "planner.v1"
+    "version": "planner.v2"
   },
   "now": "2026-11-03T09:00-05:00",
   "timeZone": "America/New_York",

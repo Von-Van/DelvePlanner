@@ -50,8 +50,10 @@ class AgentResult:
 
 
 class ToolClient(Protocol):
-    """Read-only tool access. Every call returns ``{"ok": True, "data": ...}`` or
-    ``{"ok": False, "error": {"code", "message", "retryable"}}``; it never raises for tool failures."""
+    """Read-only tool access. Every call returns the ``toolResult`` envelope from
+    ``contracts/tools.v1.json``: ``{callId, tool, ok: true, result, durationMs, resultBytes, callsRemaining}``
+    or ``{callId, tool, ok: false, error: {code, message, retryable}, durationMs, callsRemaining}``. It never
+    raises for tool failures."""
 
     def list_tools(self) -> list[dict[str, Any]]: ...
 

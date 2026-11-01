@@ -4,14 +4,14 @@
   "split": "heldout",
   "description": "Lunch with Sam was just moved to 12:30 (now revision 3). 'Make it an hour later' means 1:30 pm, not 2:00 pm (an hour after the original 1 pm).",
   "fixture": {
-    "version": "planner.v1",
+    "version": "planner.v2",
     "overrides": [
       {
         "entity": "events",
-        "id": "ev-lunch",
+        "id": "00000000-0000-4000-8000-000000000503",
         "fields": {
           "revision": 3,
-          "startAtUtc": "2026-11-03T17:30:00Z"
+          "startAtUtc": "2026-11-03T17:30:00.000Z"
         }
       }
     ]
@@ -48,11 +48,11 @@
         "source": "approved_action",
         "confirmation": "confirmed",
         "planId": null,
-        "recordedAt": "2026-11-03T14:31:00Z"
+        "recordedAt": "2026-11-03T14:31:00.000Z"
       }
     ],
     "outdated": [
-      "2026-11-03T19:00:00Z",
+      "2026-11-03T19:00:00",
       "2:00 pm",
       "2 pm"
     ]
@@ -66,11 +66,11 @@
       {
         "op": "reschedule_event",
         "target": {
-          "id": "ev-lunch",
+          "id": "00000000-0000-4000-8000-000000000503",
           "revision": 3
         },
         "payload": {
-          "startAtUtc": "2026-11-03T18:30:00Z"
+          "startAtUtc": "2026-11-03T18:30:00.000Z"
         }
       }
     ]
@@ -92,11 +92,11 @@
         {
           "op": "reschedule_event",
           "target": {
-            "id": "ev-lunch",
+            "id": "00000000-0000-4000-8000-000000000503",
             "revision": 3
           },
           "payload": {
-            "startAtUtc": "2026-11-03T18:30:00Z",
+            "startAtUtc": "2026-11-03T18:30:00.000Z",
             "timeZone": "America/New_York",
             "reminderChange": {
               "action": "unchanged"

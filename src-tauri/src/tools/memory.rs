@@ -43,12 +43,37 @@ pub struct MemoryView {
     pub source: MemorySource,
     pub confirmation: Confirmation,
     pub plan_id: Option<String>,
+    /// How far to rely on it: backed by a change the person approved, stated or confirmed by the
+    /// person, or the assistant's own unconfirmed guess.
+    pub trust: MemoryTrust,
     /// When the record was last written (created, confirmed, or superseded its predecessor).
     pub recorded_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<String>,
     /// Share of the query's words found in the record, from 0 to 1 (1 when there is no query).
     pub relevance: f64,
+}
+
+/// The three standings a memory can have, so the model never treats a guess like a fact.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryTrust {
+    /// Recorded from a change the person approved.
+    Verified,
+    /// The person said it, corrected it, or confirmed the assistant's guess.
+    UserConfirmed,
+    /// The assistant's own inference, not yet confirmed. It expires.
+    Inferred,
+}
+
+impl MemoryTrust {
+    pub fn of(source: MemorySource, confirmation: Confirmation) -> Self {
+        match (source, confirmation) {
+            (_, Confirmation::Unconfirmed) => Self::Inferred,
+            (MemorySource::ApprovedAction, _) => Self::Verified,
+            _ => Self::UserConfirmed,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -120,6 +145,7 @@ pub fn select(candidates: Vec<MemoryRecord>, args: &GetMemoryArgs) -> Vec<Memory
                 source: record.source,
                 confirmation: record.confirmation,
                 plan_id: record.plan_id,
+                trust: MemoryTrust::of(record.source, record.confirmation),
                 recorded_at: record.updated_at,
                 expires_at: record.expires_at,
                 relevance,
@@ -222,6 +248,102 @@ mod tests {
         };
         let outcome = session.call(&sources, "get_memory", arguments);
         serde_json::to_value(outcome).unwrap()
+    }
+
+    fn ids(result: &Value) -> Vec<&str> {
+        result["result"]["records"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["id"].as_str().unwrap())
+            .collect()
+    }
+
+    fn sorted(mut ids: Vec<&str>) -> Vec<&str> {
+        ids.sort_unstable();
+        ids
+    }
+
+    #[test]
+    fn labels_how_far_each_memory_can_be_trusted() {
+        let (_dir, mut db) = database();
+        remember(
+            &mut db,
+            "Chose the blue theme.",
+            MemorySource::ApprovedAction,
+            None,
+        );
+        remember(
+            &mut db,
+            "Sponsors before venue.",
+            MemorySource::UserStated,
+            None,
+        );
+        let guess = remember(
+            &mut db,
+            "Likes mornings.",
+            MemorySource::AssistantInferred,
+            None,
+        );
+        let trust = |result: &Value, content: &str| {
+            result["result"]["records"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|r| r["content"] == content)
+                .map(|r| r["trust"].as_str().unwrap().to_string())
+        };
+        let result = call(&db, json!({}));
+        assert_eq!(
+            trust(&result, "Chose the blue theme.").as_deref(),
+            Some("verified")
+        );
+        assert_eq!(
+            trust(&result, "Sponsors before venue.").as_deref(),
+            Some("user_confirmed")
+        );
+        assert_eq!(
+            trust(&result, "Likes mornings.").as_deref(),
+            Some("inferred")
+        );
+        db.confirm_memory(&guess).unwrap();
+        let result = call(&db, json!({}));
+        assert_eq!(
+            trust(&result, "Likes mornings.").as_deref(),
+            Some("user_confirmed")
+        );
+    }
+
+    #[test]
+    fn deleted_memory_is_gone() {
+        let (_dir, mut db) = database();
+        let one = remember(
+            &mut db,
+            "Sync on Thursdays.",
+            MemorySource::UserStated,
+            None,
+        );
+        let two = remember(
+            &mut db,
+            "Sponsors first.",
+            MemorySource::UserStated,
+            Some(PLAN),
+        );
+        let three = remember(&mut db, "Ship blog later.", MemorySource::UserStated, None);
+        db.delete_memory(&one).unwrap();
+        assert_eq!(
+            sorted(ids(&call(&db, json!({})))),
+            sorted(vec![three.as_str(), two.as_str()])
+        );
+        assert_eq!(
+            ids(&call(&db, json!({ "query": "thursdays sync" }))),
+            Vec::<&str>::new()
+        );
+        db.forget_project_memory(PLAN).unwrap();
+        assert_eq!(ids(&call(&db, json!({}))), [three.as_str()]);
+        db.clear_memory().unwrap();
+        assert_eq!(ids(&call(&db, json!({}))), Vec::<&str>::new());
+        assert!(db.export_memory().unwrap().records.is_empty());
     }
 
     #[test]

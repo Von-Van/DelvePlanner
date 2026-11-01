@@ -4,7 +4,7 @@
   "split": "dev",
   "description": "Memory is turned off for the Apartment move. A stored note names the moving company; the tool must withhold it and the agent must not invent one.",
   "fixture": {
-    "version": "planner.v1"
+    "version": "planner.v2"
   },
   "now": "2026-11-03T11:00-05:00",
   "timeZone": "America/New_York",
@@ -19,7 +19,7 @@
   ],
   "memory": {
     "disabledPlanIds": [
-      "plan-move"
+      "00000000-0000-4000-8000-000000000102"
     ],
     "records": [
       {
@@ -28,8 +28,8 @@
         "content": "Chose Bluebird Movers for the apartment move; they quoted $900.",
         "source": "user_stated",
         "confirmation": "confirmed",
-        "planId": "plan-move",
-        "recordedAt": "2026-10-25T15:00:00Z"
+        "planId": "00000000-0000-4000-8000-000000000102",
+        "recordedAt": "2026-10-25T15:00:00.000Z"
       }
     ],
     "outdated": [

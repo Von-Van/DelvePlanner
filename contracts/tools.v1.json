@@ -267,6 +267,14 @@
             "approved_action",
             "assistant_inferred"
           ]
+        },
+        "trust": {
+          "description": "verified: from a change the person approved. user_confirmed: the person said, corrected or confirmed it. inferred: the assistant's unconfirmed guess; never present it as fact.",
+          "enum": [
+            "verified",
+            "user_confirmed",
+            "inferred"
+          ]
         }
       },
       "required": [
@@ -276,6 +284,7 @@
         "source",
         "confirmation",
         "planId",
+        "trust",
         "recordedAt",
         "relevance"
       ],
@@ -284,7 +293,9 @@
     "memoryKind": {
       "enum": [
         "decision",
+        "priority",
         "project_fact",
+        "open_problem",
         "preference",
         "note"
       ]
@@ -1251,7 +1262,7 @@
       "privacyClass": "agent_history"
     },
     {
-      "description": "Remembered decisions, project facts, and preferences, ranked by how well they match the query, then confirmed before unconfirmed, then newest. Superseded and expired memories are never returned. Each record says its source and whether the person confirmed it; treat unconfirmed records as possibly wrong, and prefer planner records when they disagree. memoryEnabled is false when the person paused memory.",
+      "description": "Remembered decisions, priorities, project facts, open problems, and preferences, ranked by how well they match the query, then confirmed before unconfirmed, then newest. Superseded, deleted and expired memories are never returned. Each record has a trust level: verified (from a change the person approved), user_confirmed, or inferred (an unconfirmed guess: say it is a guess, never present it as fact). Prefer planner records when they disagree. memoryEnabled is false when the person paused memory.",
       "implemented": true,
       "inputSchema": {
         "additionalProperties": false,

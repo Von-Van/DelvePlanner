@@ -5,7 +5,7 @@
 //! authoritative record. A memory is a short, source-linked note such as a decision ("the weekly
 //! sync moved to Thursdays"), a project fact, or a preference. Every record carries:
 //!
-//! - a **kind** (`decision`, `project_fact`, `preference`, `note`),
+//! - a **kind** (`decision`, `priority`, `project_fact`, `open_problem`, `preference`, `note`),
 //! - a **source** (`user_stated`, `user_correction`, `approved_action`, `assistant_inferred`) and
 //!   an optional source reference (a run, draft, or conversation id),
 //! - a **confirmation** state. Only the person confirms. Something the assistant inferred starts
@@ -36,10 +36,11 @@ const MAX_SOURCE_REF_CHARS: usize = 200;
 
 pub(super) fn ensure_memory_schema(connection: &Connection) -> AppResult<()> {
     connection.execute_batch(
-        "CREATE TABLE IF NOT EXISTS memory_record (
+        "CREATE TABLE IF NOT EXISTS agent_memory (
              id TEXT PRIMARY KEY NOT NULL,
              kind TEXT NOT NULL
-                 CHECK(kind IN ('decision', 'project_fact', 'preference', 'note')),
+                 CHECK(kind IN ('decision', 'priority', 'project_fact', 'open_problem',
+                               'preference', 'note')),
              content TEXT NOT NULL CHECK(length(content) > 0),
              source TEXT NOT NULL
                  CHECK(source IN ('user_stated', 'user_correction', 'approved_action',
@@ -51,13 +52,13 @@ pub(super) fn ensure_memory_schema(connection: &Connection) -> AppResult<()> {
              updated_at TEXT NOT NULL,
              confirmed_at TEXT,
              expires_at TEXT,
-             superseded_by TEXT REFERENCES memory_record(id) ON DELETE SET NULL,
+             superseded_by TEXT REFERENCES agent_memory(id) ON DELETE SET NULL,
              superseded_at TEXT,
              CHECK((confirmation = 'confirmed') = (confirmed_at IS NOT NULL)),
              CHECK(confirmation = 'confirmed' OR expires_at IS NOT NULL)
          );
-         CREATE INDEX IF NOT EXISTS memory_record_plan_idx ON memory_record(plan_id);
-         CREATE INDEX IF NOT EXISTS memory_record_updated_idx ON memory_record(updated_at);
+         CREATE INDEX IF NOT EXISTS agent_memory_plan_idx ON agent_memory(plan_id);
+         CREATE INDEX IF NOT EXISTS agent_memory_updated_idx ON agent_memory(updated_at);
 
          CREATE TABLE IF NOT EXISTS memory_settings (
              id INTEGER PRIMARY KEY NOT NULL CHECK(id = 1),
@@ -84,7 +85,11 @@ pub(super) fn ensure_memory_schema(connection: &Connection) -> AppResult<()> {
 #[serde(rename_all = "snake_case")]
 pub enum MemoryKind {
     Decision,
+    /// What matters most right now ("sponsors come before venue").
+    Priority,
     ProjectFact,
+    /// Something unresolved the person wants kept in view.
+    OpenProblem,
     Preference,
     Note,
 }
@@ -127,7 +132,9 @@ macro_rules! text_enum {
 
 text_enum!(MemoryKind {
     Decision => "decision",
+    Priority => "priority",
     ProjectFact => "project_fact",
+    OpenProblem => "open_problem",
     Preference => "preference",
     Note => "note",
 });
@@ -140,17 +147,19 @@ text_enum!(MemorySource {
 text_enum!(Confirmation { Confirmed => "confirmed", Unconfirmed => "unconfirmed" });
 
 impl MemoryKind {
-    pub const ALL: [MemoryKind; 4] = [
+    pub const ALL: [MemoryKind; 6] = [
         Self::Decision,
+        Self::Priority,
         Self::ProjectFact,
+        Self::OpenProblem,
         Self::Preference,
         Self::Note,
     ];
 }
 
 /// One remembered note with its provenance.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct MemoryRecord {
     pub id: String,
     pub kind: MemoryKind,
@@ -228,6 +237,25 @@ pub struct MemoryExport {
 }
 
 pub const MEMORY_EXPORT_FORMAT: &str = "delve.memory.v1";
+
+/// A memory export read back in: the same shape `export_memory` writes.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryImport {
+    pub format: String,
+    pub settings: ImportedMemorySettings,
+    pub records: Vec<MemoryRecord>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ImportedMemorySettings {
+    pub enabled: bool,
+    pub conversation_turns: i64,
+    pub inferred_ttl_days: i64,
+    #[serde(default)]
+    pub disabled_plan_ids: Vec<String>,
+}
 
 // ---------------------------------------------------------------------------------------------
 // Writes
@@ -317,7 +345,7 @@ impl PlannerDatabase {
             ));
         }
         let count: i64 =
-            transaction.query_row("SELECT COUNT(*) FROM memory_record", [], |row| row.get(0))?;
+            transaction.query_row("SELECT COUNT(*) FROM agent_memory", [], |row| row.get(0))?;
         if count >= MAX_MEMORY_RECORDS {
             return Err(invalid(&format!(
                 "Memory holds its limit of {MAX_MEMORY_RECORDS} records. Delete some first."
@@ -332,7 +360,7 @@ impl PlannerDatabase {
             };
         let id = Uuid::new_v4().to_string();
         transaction.execute(
-            "INSERT INTO memory_record (id, kind, content, source, source_ref, plan_id,
+            "INSERT INTO agent_memory (id, kind, content, source, source_ref, plan_id,
                  confirmation, created_at, updated_at, confirmed_at, expires_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, ?9, ?10)",
             params![
@@ -371,7 +399,7 @@ impl PlannerDatabase {
             return Err(invalid("This memory has expired."));
         }
         self.connection.execute(
-            "UPDATE memory_record SET confirmation = 'confirmed', confirmed_at = ?1,
+            "UPDATE agent_memory SET confirmation = 'confirmed', confirmed_at = ?1,
                  expires_at = NULL, updated_at = ?1
              WHERE id = ?2",
             params![at, id],
@@ -393,13 +421,13 @@ impl PlannerDatabase {
         }
         let new_id = Uuid::new_v4().to_string();
         transaction.execute(
-            "INSERT INTO memory_record (id, kind, content, source, source_ref, plan_id,
+            "INSERT INTO agent_memory (id, kind, content, source, source_ref, plan_id,
                  confirmation, created_at, updated_at, confirmed_at)
              VALUES (?1, ?2, ?3, 'user_correction', ?4, ?5, 'confirmed', ?6, ?6, ?6)",
             params![new_id, old.kind.as_str(), content, old.id, old.plan_id, at],
         )?;
         transaction.execute(
-            "UPDATE memory_record SET superseded_by = ?1, superseded_at = ?2, updated_at = ?2
+            "UPDATE agent_memory SET superseded_by = ?1, superseded_at = ?2, updated_at = ?2
              WHERE id = ?3",
             params![new_id, at, old.id],
         )?;
@@ -408,9 +436,19 @@ impl PlannerDatabase {
     }
 
     pub fn delete_memory(&mut self, id: &str) -> AppResult<()> {
-        let changed = self
-            .connection
-            .execute("DELETE FROM memory_record WHERE id = ?1", params![id])?;
+        // Deleted means gone: the record goes together with every version it replaced and every
+        // correction that replaced it, so no earlier wording survives as history.
+        let changed = self.connection.execute(
+            "WITH RECURSIVE chain(id) AS (
+                 SELECT id FROM agent_memory WHERE id = ?1
+                 UNION
+                 SELECT m.id FROM agent_memory m, chain c
+                 WHERE m.superseded_by = c.id
+                    OR m.id = (SELECT superseded_by FROM agent_memory WHERE id = c.id)
+             )
+             DELETE FROM agent_memory WHERE id IN (SELECT id FROM chain)",
+            params![id],
+        )?;
         if changed == 0 {
             return Err(AppError::NotFound);
         }
@@ -420,20 +458,20 @@ impl PlannerDatabase {
     /// Deletes every memory linked to one project. Returns how many were deleted.
     pub fn forget_project_memory(&mut self, plan_id: &str) -> AppResult<usize> {
         Ok(self.connection.execute(
-            "DELETE FROM memory_record WHERE plan_id = ?1",
+            "DELETE FROM agent_memory WHERE plan_id = ?1",
             params![plan_id_text(plan_id)?],
         )?)
     }
 
     /// Deletes every memory. Settings are kept.
     pub fn clear_memory(&mut self) -> AppResult<usize> {
-        Ok(self.connection.execute("DELETE FROM memory_record", [])?)
+        Ok(self.connection.execute("DELETE FROM agent_memory", [])?)
     }
 
     /// Forgets unconfirmed memories whose time ran out. Returns how many were deleted.
     pub fn prune_expired_memory(&mut self) -> AppResult<usize> {
         Ok(self.connection.execute(
-            "DELETE FROM memory_record
+            "DELETE FROM agent_memory
              WHERE confirmation = 'unconfirmed' AND expires_at IS NOT NULL AND expires_at <= ?1",
             params![now()],
         )?)
@@ -475,6 +513,92 @@ impl PlannerDatabase {
         })
     }
 
+    /// Replaces everything memory holds (records and settings) with an export, keeping every
+    /// record's provenance, confirmation and supersession exactly as exported. Used to restore a
+    /// memory export and to seed benchmark fixtures. Returns how many records were imported.
+    pub fn import_memory(&mut self, import: &MemoryImport) -> AppResult<usize> {
+        if import.format != MEMORY_EXPORT_FORMAT {
+            return Err(invalid(&format!(
+                "This isn't a {MEMORY_EXPORT_FORMAT} memory export."
+            )));
+        }
+        if import.records.len() as i64 > MAX_MEMORY_RECORDS {
+            return Err(invalid(&format!(
+                "A memory export may hold at most {MAX_MEMORY_RECORDS} records."
+            )));
+        }
+        let settings = &import.settings;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        transaction.execute("DELETE FROM agent_memory", [])?;
+        transaction.execute("DELETE FROM memory_project_setting", [])?;
+        transaction
+            .execute(
+                "UPDATE memory_settings
+                 SET enabled = ?1, conversation_turns = ?2, inferred_ttl_days = ?3 WHERE id = 1",
+                params![
+                    settings.enabled,
+                    settings.conversation_turns,
+                    settings.inferred_ttl_days
+                ],
+            )
+            .map_err(|_| invalid("The export's memory settings are out of range."))?;
+        for plan_id in &settings.disabled_plan_ids {
+            transaction.execute(
+                "INSERT OR IGNORE INTO memory_project_setting (plan_id, enabled) VALUES (?1, 0)",
+                params![plan_id_text(plan_id)?],
+            )?;
+        }
+        // Supersession links point at other imported records, so they are set once all exist.
+        for record in &import.records {
+            transaction
+                .execute(
+                    "INSERT INTO agent_memory (id, kind, content, source, source_ref, plan_id,
+                         confirmation, created_at, updated_at, confirmed_at, expires_at,
+                         superseded_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                    params![
+                        record.id,
+                        record.kind.as_str(),
+                        content_text(&record.content)?,
+                        record.source.as_str(),
+                        source_ref_text(record.source_ref.clone())?,
+                        record.plan_id.as_deref().map(plan_id_text).transpose()?,
+                        record.confirmation.as_str(),
+                        record.created_at,
+                        record.updated_at,
+                        record.confirmed_at,
+                        record.expires_at,
+                        record.superseded_at,
+                    ],
+                )
+                .map_err(|_| {
+                    invalid(&format!(
+                        "Memory '{}' is a duplicate or contradicts itself.",
+                        record.id
+                    ))
+                })?;
+        }
+        for record in &import.records {
+            if let Some(newer) = &record.superseded_by {
+                transaction
+                    .execute(
+                        "UPDATE agent_memory SET superseded_by = ?2 WHERE id = ?1",
+                        params![record.id, newer],
+                    )
+                    .map_err(|_| {
+                        invalid(&format!(
+                            "Memory '{}' is replaced by '{newer}', which isn't in the export.",
+                            record.id
+                        ))
+                    })?;
+            }
+        }
+        transaction.commit()?;
+        Ok(import.records.len())
+    }
+
     /// What the agent may be offered at `now`: memory is on, the record is current, and its
     /// project (if any) has memory on. Selection by relevance happens in the `get_memory` tool.
     pub fn memory_candidates(&self, now: DateTime<Utc>) -> AppResult<(bool, Vec<MemoryRecord>)> {
@@ -503,7 +627,7 @@ impl PlannerDatabase {
 
 const RECORD_SELECT: &str = "SELECT id, kind, content, source, source_ref, plan_id, confirmation,
         created_at, updated_at, confirmed_at, expires_at, superseded_by, superseded_at
-     FROM memory_record";
+     FROM agent_memory";
 
 fn select_record(connection: &Connection, id: &str) -> AppResult<MemoryRecord> {
     connection
@@ -625,6 +749,82 @@ mod tests {
             source_ref: None,
             plan_id: plan.map(str::to_string),
         }
+    }
+
+    #[test]
+    fn deleting_a_corrected_memory_deletes_its_history_too() {
+        let (_dir, mut db) = database();
+        let first = db
+            .add_memory(note("Sync on Mondays.", MemorySource::UserStated, None))
+            .unwrap();
+        let second = db.correct_memory(&first.id, "Sync on Tuesdays.").unwrap();
+        let third = db.correct_memory(&second.id, "Sync on Thursdays.").unwrap();
+        let other = db
+            .add_memory(note(
+                "Blog moves to phase 2.",
+                MemorySource::UserStated,
+                None,
+            ))
+            .unwrap();
+        db.delete_memory(&third.id).unwrap();
+        let left = db
+            .list_memory(MemoryFilter {
+                plan_id: None,
+                include_history: true,
+            })
+            .unwrap();
+        assert_eq!(
+            left.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+            [other.id.as_str()]
+        );
+
+        // Deleting from the middle of a chain removes the whole chain as well.
+        let a = db
+            .add_memory(note("A.", MemorySource::UserStated, None))
+            .unwrap();
+        let b = db.correct_memory(&a.id, "B.").unwrap();
+        db.correct_memory(&b.id, "C.").unwrap();
+        db.delete_memory(&b.id).unwrap();
+        assert_eq!(db.export_memory().unwrap().records.len(), 1);
+        assert!(matches!(db.delete_memory(&a.id), Err(AppError::NotFound)));
+    }
+
+    #[test]
+    fn an_export_imports_back_unchanged() {
+        let (_dir, mut db) = database();
+        let plan = "00000000-0000-4000-8000-000000000101";
+        let old = db
+            .add_memory(note(
+                "Sync on Tuesdays.",
+                MemorySource::UserStated,
+                Some(plan),
+            ))
+            .unwrap();
+        db.correct_memory(&old.id, "Sync on Thursdays.").unwrap();
+        db.add_memory(note(
+            "Maybe mornings.",
+            MemorySource::AssistantInferred,
+            None,
+        ))
+        .unwrap();
+        db.set_project_memory(plan, false).unwrap();
+        let export = db.export_memory().unwrap();
+        let json = serde_json::to_string(&export).unwrap();
+
+        let (_other_dir, mut other) = database();
+        let import: MemoryImport = serde_json::from_str(&json).unwrap();
+        assert_eq!(other.import_memory(&import).unwrap(), 3);
+        let again = other.export_memory().unwrap();
+        assert_eq!(again.records, export.records);
+        assert_eq!(again.settings, export.settings);
+
+        let mut broken = import.clone();
+        broken.records[0].superseded_by = Some("missing".into());
+        assert!(other.import_memory(&broken).is_err());
+        assert_eq!(other.export_memory().unwrap().records, export.records);
+        let mut wrong = import;
+        wrong.format = "something.else".into();
+        assert!(other.import_memory(&wrong).is_err());
     }
 
     #[test]
@@ -750,7 +950,7 @@ mod tests {
 
         db.connection
             .execute(
-                "UPDATE memory_record SET expires_at = '2000-01-01T00:00:00Z' WHERE id = ?1",
+                "UPDATE agent_memory SET expires_at = '2000-01-01T00:00:00Z' WHERE id = ?1",
                 params![inferred.id],
             )
             .unwrap();
@@ -826,7 +1026,7 @@ mod tests {
         let connection = Connection::open(&path).unwrap();
         connection
             .execute_batch(
-                "DROP TABLE memory_record; DROP TABLE memory_settings;
+                "DROP TABLE agent_memory; DROP TABLE memory_settings;
                  DROP TABLE memory_project_setting; PRAGMA user_version = 9;",
             )
             .unwrap();

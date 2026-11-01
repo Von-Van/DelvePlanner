@@ -2,9 +2,9 @@
   "case_id": "cont-push-to-friday",
   "family": "continuity",
   "split": "dev",
-  "description": "The previous turn asked about the landlord call; 'push it to Friday at the same time' means the Call with landlord, Thursday 4 pm -> Friday 4 pm. Nothing about it is in memory, so only the conversation window (M1) can resolve 'it'; M0, M2 and M3 should ask.",
+  "description": "The previous turn asked about the landlord call; 'push it to Friday at the same time' means the Call with landlord, Thursday 4 pm -> Friday 4 pm. Nothing about it is in memory, so only the recent conversation can resolve 'it'.",
   "fixture": {
-    "version": "planner.v1"
+    "version": "planner.v2"
   },
   "now": "2026-11-03T10:20-05:00",
   "timeZone": "America/New_York",
@@ -38,7 +38,7 @@
         "source": "user_stated",
         "confirmation": "confirmed",
         "planId": null,
-        "recordedAt": "2026-10-12T15:00:00Z"
+        "recordedAt": "2026-10-12T15:00:00.000Z"
       }
     ]
   },
@@ -51,11 +51,11 @@
       {
         "op": "reschedule_event",
         "target": {
-          "id": "ev-call-landlord",
+          "id": "00000000-0000-4000-8000-000000000506",
           "revision": 1
         },
         "payload": {
-          "startAtUtc": "2026-11-06T21:00:00Z"
+          "startAtUtc": "2026-11-06T21:00:00.000Z"
         }
       }
     ]
@@ -77,11 +77,11 @@
         {
           "op": "reschedule_event",
           "target": {
-            "id": "ev-call-landlord",
+            "id": "00000000-0000-4000-8000-000000000506",
             "revision": 1
           },
           "payload": {
-            "startAtUtc": "2026-11-06T21:00:00Z",
+            "startAtUtc": "2026-11-06T21:00:00.000Z",
             "timeZone": "America/New_York",
             "reminderChange": {
               "action": "unchanged"

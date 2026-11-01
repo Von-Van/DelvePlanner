@@ -1,32 +1,31 @@
-"""Memory strategies for the DelveOps agent (handoff P7, overhaul piece K).
+"""The assistant's memory (overhaul milestone M2).
 
 Nothing here writes memory. The person adds, confirms, corrects and deletes memories in Settings;
-the agent only reads them, through the conversation window (M1), a runtime pre-load of confirmed
-records (M2), or the `get_memory` read tool (M3).
+the agent sees the recent conversation and reads durable memories through the `get_memory` tool.
 """
 
-from .strategies import (
+from .agent import (
     DEFAULT_WINDOW_TURNS,
     GET_MEMORY_SPEC,
+    MEMORY_HINT,
+    MEMORY_KINDS,
     MEMORY_PROMPT_VERSION,
-    STRATEGIES,
     MemoryAgent,
     Turn,
     compose_goal,
     conversation_block,
-    memory_block,
     recent_window,
 )
 
 __all__ = [
     "DEFAULT_WINDOW_TURNS",
     "GET_MEMORY_SPEC",
+    "MEMORY_HINT",
+    "MEMORY_KINDS",
     "MEMORY_PROMPT_VERSION",
-    "STRATEGIES",
     "MemoryAgent",
     "Turn",
     "compose_goal",
     "conversation_block",
-    "memory_block",
     "recent_window",
 ]
