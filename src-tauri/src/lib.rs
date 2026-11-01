@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod assistant;
 pub mod calendar;
 pub mod capacity;
 pub mod db;
@@ -61,6 +62,8 @@ struct AppState {
     calendars: CalendarService,
     agent: PlannerAgent,
     ollama: OllamaRuntime,
+    /// The new assistant: the Python agent behind the Assistant screen.
+    assistant: assistant::AssistantRuntime,
     pending_import: Mutex<Option<PendingImport>>,
     /// Serializes changes to the quick-capture shortcut and remembers where it's saved.
     shortcuts: Mutex<PathBuf>,
@@ -1287,6 +1290,180 @@ fn discard_schedule_proposal(
         .map_err(CommandError::from)
 }
 
+#[tauri::command]
+fn assistant_status(state: State<'_, AppState>) -> assistant::AssistantStatus {
+    state.assistant.status()
+}
+
+/// Runs one request through the agent. Each trace event is sent to the window as it happens
+/// (`assistant-run-event`, tagged with `run_key`); the finished run record is the reply.
+#[tauri::command]
+async fn run_assistant(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    goal: String,
+    time_zone: String,
+    run_key: String,
+) -> Result<assistant::AgentRunRecord, CommandError> {
+    let goal = goal.trim().to_string();
+    if goal.is_empty() || goal.chars().count() > assistant::MAX_GOAL_CHARS {
+        return Err(AppError::Validation(format!(
+            "Ask the assistant something in 1-{} characters.",
+            assistant::MAX_GOAL_CHARS
+        ))
+        .into());
+    }
+    if run_key.is_empty() || run_key.len() > 64 {
+        return Err(AppError::Validation("A run needs a short key.".into()).into());
+    }
+    let zone = parse_zone(&time_zone)?;
+    let sidecar = state.assistant.sidecar()?;
+    state.ollama.ensure_started(&state.agent).await?;
+    state.ollama.note_used();
+    let model = state.ollama.model_identity();
+    let broker = model
+        .clone()
+        .and_then(|identity| sidecar::ModelBroker::new(state.ollama.endpoint(), identity).ok());
+    let cancel = state.assistant.begin()?;
+
+    let started_at = chrono::Utc::now();
+    let budget = sidecar::RunBudget::default();
+    let request = sidecar::RunRequest {
+        goal: goal.clone(),
+        now: started_at.with_timezone(&zone).to_rfc3339(),
+        time_zone,
+        permitted_tools: assistant::permitted_tools(),
+        architecture: Some(assistant::ARCHITECTURE.into()),
+        budget: budget.clone(),
+    };
+    let config = tools::SessionConfig {
+        budget: tools::ToolBudget {
+            max_tool_calls: budget.max_tool_calls,
+            ..tools::ToolBudget::default()
+        },
+        ..tools::SessionConfig::new(started_at, zone)
+    };
+    let reader = app.clone();
+    let emitter = app.clone();
+    let key = run_key.clone();
+    let host = assistant::RunHost::new(
+        config,
+        move |session: &mut tools::ToolSession, tool: &str, arguments: serde_json::Value| {
+            let state = reader.state::<AppState>();
+            read_tool(&state, session, tool, arguments)
+        },
+        broker,
+        move |event: &serde_json::Value| {
+            let _ = emitter.emit(
+                assistant::RUN_EVENT,
+                serde_json::json!({ "runKey": key, "event": event }),
+            );
+        },
+    );
+    let outcome = sidecar.run(&request, &host, &cancel).await;
+    state.assistant.end();
+    let (observed, trace) = host.into_parts();
+    let (record, response) = assistant::finish_run(
+        assistant::RunStart {
+            run_key,
+            goal,
+            started_at,
+            model,
+        },
+        outcome,
+        &observed,
+        trace,
+        chrono::Utc::now(),
+    );
+    tauri_plugin_log::log::info!("assistant_run_finished status={}", record.status);
+    Ok(state.assistant.record(record, response))
+}
+
+/// Answers one read-tool call from the live planner database and read-only calendars.
+fn read_tool(
+    state: &State<'_, AppState>,
+    session: &mut tools::ToolSession,
+    tool: &str,
+    arguments: serde_json::Value,
+) -> tools::ToolOutcome {
+    let runtime = state.database.lock();
+    match runtime
+        .as_ref()
+        .ok()
+        .and_then(|runtime| runtime.database.as_ref())
+    {
+        Some(database) => session.call(
+            &tools::ToolSources {
+                database,
+                calendars: &state.calendars,
+            },
+            tool,
+            arguments,
+        ),
+        None => tools::ToolOutcome {
+            call_id: format!("call-unavailable-{}", session.log().len() + 1),
+            tool: tool.to_string(),
+            ok: false,
+            result: None,
+            error: Some(tools::error::ToolError::new(
+                tools::error::ToolErrorCode::Unavailable,
+                "The planner database isn't open.",
+            )),
+            duration_ms: 0,
+            result_bytes: None,
+            calls_remaining: session.calls_remaining(),
+        },
+    }
+}
+
+#[tauri::command]
+fn cancel_assistant_run(state: State<'_, AppState>) {
+    state.assistant.cancel();
+}
+
+#[tauri::command]
+fn list_assistant_runs(state: State<'_, AppState>) -> Vec<assistant::AgentRunRecord> {
+    state.assistant.runs()
+}
+
+/// Applies the assistant's checked changes that the user kept, through the planner's own code.
+#[tauri::command]
+fn apply_assistant_changes(
+    state: State<'_, AppState>,
+    proposal_id: String,
+    accepted: Option<Vec<String>>,
+) -> Result<AppliedProposal, CommandError> {
+    let proposal = state.assistant.claim(&proposal_id)?;
+    let mut applied_count = 0;
+    let result = accepted_operations(&proposal, accepted.as_deref())
+        .map_err(CommandError::from)
+        .and_then(|chosen| {
+            if let model::ModelResponse::Proposal { operations, .. } = &chosen {
+                applied_count = operations.len();
+            }
+            with_database(&state, |database| database.apply_proposal(&chosen))
+        });
+    state.assistant.finish_review(
+        &proposal_id,
+        match &result {
+            Ok(_) => Ok(applied_count),
+            Err(error) => Err(error.message.clone()),
+        },
+    );
+    result
+}
+
+#[tauri::command]
+fn discard_assistant_changes(
+    state: State<'_, AppState>,
+    proposal_id: String,
+) -> Result<(), CommandError> {
+    state
+        .assistant
+        .discard(&proposal_id)
+        .map_err(CommandError::from)
+}
+
 async fn reminder_worker(app: AppHandle) {
     let mut interval = tokio::time::interval(Duration::from_secs(15));
     loop {
@@ -1520,6 +1697,7 @@ pub fn run() {
                 .path()
                 .resource_dir()
                 .map_err(|error| error.to_string())?;
+            let assistant = assistant::AssistantRuntime::new(&resource_directory);
             let ollama = OllamaRuntime::new(resource_directory, directory.clone())
                 .map_err(|error| error.to_string())?;
             // Whichever model the user chose last, or the one Delve Planner ships against.
@@ -1551,6 +1729,7 @@ pub fn run() {
                 calendars,
                 agent,
                 ollama,
+                assistant,
                 pending_import: Mutex::new(None),
                 shortcuts: Mutex::new(shortcuts),
             });
@@ -1647,6 +1826,12 @@ pub fn run() {
             apply_schedule_changes,
             discard_schedule_proposal,
             clear_planner_context,
+            assistant_status,
+            run_assistant,
+            cancel_assistant_run,
+            list_assistant_runs,
+            apply_assistant_changes,
+            discard_assistant_changes,
         ])
         .build(tauri::generate_context!())
         .expect("error while running Delve Planner desktop")
@@ -1654,6 +1839,7 @@ pub fn run() {
             if matches!(event, tauri::RunEvent::Exit) {
                 if let Some(state) = handle.try_state::<AppState>() {
                     state.ollama.shutdown();
+                    tauri::async_runtime::block_on(state.assistant.shutdown());
                 }
             }
         });
@@ -1668,6 +1854,7 @@ async fn runtime_idle_worker(app: tauri::AppHandle) {
             return;
         };
         state.ollama.stop_if_idle().await;
+        state.assistant.stop_if_idle().await;
     }
 }
 
