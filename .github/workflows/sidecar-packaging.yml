@@ -107,7 +107,7 @@ jobs:
       - name: Summary
         if: always()
         run: |
-          python - <<'EOF' >> "$GITHUB_STEP_SUMMARY"
+          python - <<'EOF' | tee -a "$GITHUB_STEP_SUMMARY"
           import json, os
           print("## ${{ matrix.label }}")
           for label, report, size in [
