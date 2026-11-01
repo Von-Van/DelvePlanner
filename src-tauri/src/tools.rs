@@ -359,7 +359,11 @@ impl ToolSession {
                 encode(read::search_tasks(sources, privacy, parse(arguments)?)?)
             }
             ToolName::GetCapacity => encode(read::get_capacity(sources, parse(arguments)?)?),
-            ToolName::GetRecentActions => encode(read::get_recent_actions(parse(arguments)?)?),
+            ToolName::GetRecentActions => encode(read::get_recent_actions(
+                sources,
+                privacy,
+                parse(arguments)?,
+            )?),
             ToolName::GetMemory => Err(ToolError::new(
                 ToolErrorCode::Unavailable,
                 "get_memory is reserved and not available yet.",

@@ -37,6 +37,7 @@ MAX_PROJECTS = 50
 MAX_MILESTONES_PER_PROJECT = 20
 MAX_PROJECT_TASKS = 200
 MAX_QUERY_LENGTH = 200
+MAX_RECENT_ACTIONS = 20
 
 
 def load_contract() -> dict:
@@ -91,6 +92,8 @@ class PlannerState:
         self.bundle = copy.deepcopy(fixture["bundle"])
         self.external_busy = copy.deepcopy(fixture.get("externalBusy", []))
         self.working_hours = copy.deepcopy(fixture.get("workingHours", DEFAULT_WORKING_HOURS))
+        # Decided assistant drafts for get_recent_actions, newest first. Cases add them as fixture.history.
+        self.history: list[dict] = []
 
     def rows(self, entity: str) -> list[dict]:
         if entity == "externalBusy":
@@ -423,7 +426,18 @@ def tool_get_capacity(state: PlannerState, args: dict, s: Session) -> dict:
 
 
 def tool_get_recent_actions(state: PlannerState, args: dict, s: Session) -> dict:
-    return {"actions": [], "historyAvailable": False}
+    """Decided drafts from the case's ``fixture.history`` (newest first), as the Rust tool returns them."""
+    limit = args.get("limit", 10)
+    if not 1 <= limit <= MAX_RECENT_ACTIONS:
+        raise ToolError("invalid_arguments", f"limit must be between 1 and {MAX_RECENT_ACTIONS}.")
+    actions = []
+    for action in state.history[:limit]:
+        action = copy.deepcopy(action)
+        if not s.privacy.get("includeDescriptions"):
+            for key in ("notes", "description"):
+                action.get("change", {}).pop(key, None)
+        actions.append(action)
+    return {"actions": actions, "historyAvailable": True}
 
 
 TOOL_IMPLS = {
@@ -507,6 +521,7 @@ class MockToolClient:
         self.state = PlannerState(load_fixture(case["fixture"]["version"]))
         for change in case["fixture"].get("overrides", []):
             self.state.apply(change)
+        self.state.history = copy.deepcopy(case["fixture"].get("history", []))
         self.session = Session(now=datetime.fromisoformat(case["now"]), time_zone=case["timeZone"], privacy=dict(case.get("privacy", {})))
         self.permitted = set(case["permittedTools"])
         budget = dict(self.contract["budgets"]["default"])

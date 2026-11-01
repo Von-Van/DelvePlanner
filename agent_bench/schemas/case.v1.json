@@ -59,6 +59,67 @@
           "items": {
             "$ref": "#/$defs/stateChange"
           }
+        },
+        "history": {
+          "description": "Changes the assistant drafted earlier that the person decided on, newest first, in get_recent_actions' recentAction shape (contracts/tools.v1.json).",
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "type": "object",
+            "required": [
+              "op",
+              "outcome",
+              "request",
+              "targetId",
+              "targetTitle",
+              "change",
+              "error",
+              "at"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "op": {
+                "type": "string"
+              },
+              "outcome": {
+                "enum": [
+                  "applied",
+                  "failed",
+                  "stale",
+                  "approved",
+                  "rejected",
+                  "expired"
+                ]
+              },
+              "request": {
+                "type": "string"
+              },
+              "targetId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "targetTitle": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "change": {
+                "type": "object"
+              },
+              "error": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "at": {
+                "type": "string"
+              }
+            }
+          }
         }
       }
     },

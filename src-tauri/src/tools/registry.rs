@@ -75,8 +75,10 @@ impl ToolName {
                  weekStart, per day, with free ranges and the user's daily planning limit."
             }
             Self::GetRecentActions => {
-                "Recently applied changes and failed attempts. historyAvailable is false until \
-                 agent outcomes are recorded, so an empty list may mean not recorded yet."
+                "Changes you drafted earlier that the person decided on, newest first: what they \
+                 asked for, the change, and whether it was applied, rejected, or failed. Use it \
+                 for questions like 'what did we change yesterday?'. It names records by \
+                 targetId only; read a record again before drafting another change to it."
             }
             Self::GetMemory => "Reserved for memory experiments. Not available yet.",
         }
@@ -234,7 +236,11 @@ impl ToolName {
             Self::GetCapacity => json!({ "$ref": "#/$defs/capacity" }),
             Self::GetRecentActions => object(
                 json!({
-                    "actions": { "type": "array", "maxItems": 0 },
+                    "actions": {
+                        "type": "array",
+                        "maxItems": crate::tools::read::MAX_RECENT_ACTIONS,
+                        "items": { "$ref": "#/$defs/recentAction" }
+                    },
                     "historyAvailable": { "type": "boolean" }
                 }),
                 &["actions", "historyAvailable"],
@@ -269,6 +275,24 @@ fn nullable_ref(reference: &str) -> Value {
 fn definitions() -> Value {
     json!({
         "id": { "type": "string", "format": "uuid" },
+        "recentAction": object(
+            json!({
+                "op": { "type": "string" },
+                "outcome": {
+                    "enum": ["applied", "failed", "stale", "approved", "rejected", "expired"]
+                },
+                "request": { "type": "string", "maxLength": 200 },
+                "targetId": nullable("string"),
+                "targetTitle": nullable("string"),
+                "change": {
+                    "type": "object",
+                    "additionalProperties": { "type": ["string", "number", "boolean"] }
+                },
+                "error": nullable("string"),
+                "at": { "$ref": "#/$defs/instant" }
+            }),
+            &["op", "outcome", "request", "targetId", "targetTitle", "change", "error", "at"],
+        ),
         "localDate": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
         "timeZone": { "type": "string", "description": "An IANA time zone such as America/Chicago." },
         "instant": { "type": "string", "format": "date-time", "description": "A UTC instant." },
