@@ -1,3 +1,4 @@
+mod agent;
 mod availability;
 mod capture;
 mod horizons;
@@ -16,6 +17,7 @@ use crate::model::{
     ReminderStatus, ScheduleEvent, Task, TaskPriority, TaskStatus, UpdateEventInput,
     MAX_AGENDA_DAYS, MAX_LOCATION_LENGTH, MAX_NOTES_LENGTH, MAX_REMINDER_MINUTES, MAX_TITLE_LENGTH,
 };
+use agent::ensure_agent_schema;
 use availability::{ensure_availability_schema, validate_block_shape};
 use capture::validate_inbox_text;
 use chrono::{
@@ -41,13 +43,19 @@ use team::{
 };
 use uuid::Uuid;
 
+pub use agent::{
+    ActionDraft, ActionOutcome, ActionResult, AgentRun, AgentRunDetail, AgentRunFilter, AgentStep,
+    DraftDecision, DraftState, DraftTarget, ExecutionState, ExperimentRun, ExperimentStatus,
+    NewActionDraft, NewAgentRun, NewExperimentRun, RecentAgentAction, RunOutcome, RunSource,
+    RunStatus, RunUsage, StepKind,
+};
 pub use availability::CapacityFacts;
 pub use proposals::{
     accepted_operations, edited_proposal, mentions_inbox, validate_model_response, CandidateRequest,
 };
 pub(crate) use proposals::{fold, planning_tokens, title_matches};
 
-pub const CURRENT_SCHEMA_VERSION: u32 = 8;
+pub const CURRENT_SCHEMA_VERSION: u32 = 9;
 pub const EXPORT_FORMAT_VERSION: u32 = 7;
 const BACKUP_RETENTION: usize = 5;
 const REMINDER_DELIVERY_GRACE_MINUTES: i64 = 15;
@@ -1034,6 +1042,7 @@ fn migrate(connection: &Connection, from_version: u32) -> AppResult<()> {
         ensure_availability_schema(connection)?;
         ensure_profile_schema(connection)?;
         ensure_task_details_schema(connection)?;
+        ensure_agent_schema(connection)?;
         connection.pragma_update(None, "user_version", CURRENT_SCHEMA_VERSION)?;
         Ok::<(), AppError>(())
     })();
