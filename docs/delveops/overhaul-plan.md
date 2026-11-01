@@ -1,6 +1,8 @@
-# DelveOps overhaul: work plan and shared contracts
+# DelveAgent overhaul: work plan and shared contracts
 
-This is the coordination document for the DelvePlanner → DelveOps overhaul. The governing design is the
+This is the coordination document for the DelvePlanner → **DelveAgent** overhaul. (The product was called
+DelveOps in the handoff and in early branch/file names; Jake renamed the target to DelveAgent on 2026-11-01.
+Read "DelveOps" in the handoff as "DelveAgent".) The governing design is the
 **DelveOps AI Engineering Foundation handoff (v0.2, 2026-11-01)**; this file turns it into parallel pieces of
 work and fixes the few interfaces those pieces share. Read it before starting any piece.
 
@@ -9,7 +11,7 @@ work and fixes the few interfaces those pieces share. Read it before starting an
 - **Branching.** All overhaul work lands on `delveops-overhaul`, never `main`. Each piece branches off
   `delveops-overhaul` and opens its PR back into `delveops-overhaul`. Rebase on it before opening the PR.
 - **Do not** bump the version (stays `0.4.0`), change bundle identifiers, database filenames, localStorage keys,
-  or rename the GitHub repository. Visible "DelveOps" branding is the final release piece (R), not earlier work.
+  or rename the GitHub repository. Visible "DelveAgent" branding is the final release piece (R), not earlier work.
 - **Stay in your lane.** Only edit the files your piece owns (table below). If you must touch a shared file, keep
   the edit to the minimum listed under "Shared hotspots" and say so in the PR.
 - **Safety invariants are non-negotiable.** The model never writes planner data. Python never opens the live
@@ -36,7 +38,16 @@ work and fixes the few interfaces those pieces share. Read it before starting an
 | E   | Python A1 agent + local model client (P3)             | `agent-python/` except `agent-python/delveops_agent/protocol/`, `.github/workflows/agent-python.yml` (new)                                  |
 | F   | Assistant-first app layout (Phase 1 shell, no rename) | `src/App.tsx`, `src/PlannerCard.tsx`, new `src/Assistant*.tsx`, `src/styles.css`, `src/Menu.tsx`, `src/shortcuts.ts`                        |
 
-### Wave 2 — after the wave-1 PRs they depend on are merged
+### Internal rename step — between wave 1 and wave 2
+
+Once all wave-1 PRs are merged, one small PR (done by the planning lead) renames internal names so wave 2 is
+written with the final ones: `agent-python/delveops_agent/` → `agent-python/delveagent/`, `docs/delveops/` →
+`docs/delveagent/`, and other `delveops` identifiers introduced by the overhaul. The branch name
+`delveops-overhaul` stays (renaming it would break open PRs). Compatibility identifiers stay untouched until
+and beyond R: bundle id `com.vonvan.dayplan.desktop`, `dayplan.sqlite3`, `calendars.sqlite3`, localStorage keys.
+Wave-2 pieces must use the new names.
+
+### Wave 2 — after the wave-1 PRs they depend on and the internal rename are merged
 
 | ID  | Piece                                  | Depends on    | Owns                                                                                                       |
 | --- | -------------------------------------- | ------------- | ---------------------------------------------------------------------------------------------------------- |
@@ -51,7 +62,7 @@ work and fixes the few interfaces those pieces share. Read it before starting an
 - **K** — Memory M0–M3 experiments and memory controls in Settings (P7). Needs G, H.
 - **L** — Proactive suggestions from deterministic triggers, time-travel fixtures (P7). Needs G, J.
 - **M** — Read-only GitHub context with injection defenses (Phase 5). Needs B's untrusted-input family to pass.
-- **R** — Release: visible DelveOps branding, version 0.4.1, repo-rename audit, upgrade testing from an existing
+- **R** — Release: visible DelveAgent branding, GitHub repo renamed to DelveAgent, version 0.4.1, repo-rename audit, upgrade testing from an existing
   DelvePlanner install. **Only when Jake says the work is ready.**
 
 ### Shared hotspots (minimum edits allowed)
