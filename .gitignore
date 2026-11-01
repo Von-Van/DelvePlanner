@@ -38,3 +38,15 @@ backups/
 *~
 .DS_Store
 Thumbs.db
+
+# Planning and handoff documents stay out of the repository (kept in the project's shared folder)
+planning/
+docs/delveops/overhaul-plan.md
+*handoff*
+*Handoff*
+
+# AI assistant folders
+.claude/
+.codex/
+/claude/
+/codex/
