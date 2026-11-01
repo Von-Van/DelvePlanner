@@ -61,8 +61,9 @@ def run(task: dict[str, Any], ctx: RunContext) -> dict[str, Any]:
         os.write(1, b"so does this\n")
         return _answer("printed")
     if command == "oversize":
-        ctx._link.write_raw(b'{"v":1,"id":"x","type":"trace_event","payload":{"pad":"'
-                            + b"x" * MAX_MESSAGE_BYTES + b'"}}\n')
+        ctx._link.write_raw(
+            b'{"v":1,"id":"x","type":"trace_event","payload":{"pad":"' + b"x" * MAX_MESSAGE_BYTES + b'"}}\n'
+        )
         time.sleep(5)
         return _answer("unreachable")
     if command == "stderr_flood":

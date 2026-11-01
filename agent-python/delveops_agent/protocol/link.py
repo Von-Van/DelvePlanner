@@ -10,9 +10,10 @@ import platform
 import sys
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any, BinaryIO, Callable
+from datetime import UTC, datetime
+from typing import Any, BinaryIO
 
 from . import envelope as wire
 from .envelope import Envelope, ProtocolError
@@ -37,7 +38,7 @@ class LinkCallError(Exception):
         self.retryable = retryable
 
     @classmethod
-    def from_payload(cls, error: Any) -> "LinkCallError":
+    def from_payload(cls, error: Any) -> LinkCallError:
         if not isinstance(error, dict):
             return cls("internal", "the app sent an unreadable error")
         return cls(
@@ -94,7 +95,7 @@ class Usage:
 class RunContext:
     """Everything a runner may use during one run."""
 
-    def __init__(self, link: "AgentLink", run_id: str, task: dict[str, Any], budget: dict[str, Any]):
+    def __init__(self, link: AgentLink, run_id: str, task: dict[str, Any], budget: dict[str, Any]):
         self._link = link
         self.run_id = run_id
         self.task = task
@@ -127,7 +128,7 @@ class RunContext:
             "runId": self.run_id,
             "seq": next(self._seq),
             "kind": kind,
-            "at": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+            "at": datetime.now(UTC).isoformat(timespec="milliseconds"),
             "summary": summary,
             "data": data or {},
         }
@@ -259,9 +260,7 @@ class AgentLink:
             self._writer.write(data)
             self._writer.flush()
 
-    def request(
-        self, context: RunContext, kind: str, payload: dict[str, Any], timeout_key: str
-    ) -> dict[str, Any]:
+    def request(self, context: RunContext, kind: str, payload: dict[str, Any], timeout_key: str) -> dict[str, Any]:
         """Sends a call and waits for its answer, a cancel, or a timeout."""
         request_id = self.next_id()
         pending = _Pending()
@@ -366,13 +365,10 @@ class AgentLink:
             Envelope(
                 message.id,
                 wire.RUN_START_ACK,
-                {"runId": message.id, "runner": self.runner_name,
-                 "architecture": task.get("architecture")},
+                {"runId": message.id, "runner": self.runner_name, "architecture": task.get("architecture")},
             )
         )
-        self._worker = threading.Thread(
-            target=self._run, args=(context,), name=f"run {message.id}", daemon=True
-        )
+        self._worker = threading.Thread(target=self._run, args=(context,), name=f"run {message.id}", daemon=True)
         self._worker.start()
 
     def _cancel_active(self, reason: str) -> None:
@@ -395,12 +391,15 @@ class AgentLink:
         except Cancelled:
             result = {"status": "cannot_complete", "answer": None}
         except LinkCallError as error:
-            result = {"status": "cannot_complete", "answer": None, "stopReason": "error",
-                      "error": error.to_payload()}
+            result = {"status": "cannot_complete", "answer": None, "stopReason": "error", "error": error.to_payload()}
         except Exception as error:  # noqa: BLE001 - any agent bug becomes a normal result
             message = f"{type(error).__name__}: {error}"[:MAX_ERROR_MESSAGE_CHARS]
-            result = {"status": "cannot_complete", "answer": None, "stopReason": "error",
-                      "error": {"code": "internal", "message": message, "retryable": False}}
+            result = {
+                "status": "cannot_complete",
+                "answer": None,
+                "stopReason": "error",
+                "error": {"code": "internal", "message": message, "retryable": False},
+            }
         result = dict(result)
         if context.cancelled.is_set():
             result.setdefault("stopReason", context.stop_reason or "cancelled")
@@ -420,8 +419,11 @@ class AgentLink:
                         "answer": None,
                         "drafts": [],
                         "stopReason": "error",
-                        "error": {"code": "internal", "message": f"result not sendable: {error}"[:MAX_ERROR_MESSAGE_CHARS],
-                                  "retryable": False},
+                        "error": {
+                            "code": "internal",
+                            "message": f"result not sendable: {error}"[:MAX_ERROR_MESSAGE_CHARS],
+                            "retryable": False,
+                        },
                         "usage": context.usage.to_json(),
                     },
                 )
