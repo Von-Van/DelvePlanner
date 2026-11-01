@@ -13,6 +13,7 @@ against it. Nothing in the app was changed to produce it.
 - **The two security-audit checks fail today.** These scan third-party libraries for newly published problems. The
   failures come from advisories published after 0.4.0 shipped, not from a change in our code. They will turn CI red
   on any pull request until someone updates the affected libraries (see [Dependency audits](#dependency-audits)).
+  **Update:** fixed later the same day by PR #11 (zod 4, Rust TLS and zip updates); both audits pass after it.
 - **The AI planner passes its 126-case quality test (the "eval").** All three runs met every gate, with 100% on
   safety and every reply in the right format. Exact accuracy was 100%, 99.2% and 98.4%. One case,
   `relative-followup`, failed the same way in two runs, which points to a real weakness: after "move gym to 6 pm",
@@ -60,7 +61,8 @@ profile modules. They use temporary databases and a fake model server; none need
 ### Dependency audits
 
 These are reports about third-party code the app includes. They are listed so the overhaul doesn't mistake them for
-something it broke. Fixing them is outside this piece (it means editing `package.json` / `Cargo.lock`).
+something it broke. Fixing them was outside this piece; PR #11 (merged 2026-11-01) cleared all of them. The eval results below were
+measured on the code before that update.
 
 - **npm:** `zod` (used to check data shapes in the frontend) has a high-severity advisory fixed in 4.6.6; the app
   pins `^3.24.1`, so the fix is a major-version upgrade.
