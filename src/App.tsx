@@ -96,6 +96,7 @@ import { TaskEditor } from "./TaskEditor";
 import { TaskRow } from "./TaskRow";
 import { useHeadingFocus } from "./useHeadingFocus";
 import { KnowledgeView } from "./KnowledgeView";
+import { EvaluationView } from "./EvaluationView";
 import { OpenTasksContext } from "./openTasks";
 import { taskMoveItems, useTaskMover } from "./useTaskMover";
 import {
@@ -114,6 +115,7 @@ type View =
   | { kind: "inbox" }
   | { kind: "calendars" }
   | { kind: "knowledge" }
+  | { kind: "evaluation" }
   | { kind: "today" }
   | { kind: "week" }
   | { kind: "plan-week" }
@@ -285,6 +287,7 @@ export default function App() {
   const inboxHeading = useRef<HTMLHeadingElement>(null);
   const calendarsHeading = useRef<HTMLHeadingElement>(null);
   const knowledgeHeading = useRef<HTMLHeadingElement>(null);
+  const evaluationHeading = useRef<HTMLHeadingElement>(null);
   const weekStart = weekStartDay(day, weekStartsOn);
   const today = todayDay();
   const currentWeekStart = weekStartDay(today, weekStartsOn);
@@ -1124,6 +1127,12 @@ export default function App() {
                 shortcut: sectionShortcutKey("knowledge"),
               },
             )}
+            {navLink(
+              { kind: "evaluation" },
+              "Model & Evaluation",
+              { shape: "bar", dashed: true },
+              { active: view.kind === "evaluation" },
+            )}
             <button
               className="rail-link"
               title={`Settings (${commandShortcutText(",")})`}
@@ -1263,6 +1272,12 @@ export default function App() {
               focusToken={focusToken}
               onChanged={dataChanged}
               onMessage={setError}
+            />
+          )}
+          {view.kind === "evaluation" && (
+            <EvaluationView
+              headingRef={evaluationHeading}
+              focusToken={focusToken}
             />
           )}
           {view.kind === "calendars" && (
