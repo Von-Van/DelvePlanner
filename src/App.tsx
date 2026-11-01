@@ -65,6 +65,7 @@ import {
   DayContext,
   worthAttention,
 } from "./AssistantView";
+import { AssistantAgentPanel } from "./AssistantAgentPanel";
 import { EventEditor } from "./EventEditor";
 import { ensureNotificationPermission, reminderShortLabel } from "./events";
 import { Glyph, LoadingLine, Mark, MarkShape } from "./Geometry";
@@ -1157,6 +1158,12 @@ export default function App() {
                 kicker: "LOCAL ASSISTANT",
                 title: "Say it messily.",
               })}
+              agent={
+                <AssistantAgentPanel
+                  onChanged={dataChanged}
+                  onMessage={setError}
+                />
+              }
               attention={assistantAttention}
               pendingReview={pendingReview}
               inboxCount={inbox.length}

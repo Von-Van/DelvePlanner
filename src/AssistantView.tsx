@@ -1,4 +1,4 @@
-import { ReactNode, RefObject } from "react";
+import { ReactNode, RefObject, useState } from "react";
 import {
   AgendaItem,
   agendaItemEnd,
@@ -136,6 +136,7 @@ export function AssistantView({
   headingRef,
   context,
   conversation,
+  agent,
   attention,
   pendingReview,
   inboxCount,
@@ -149,6 +150,8 @@ export function AssistantView({
   context: DayContext;
   /** The planner conversation, with its own proposal review. */
   conversation: ReactNode;
+  /** The local agent, with its live steps and run measurements; shown first when given. */
+  agent?: ReactNode;
   attention: AttentionItem[];
   /** How many changes in the open proposal wait for approval, or null when none is open. */
   pendingReview: { summary: string; changes: number } | null;
@@ -160,6 +163,8 @@ export function AssistantView({
   onBackToToday: () => void;
 }) {
   const isToday = context.day === context.today;
+  const [surface, setSurface] = useState<"agent" | "planner">("agent");
+  const showAgent = agent != null && surface === "agent";
   return (
     <div className="assistant-home">
       <header className="topbar">
@@ -180,7 +185,33 @@ export function AssistantView({
       </header>
 
       <div className="assistant-grid">
-        <div className="assistant-main">{conversation}</div>
+        <div className="assistant-main">
+          {agent != null && (
+            <div
+              className="assistant-switch"
+              role="tablist"
+              aria-label="Assistant"
+            >
+              <button
+                role="tab"
+                aria-selected={showAgent}
+                className={showAgent ? "selected" : ""}
+                onClick={() => setSurface("agent")}
+              >
+                Agent
+              </button>
+              <button
+                role="tab"
+                aria-selected={!showAgent}
+                className={showAgent ? "" : "selected"}
+                onClick={() => setSurface("planner")}
+              >
+                Planner
+              </button>
+            </div>
+          )}
+          {showAgent ? agent : conversation}
+        </div>
 
         <aside className="assistant-side">
           <DaySummary

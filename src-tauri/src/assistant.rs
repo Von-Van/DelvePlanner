@@ -46,6 +46,9 @@ pub const ARCHITECTURE: &str = "A1";
 const MAX_RUNS: usize = 20;
 /// How long drafted changes wait for review, as for the planner's own proposals.
 const REVIEW_TTL_MINUTES: i64 = 15;
+/// The most changes one review holds, and the longest summary it shows (the planner's limits).
+const MAX_CHANGES: usize = 12;
+const MAX_SUMMARY_CHARS: usize = 280;
 /// The longest request the Assistant accepts.
 pub const MAX_GOAL_CHARS: usize = 2_000;
 /// A sidecar left unused this long is stopped; the next request starts a fresh one.
@@ -328,6 +331,11 @@ pub fn check_drafts(drafts: &[Value], observed: &Observed) -> (DraftCheck, Vec<M
             Err(problem) => check.problems.push(problem),
         }
     }
+    if drafts.len() > MAX_CHANGES {
+        check
+            .problems
+            .push(format!("more than {MAX_CHANGES} changes at once"));
+    }
     if !check.problems.is_empty() {
         operations.clear();
     }
@@ -599,7 +607,14 @@ pub fn finish_run(
     let summary = record
         .answer
         .clone()
-        .filter(|summary| !summary.trim().is_empty())
+        .map(|summary| {
+            summary
+                .trim()
+                .chars()
+                .take(MAX_SUMMARY_CHARS)
+                .collect::<String>()
+        })
+        .filter(|summary| !summary.is_empty())
         .unwrap_or_else(|| "Proposed changes".into());
     let notes = vec![
         ReviewNote {
