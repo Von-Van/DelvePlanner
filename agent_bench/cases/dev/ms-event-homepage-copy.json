@@ -4,7 +4,7 @@
   "split": "dev",
   "description": "Find the task, read tomorrow's free time, and draft a one-hour calendar event that fits. Time blocks stay manual-only, so this is create_event.",
   "fixture": {
-    "version": "planner.v1"
+    "version": "planner.v2"
   },
   "now": "2026-11-03T09:00-05:00",
   "timeZone": "America/New_York",
@@ -87,7 +87,7 @@
             "durationMinutes": 60,
             "reminderMinutesBefore": null,
             "plan": {
-              "id": "plan-launch"
+              "id": "00000000-0000-4000-8000-000000000101"
             }
           },
           "evidence": [

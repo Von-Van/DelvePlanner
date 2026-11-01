@@ -5,10 +5,18 @@ on:
     branches: [main, delveops-overhaul]
     paths:
       - "agent_bench/**"
+      - "contracts/**"
+      - "src-tauri/src/tools.rs"
+      - "src-tauri/src/tools/**"
+      - "src-tauri/examples/tool_server.rs"
       - ".github/workflows/agent-bench.yml"
   pull_request:
     paths:
       - "agent_bench/**"
+      - "contracts/**"
+      - "src-tauri/src/tools.rs"
+      - "src-tauri/src/tools/**"
+      - "src-tauri/examples/tool_server.rs"
       - ".github/workflows/agent-bench.yml"
 
 permissions:
@@ -39,3 +47,35 @@ jobs:
           name: agent-bench-reference-py${{ matrix.python }}
           path: bench-out
           retention-days: 7
+
+  parity:
+    name: Mock tools match the Rust tools
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Tauri Linux build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            file \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.97.1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: cargo build --manifest-path src-tauri/Cargo.toml --example tool_server
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python -m pip install -r agent_bench/requirements-dev.txt
+      - name: Same calls, same answers
+        run: python -m pytest agent_bench/tests/test_parity.py -q -rs
+        env:
+          AGENT_BENCH_REQUIRE_TOOL_SERVER: "1"
