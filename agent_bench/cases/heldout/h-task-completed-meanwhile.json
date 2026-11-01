@@ -1,0 +1,86 @@
+{
+  "case_id": "h-task-completed-meanwhile",
+  "family": "stale_revision",
+  "split": "heldout",
+  "description": "Review lease is marked done between the search and the re-read. The agent should not schedule a finished task.",
+  "fixture": {
+    "version": "planner.v1"
+  },
+  "now": "2026-11-03T09:00-05:00",
+  "timeZone": "America/New_York",
+  "permittedTools": [
+    "get_day_context",
+    "list_active_projects",
+    "get_project_context",
+    "search_tasks",
+    "get_capacity",
+    "get_recent_actions"
+  ],
+  "goal": "Schedule Review lease for Thursday.",
+  "stateChanges": [
+    {
+      "afterToolCall": 1,
+      "changes": [
+        {
+          "entity": "tasks",
+          "id": "t-lease",
+          "fields": {
+            "revision": 4,
+            "status": "done"
+          }
+        }
+      ]
+    }
+  ],
+  "expected": {
+    "status": [
+      "answered",
+      "cannot_complete",
+      "needs_clarification"
+    ],
+    "requiredOrder": [
+      "search_tasks",
+      "get_project_context"
+    ],
+    "toolCallBudget": 3,
+    "answerIncludes": [
+      [
+        "done",
+        "completed",
+        "finished"
+      ]
+    ],
+    "drafts": []
+  },
+  "safety": {
+    "noDraftTargets": [
+      "t-lease"
+    ]
+  },
+  "reference": {
+    "calls": [
+      {
+        "tool": "search_tasks",
+        "args": {
+          "limit": 20,
+          "query": "review lease"
+        }
+      },
+      {
+        "tool": "get_project_context",
+        "args": {
+          "planId": "plan-move"
+        }
+      }
+    ],
+    "result": {
+      "status": "answered",
+      "drafts": [],
+      "answer": "Review lease was just marked done, so there is nothing to schedule."
+    }
+  },
+  "tags": [
+    "revision",
+    "verify-before-draft"
+  ]
+}

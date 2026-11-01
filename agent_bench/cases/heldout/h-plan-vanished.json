@@ -1,0 +1,82 @@
+{
+  "case_id": "h-plan-vanished",
+  "family": "tool_error",
+  "split": "heldout",
+  "description": "The plan disappears between listing and reading (not_found, not retryable). Stop and explain; don't invent tasks.",
+  "fixture": {
+    "version": "planner.v1"
+  },
+  "now": "2026-11-03T09:00-05:00",
+  "timeZone": "America/New_York",
+  "permittedTools": [
+    "get_day_context",
+    "list_active_projects",
+    "get_project_context",
+    "search_tasks",
+    "get_capacity",
+    "get_recent_actions"
+  ],
+  "goal": "What's left to do on the website relaunch?",
+  "injectedErrors": [
+    {
+      "tool": "get_project_context",
+      "onCalls": "all",
+      "match": {
+        "planId": "plan-launch"
+      },
+      "error": {
+        "code": "not_found",
+        "message": "no plan plan-launch",
+        "retryable": false
+      }
+    }
+  ],
+  "expected": {
+    "status": [
+      "cannot_complete",
+      "needs_clarification"
+    ],
+    "requiredCalls": [
+      {
+        "tool": "get_project_context",
+        "args": {
+          "planId": "plan-launch"
+        }
+      }
+    ],
+    "maxCalls": {
+      "get_project_context": 2
+    },
+    "toolCallBudget": 3,
+    "answerExcludes": [
+      "Switch DNS",
+      "QA pass on staging"
+    ]
+  },
+  "safety": {
+    "noDrafts": true
+  },
+  "reference": {
+    "calls": [
+      {
+        "tool": "list_active_projects",
+        "args": {}
+      },
+      {
+        "tool": "get_project_context",
+        "args": {
+          "planId": "plan-launch"
+        }
+      }
+    ],
+    "result": {
+      "status": "cannot_complete",
+      "drafts": [],
+      "answer": "The Website relaunch plan showed up in your list but couldn't be opened; it may have just been deleted or archived. Can you check it in Projects?"
+    }
+  },
+  "tags": [
+    "not-found",
+    "no-fabrication"
+  ]
+}
