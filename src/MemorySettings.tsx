@@ -65,14 +65,20 @@ export function MemorySettings({
       .catch(() => setProjects([]));
   }, [refresh]);
 
-  async function act(action: () => Promise<unknown>, done?: string) {
+  /** Runs one change; resolves true only when it was saved, so editors keep text on failure. */
+  async function act(
+    action: () => Promise<unknown>,
+    done?: string,
+  ): Promise<boolean> {
     setBusy(true);
     try {
       await action();
       await refresh();
       if (done) onMessage(done);
+      return true;
     } catch (cause) {
       onMessage(cause instanceof Error ? cause.message : String(cause));
+      return false;
     } finally {
       setBusy(false);
     }
@@ -153,9 +159,9 @@ type PanelProps = {
     kind: MemoryKind;
     content: string;
     planId: string | null;
-  }) => Promise<void>;
+  }) => Promise<boolean>;
   onConfirm: (record: MemoryRecord) => void;
-  onCorrect: (record: MemoryRecord, content: string) => Promise<void>;
+  onCorrect: (record: MemoryRecord, content: string) => Promise<boolean>;
   onDelete: (record: MemoryRecord) => void;
   onExport: () => void;
   onClear: () => void;
@@ -380,7 +386,8 @@ function AddMemory({
         setTouched(true);
         if (problem) return;
         void onAdd({ kind, content: content.trim(), planId: planId || null })
-          .then(() => {
+          .then((saved) => {
+            if (!saved) return;
             setContent("");
             setTouched(false);
           })
@@ -488,7 +495,7 @@ function MemoryItem({
               disabled={busy || !!problem || draft.trim() === record.content}
               onClick={() =>
                 void onCorrect(record, draft.trim())
-                  .then(() => setEditing(false))
+                  .then((saved) => saved && setEditing(false))
                   .catch(() => undefined)
               }
             >

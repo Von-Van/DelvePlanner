@@ -68,7 +68,7 @@ const overview: MemoryOverview = {
 
 function panel(props: Partial<Parameters<typeof MemoryPanel>[0]> = {}) {
   const noop = () => undefined;
-  const async = () => Promise.resolve();
+  const saved = () => Promise.resolve(true);
   return renderToStaticMarkup(
     <MemoryPanel
       overview={overview}
@@ -77,9 +77,9 @@ function panel(props: Partial<Parameters<typeof MemoryPanel>[0]> = {}) {
       onUpdateSettings={noop}
       onProjectMemory={noop}
       onForgetProject={noop}
-      onAdd={async}
+      onAdd={saved}
       onConfirm={noop}
-      onCorrect={async}
+      onCorrect={saved}
       onDelete={noop}
       onExport={noop}
       onClear={noop}
