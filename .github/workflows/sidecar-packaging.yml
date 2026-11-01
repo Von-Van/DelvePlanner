@@ -24,7 +24,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-14
+          - os: macos-15
             label: macOS arm64
             pbs_target: aarch64-apple-darwin
             exe: dist/delveops-agent/delveops-agent

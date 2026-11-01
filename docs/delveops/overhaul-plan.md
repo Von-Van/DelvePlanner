@@ -110,6 +110,14 @@ Newline-delimited JSON over the child's stdin/stdout, stderr for diagnostics onl
 { "v": 1, "id": "req-123", "type": "…", "payload": { … } }
 ```
 
+As built by D (full message list and payloads in `docs/delveops/sidecar.md`): Rust sends `hello` and Python answers
+`hello_ack`; Rust sends `run_start` (envelope `id` = run ID, payload `{task, budget}`) and Python answers
+**`run_start_ack`** (adopted from C's tool server) before any call. `tool_call` is exactly `{tool, arguments}`, the
+same shape C's tool server takes, and `tool_result` is C's `toolResult` (`callId`, `tool`, `ok`, `result` | `error`,
+…). `model_call`, `trace_event` and `error` carry `runId`. `run_result` may add `stopReason` (`cancelled`,
+`timeout`, `error`) to a `cannot_complete`. Link-level error codes beyond the tool taxonomy: `protocol_error`,
+`cancelled`, `busy`.
+
 Message types (v1): `hello` / `hello_ack` (handshake, versions, limits), `run_start`, `tool_call` (Python → Rust),
 `tool_result` (Rust → Python), `model_call` / `model_result` (Python → Rust model broker → bundled Ollama),
 `trace_event`, `run_result`, `cancel`, `error`. Max message size 1 MiB. Rust supervises: start on demand,
