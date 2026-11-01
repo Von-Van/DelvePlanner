@@ -1,6 +1,6 @@
 """The shapes the benchmark hands to an agent and expects back.
 
-These follow section 4 of ``docs/delveops/overhaul-plan.md``. The Python agent package (piece E) owns the
+These follow section 4 of the overhaul plan (kept outside the repo). The Python agent package (piece E) owns the
 real implementation; the runner accepts either these dataclasses or any object/dict with the same field
 names, so the two packages do not need to import each other.
 """

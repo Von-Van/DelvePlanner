@@ -1,6 +1,7 @@
 # agent_bench
 
-The DelveOps agent benchmark (handoff P1, overhaul piece B). It gives an agent realistic planner requests
+The agent benchmark for the overhaul (handoff P1, overhaul piece B). Contract numbers below refer to the
+overhaul plan, which is kept outside the repository. It gives an agent realistic planner requests
 against a synthetic, in-memory planner, records exactly what the agent did, and scores the run. It is
 separate from the frozen 126-case `eval/` regression track, which stays unchanged.
 
@@ -23,7 +24,7 @@ A run writes `agent_bench/results/<time>-<agent>/` (git-ignored): `results.jsonl
 
 | Path                         | What it is                                                                          |
 | ---------------------------- | ----------------------------------------------------------------------------------- |
-| `schemas/case.v1.json`       | Case format (contract 6 in `docs/delveops/overhaul-plan.md`)                        |
+| `schemas/case.v1.json`       | Case format (contract 6 in the overhaul plan)                          |
 | `schemas/trace.v1.json`      | Shared trace event format (contract 5). B owns it; every component emits it         |
 | `schemas/draft.v0.json`      | Draft format (contract 2): `op` is a `MutationOperation` variant                    |
 | `schemas/tools.v0.json`      | Benchmark-side copy of the read-tool contract (contract 1)                          |

@@ -1,5 +1,5 @@
 {
-  "$comment": "Benchmark-side mirror of the v0 read-tool contract in docs/delveops/overhaul-plan.md (section 1). Replace with contracts/tools.v1.json once piece C lands it.",
+  "$comment": "Benchmark-side mirror of the v0 read-tool contract in the overhaul plan (section 1, kept outside the repo). Replace with contracts/tools.v1.json once piece C lands it.",
   "version": "tools.v0",
   "errorCodes": ["invalid_arguments", "not_found", "ambiguous", "permission_denied", "timeout", "unavailable", "budget_exhausted", "internal"],
   "tools": {

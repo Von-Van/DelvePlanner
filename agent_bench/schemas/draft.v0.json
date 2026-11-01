@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "agent_bench/schemas/draft.v0.json",
   "title": "Proposal draft v0",
-  "description": "What an agent may return instead of writing. `op` is exactly one variant of MutationOperation in src-tauri/src/model.rs (snake_case); see section 2 of docs/delveops/overhaul-plan.md. For operations on an existing record, `target` carries its id and revision (Rust's taskId/eventId/... and expectedRevision); `payload` holds the variant's remaining fields in camelCase. Rust re-validates target and revision before anything reaches review.",
+  "description": "What an agent may return instead of writing. `op` is exactly one variant of MutationOperation in src-tauri/src/model.rs (snake_case); see section 2 of the overhaul plan (kept outside the repo). For operations on an existing record, `target` carries its id and revision (Rust's taskId/eventId/... and expectedRevision); `payload` holds the variant's remaining fields in camelCase. Rust re-validates target and revision before anything reaches review.",
   "type": "object",
   "required": [
     "op",
