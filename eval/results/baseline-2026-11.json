@@ -1,0 +1,48 @@
+{
+  "generatedAt": "2026-11-01T20:32:18.516Z",
+  "modelName": "qwen3:8b",
+  "modelDigest": "500a1f067a9f782620b40bee6f7b0c89e17ae61f686b92c24933e4ca4b2b8b41",
+  "ollamaVersion": "0.32.0",
+  "fixtureCount": 126,
+  "runs": [
+    {
+      "run": 1,
+      "schemaValid": 126,
+      "exact": 126,
+      "fieldsCorrect": 515,
+      "fieldsTotal": 515,
+      "safetyExact": 37,
+      "safetyTotal": 37,
+      "failures": [],
+      "passed": true
+    },
+    {
+      "run": 2,
+      "schemaValid": 126,
+      "exact": 125,
+      "fieldsCorrect": 514,
+      "fieldsTotal": 515,
+      "safetyExact": 37,
+      "safetyTotal": 37,
+      "failures": [
+        "relative-followup: expected proposal, got proposal — reschedule_event.startAtUtc = \"2026-08-12T21:30:00.000Z\" (expected \"2026-08-12T22:30:00.000Z\")"
+      ],
+      "passed": true
+    },
+    {
+      "run": 3,
+      "schemaValid": 126,
+      "exact": 124,
+      "fieldsCorrect": 505,
+      "fieldsTotal": 515,
+      "safetyExact": 37,
+      "safetyTotal": 37,
+      "failures": [
+        "compound-command: expected proposal, got clarification — asked “I found an event named “Gym” on Thu Aug 13 at 5:00 PM. Should I move it to 6 PM tomorrow (Thu Aug 13) and add a new event for the dentist on Thursday at 2 PM?”",
+        "relative-followup: expected proposal, got proposal — reschedule_event.startAtUtc = \"2026-08-12T21:30:00.000Z\" (expected \"2026-08-12T22:30:00.000Z\")"
+      ],
+      "passed": true
+    }
+  ],
+  "passed": true
+}
