@@ -214,4 +214,9 @@ Prediction for `a1-v2`: A1's drafting cases pass at least as often as A0's, with
 loss on the question cases. If it misses, the next step is a verifier (A3) that checks drafts against the
 operation schema before they leave the agent, rather than more prompt changes.
 
+**Update, same day:** piece E has since moved A1 to prompt `a1-v2`, which emits drafts in the exact
+`MutationOperation` shape (checked against the Rust types) and reads tool definitions from
+`contracts/tools.v1.json`. That covers change 1 and probably 2. The re-run waits for that change (#5) to merge,
+and it gets its own results section rather than replacing this one.
+
 The "move it 30 minutes later" follow-up is still untested (see limits above).
