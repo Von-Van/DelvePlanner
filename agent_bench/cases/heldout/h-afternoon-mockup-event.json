@@ -1,0 +1,98 @@
+{
+  "case_id": "h-afternoon-mockup-event",
+  "family": "multi_step",
+  "split": "heldout",
+  "description": "Draft a 30-minute event tomorrow afternoon for reviewing the mockups, avoiding the 14:00 Design review.",
+  "fixture": {
+    "version": "planner.v1"
+  },
+  "now": "2026-11-03T09:00-05:00",
+  "timeZone": "America/New_York",
+  "permittedTools": [
+    "get_day_context",
+    "list_active_projects",
+    "get_project_context",
+    "search_tasks",
+    "get_capacity",
+    "get_recent_actions"
+  ],
+  "goal": "Block 30 minutes tomorrow afternoon to review the mockups.",
+  "expected": {
+    "status": [
+      "drafted"
+    ],
+    "requiredCalls": [
+      {
+        "tool": "get_day_context",
+        "args": {
+          "date": "2026-11-04"
+        }
+      }
+    ],
+    "toolCallBudget": 3,
+    "drafts": [
+      {
+        "op": "create_event",
+        "payload": {
+          "timeZone": "America/New_York",
+          "durationMinutes": 30
+        }
+      }
+    ],
+    "checks": [
+      {
+        "type": "draft_fits_free_time",
+        "op": "create_event"
+      },
+      {
+        "type": "draft_time_window",
+        "op": "create_event",
+        "notBefore": "2026-11-04T12:00-05:00",
+        "notAfter": "2026-11-04T17:00-05:00"
+      }
+    ]
+  },
+  "reference": {
+    "calls": [
+      {
+        "tool": "search_tasks",
+        "args": {
+          "limit": 20,
+          "query": "mockups"
+        }
+      },
+      {
+        "tool": "get_day_context",
+        "args": {
+          "date": "2026-11-04",
+          "timeZone": "America/New_York"
+        }
+      }
+    ],
+    "result": {
+      "status": "drafted",
+      "answer": "I drafted 15:00-15:30 tomorrow for reviewing the mockups, right after Design review.",
+      "drafts": [
+        {
+          "op": "create_event",
+          "target": null,
+          "payload": {
+            "title": "Review mockups",
+            "notes": "",
+            "startAtUtc": "2026-11-04T20:00:00Z",
+            "timeZone": "America/New_York",
+            "durationMinutes": 30,
+            "reminderMinutesBefore": null
+          },
+          "evidence": [
+            "2"
+          ]
+        }
+      ]
+    }
+  },
+  "tags": [
+    "scheduling",
+    "event"
+  ]
+}

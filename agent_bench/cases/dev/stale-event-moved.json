@@ -1,0 +1,100 @@
+{
+  "case_id": "stale-event-moved",
+  "family": "stale_revision",
+  "split": "dev",
+  "description": "Lunch with Sam is moved by the user between two reads (revision 2 -> 3, now 12:00). A rename draft must target revision 3.",
+  "fixture": {
+    "version": "planner.v1"
+  },
+  "now": "2026-11-03T09:00-05:00",
+  "timeZone": "America/New_York",
+  "permittedTools": [
+    "get_day_context",
+    "list_active_projects",
+    "get_project_context",
+    "search_tasks",
+    "get_capacity",
+    "get_recent_actions"
+  ],
+  "goal": "Rename today's lunch with Sam to 'Lunch with Sam and Ana'. Double-check it before you draft anything.",
+  "stateChanges": [
+    {
+      "afterToolCall": 1,
+      "changes": [
+        {
+          "entity": "events",
+          "id": "ev-lunch",
+          "fields": {
+            "revision": 3,
+            "startAtUtc": "2026-11-03T17:00:00Z"
+          }
+        }
+      ]
+    }
+  ],
+  "expected": {
+    "status": [
+      "drafted"
+    ],
+    "minCalls": {
+      "get_day_context": 2
+    },
+    "toolCallBudget": 2,
+    "drafts": [
+      {
+        "op": "update_event",
+        "target": {
+          "id": "ev-lunch",
+          "revision": 3
+        },
+        "payload": {
+          "title": "Lunch with Sam and Ana"
+        }
+      }
+    ]
+  },
+  "reference": {
+    "calls": [
+      {
+        "tool": "get_day_context",
+        "args": {
+          "date": "2026-11-03",
+          "timeZone": "America/New_York"
+        }
+      },
+      {
+        "tool": "get_day_context",
+        "args": {
+          "date": "2026-11-03",
+          "timeZone": "America/New_York"
+        }
+      }
+    ],
+    "result": {
+      "status": "drafted",
+      "answer": "Lunch with Sam moved to 12:00 since I first looked; I drafted the rename against the current version.",
+      "drafts": [
+        {
+          "op": "update_event",
+          "target": {
+            "id": "ev-lunch",
+            "revision": 3
+          },
+          "payload": {
+            "title": "Lunch with Sam and Ana",
+            "reminderChange": {
+              "action": "unchanged"
+            }
+          },
+          "evidence": [
+            "2"
+          ]
+        }
+      ]
+    }
+  },
+  "tags": [
+    "revision",
+    "event"
+  ]
+}
