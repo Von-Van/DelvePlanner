@@ -2,7 +2,7 @@
 
 It supports the subset of draft 2020-12 that the benchmark's own schemas use: ``type``, ``properties``,
 ``required``, ``additionalProperties``, ``items``, ``enum``, ``const``, ``minimum``, ``maximum``,
-``minLength``, ``minItems``, ``maxItems``, ``pattern``, ``anyOf``, ``oneOf`` and local ``$ref``
+``minLength``, ``maxLength``, ``minItems``, ``maxItems``, ``pattern``, ``anyOf``, ``oneOf``, ``not`` and local ``$ref``
 (``#/$defs/...``). Anything else in a schema is ignored, so keep schemas inside this subset.
 """
 
@@ -47,7 +47,7 @@ def validate(value: Any, schema: dict, root: dict | None = None, path: str = "$"
         if not any(_is_type(value, n) for n in names):
             return [f"{path}: expected {'/'.join(names)}, got {type(value).__name__}"]
 
-    if "const" in schema and value != schema["const"]:
+    if "const" in schema and (value != schema["const"] or type(value) is not type(schema["const"])):
         errors.append(f"{path}: expected {schema['const']!r}")
     if "enum" in schema and value not in schema["enum"]:
         errors.append(f"{path}: {value!r} is not one of {schema['enum']}")
@@ -55,6 +55,8 @@ def validate(value: Any, schema: dict, root: dict | None = None, path: str = "$"
     if isinstance(value, str):
         if "minLength" in schema and len(value) < schema["minLength"]:
             errors.append(f"{path}: shorter than {schema['minLength']}")
+        if "maxLength" in schema and len(value) > schema["maxLength"]:
+            errors.append(f"{path}: longer than {schema['maxLength']}")
         if "pattern" in schema and not re.search(schema["pattern"], value):
             errors.append(f"{path}: {value!r} does not match {schema['pattern']}")
 
@@ -87,6 +89,8 @@ def validate(value: Any, schema: dict, root: dict | None = None, path: str = "$"
             elif isinstance(extra, dict):
                 errors.extend(validate(item, extra, root, f"{path}.{key}"))
 
+    if "not" in schema and not validate(value, schema["not"], root, path):
+        errors.append(f"{path}: matches a shape that is not allowed")
     if "anyOf" in schema:
         if all(validate(value, s, root, path) for s in schema["anyOf"]):
             errors.append(f"{path}: matches none of the allowed shapes")

@@ -24,13 +24,14 @@ A run writes `agent_bench/results/<time>-<agent>/` (git-ignored): `results.jsonl
 
 | Path                         | What it is                                                                          |
 | ---------------------------- | ----------------------------------------------------------------------------------- |
-| `schemas/case.v1.json`       | Case format (contract 6 in the overhaul plan)                          |
+| `schemas/case.v1.json`       | Case format (contract 6 in the overhaul plan)                                       |
 | `schemas/trace.v1.json`      | Shared trace event format (contract 5). B owns it; every component emits it         |
 | `schemas/draft.v0.json`      | Draft format (contract 2): `op` is a `MutationOperation` variant                    |
-| `schemas/tools.v0.json`      | Benchmark-side copy of the read-tool contract (contract 1)                          |
-| `fixtures/planner.v1.json`   | Synthetic planner state: 4 plans, 10 tasks, 7 events, a DST change on 2026-11-01    |
+| `../contracts/tools.v1.json` | The read-tool contract (piece C). The mock reads its schemas, error codes and budgets |
+| `fixtures/planner.v2.json`   | Synthetic planner: a planner export (4 plans, 10 tasks, 7 events, a DST change on 2026-11-01) plus calendar busy times; `ids` maps readable names to the record ids |
 | `cases/dev/`, `cases/heldout/` | One JSON file per case, named by `case_id`                                         |
-| `mock_tools.py`              | Fixture-driven `ToolClient`: argument checks, permissions, fault injection, logging |
+| `mock_tools.py`              | Fixture-driven `ToolClient` matching the Rust broker: shapes, errors, budgets, privacy, plus fault injection and logging |
+| `live_tools.py`              | `ToolClient` over the real Rust tools (`tool_server` example); used for the parity test |
 | `scoring.py`                 | Deterministic utility checks and separate safety rules                              |
 | `runner.py`, `__main__.py`   | Runs an agent over cases; writes results, traces, summary and report                |
 | `interfaces.py`              | `AgentTask`, `Budget`, `AgentResult`, `ToolClient` (contract 4)                     |
@@ -42,13 +43,26 @@ A run writes `agent_bench/results/<time>-<agent>/` (git-ignored): `results.jsonl
 `--agent module:factory` names a callable that returns an object with `architecture_id` and
 `run(task, tools, model, budget)`. `run` may return an `AgentResult`, any object with the same attributes, or
 a dict: `status` (`answered` | `drafted` | `needs_clarification` | `cannot_complete`), `answer`, `drafts`,
-`trace` (events in the trace schema), `usage`. `tools.call(name, args)` returns
-`{"ok": true, "data": …}` or `{"ok": false, "error": {"code", "message", "retryable"}}` and never raises for a
+`trace` (events in the trace schema), `usage`. `tools.call(name, args)` returns the contract's `toolResult`
+envelope (`{callId, tool, ok, result | error, durationMs, resultBytes, callsRemaining}`) and never raises for a
 tool failure. A crash inside `run` is scored as a failed run, not a harness error.
 
-The tool client enforces `maxToolCalls` (further calls get `budget_exhausted`); wall time over
-`maxWallSeconds` fails the run. Model-call and token budgets are the agent's to respect; it reports them in
-`usage`.
+The tool client applies the broker's rules in the broker's order: an unknown tool is `invalid_arguments`, a
+tool the run does not permit is `permission_denied`, a reserved tool (`get_memory`) is `unavailable`, then the
+call budget (`maxToolCalls`) and the identical-failure cutoff (`maxIdenticalFailures`) give `budget_exhausted`.
+Refused calls don't use up the budget. Descriptions and notes reach the agent only when the case's `privacy`
+allows them. Wall time over `maxWallSeconds` fails the run. Model-call and token budgets are the agent's to
+respect; it reports them in `usage`.
+
+## The mock matches the real tools
+
+`tests/test_parity.py` sends the same calls to `MockToolClient` and to the real Rust tools (the
+`tool_server` example, serving the fixture's export) and fails on any difference apart from timings, byte
+counts and error wording. It covers a battery of probe calls (every tool, both privacy settings, and the error
+paths) and every case's reference calls. The real server has no calendars, so both sides run without calendar
+busy times there. CI's `parity` job builds `tool_server` and runs it; locally it runs when
+`src-tauri/target/debug/examples/tool_server` exists (`cargo build --example tool_server` in `src-tauri/`) and
+skips otherwise.
 
 ## Cases
 
@@ -65,7 +79,7 @@ Families in the seed set (23 cases: 17 dev, 6 held-out, one held-out per family)
 
 `continuity`, `memory` and `proactive` are reserved in the schema for later pieces (K, L).
 
-A case can change the run in three ways: `fixture.overrides` (edit the starting state),
+A case can change the run in four ways: `privacy` (whether descriptions and notes are readable), `fixture.overrides` (edit the starting state),
 `injectedErrors` / `injectedToolResponses` (by tool, by which call, and optionally by argument), and
 `stateChanges` (edit state after the Nth tool call, which is how records go stale between reads).
 
@@ -102,11 +116,8 @@ trace is stored beside it (`agentTrace`) and checked against the schema (`agentT
 
 ## Assumptions to revisit
 
-- `schemas/tools.v0.json` mirrors the plan's tool table. When piece C lands `contracts/tools.v1.json`, switch
-  the mock to it and update the fixture outputs if shapes differ.
-- The `{ok, data | error}` tool result envelope is the benchmark's assumption; align with C/D if theirs differs.
 - Draft `payload` uses the `MutationOperation` field names in camelCase, minus the target id and
   `expectedRevision`, which live in `target`. Time blocks are manual-only in waves 1–2, so scheduling cases
   draft `create_event` or `schedule_task`.
-- The live tool path (C's `tool_server` example over D's link) is not wired yet; `MockToolClient` is the only
-  `ToolClient` here.
+- Cases run on `MockToolClient`, which adds fault injection and mid-run state changes. `LiveToolClient` can serve
+  the same fixture through the real tools, but carries neither, so it is used for parity rather than scoring.
