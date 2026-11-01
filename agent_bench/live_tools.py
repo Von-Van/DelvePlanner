@@ -21,6 +21,7 @@ from typing import Any
 from .mock_tools import load_fixture
 
 REPO = Path(__file__).resolve().parent.parent
+GITHUB_FIXTURE = Path(__file__).parent / "fixtures" / "github.v1.json"
 DEFAULT_BINARY = REPO / "src-tauri" / "target" / "debug" / "examples" / "tool_server"
 
 
@@ -54,7 +55,8 @@ class LiveToolClient:
             history_path.write_text(json.dumps(case["fixture"]["history"]))
             command += ["--history", str(history_path)]
         self._proc = subprocess.Popen(
-            command,
+            # The mock always serves the GitHub fixture (piece M), so the real server does too.
+            [*command, "--github", str(GITHUB_FIXTURE)],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
