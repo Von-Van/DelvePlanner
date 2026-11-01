@@ -14,10 +14,26 @@ from typing import Any
 
 from .types import Draft
 
-# Operations that change an existing record and therefore need a target id + revision.
-TARGETED_OPS = frozenset({"update_task", "schedule_task", "set_task_status"})
+# Exactly the variants of `MutationOperation` in src-tauri/src/model.rs, snake_case (plan contract 2).
+# Operations on an existing record; Rust needs its id and `expected_revision`.
+TARGETED_OPS = frozenset(
+    {
+        "update_event",
+        "delete_event",
+        "reschedule_event",
+        "set_event_plan",
+        "update_plan",
+        "update_milestone",
+        "delete_milestone",
+        "update_task",
+        "schedule_task",
+        "set_task_plan",
+        "delete_task",
+        "set_task_workstream",
+    }
+)
 # Operations that create something new; no target.
-CREATE_OPS = frozenset({"create_task", "create_milestone", "create_plan", "create_event", "create_task_block"})
+CREATE_OPS = frozenset({"create_event", "create_plan", "create_milestone", "create_task", "create_workstream"})
 ALLOWED_OPS = TARGETED_OPS | CREATE_OPS
 
 
@@ -72,7 +88,9 @@ def parse_draft(raw: Any, tool_call_ids: set[str], records: dict[str, Any]) -> D
             raise DraftError(f"{op}: target {record_id} was not seen in any tool result")
         seen_revision = records[record_id]
         revision = target.get("revision")
-        if seen_revision is not None and revision != seen_revision:
+        if not isinstance(seen_revision, int) or isinstance(seen_revision, bool):
+            raise DraftError(f"{op}: no revision was seen for {record_id}; look it up before changing it")
+        if revision != seen_revision:
             raise DraftError(f"{op}: target {record_id} has revision {seen_revision}, draft says {revision}")
         target = {"id": record_id, "revision": revision}
     else:
