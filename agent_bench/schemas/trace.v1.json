@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "agent_bench/schemas/trace.v1.json",
+  "title": "DelveOps trace event v1",
+  "description": "One step of an agent run. Every component (Rust broker, Python agent, benchmark harness) emits this shape. Routine traces keep metadata in `data`; full prompt or response text belongs only in opt-in debug output.",
+  "type": "object",
+  "required": ["runId", "seq", "kind", "at", "summary", "data"],
+  "additionalProperties": false,
+  "properties": {
+    "runId": { "type": "string", "minLength": 1 },
+    "seq": { "type": "integer", "minimum": 1 },
+    "kind": { "enum": ["model_call", "tool_call", "tool_result", "plan", "verify", "repair", "draft", "final", "error"] },
+    "at": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$" },
+    "durationMs": { "type": "number", "minimum": 0 },
+    "summary": { "type": "string" },
+    "data": { "type": "object" }
+  }
+}

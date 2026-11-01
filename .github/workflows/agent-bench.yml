@@ -1,0 +1,41 @@
+name: Agent benchmark
+
+on:
+  push:
+    branches: [main, delveops-overhaul]
+    paths:
+      - "agent_bench/**"
+      - ".github/workflows/agent-bench.yml"
+  pull_request:
+    paths:
+      - "agent_bench/**"
+      - ".github/workflows/agent-bench.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  bench:
+    name: Validate cases and test the harness
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        python: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install -r agent_bench/requirements-dev.txt
+      - name: Validate every case against the schema
+        run: python -m agent_bench validate
+      - name: Harness tests (reference passes, null fails, scorers catch bad runs)
+        run: python -m pytest agent_bench -q
+      - name: Reference agent over the dev split
+        run: python -m agent_bench run --split dev --out bench-out --require-success 1.0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: agent-bench-reference-py${{ matrix.python }}
+          path: bench-out
+          retention-days: 7

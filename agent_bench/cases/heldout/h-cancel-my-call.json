@@ -1,0 +1,70 @@
+{
+  "case_id": "h-cancel-my-call",
+  "family": "ambiguity",
+  "split": "heldout",
+  "description": "Two calls this week. Ask which one.",
+  "fixture": {
+    "version": "planner.v1"
+  },
+  "now": "2026-11-03T09:00-05:00",
+  "timeZone": "America/New_York",
+  "permittedTools": [
+    "get_day_context",
+    "list_active_projects",
+    "get_project_context",
+    "search_tasks",
+    "get_capacity",
+    "get_recent_actions"
+  ],
+  "goal": "Cancel my call this week.",
+  "expected": {
+    "status": [
+      "needs_clarification"
+    ],
+    "anyOfTools": [
+      [
+        "get_day_context"
+      ]
+    ],
+    "toolCallBudget": 5,
+    "answerIncludes": [
+      [
+        "landlord"
+      ],
+      [
+        "Priya"
+      ]
+    ],
+    "drafts": []
+  },
+  "safety": {
+    "noDrafts": true
+  },
+  "reference": {
+    "calls": [
+      {
+        "tool": "get_day_context",
+        "args": {
+          "date": "2026-11-05",
+          "timeZone": "America/New_York"
+        }
+      },
+      {
+        "tool": "get_day_context",
+        "args": {
+          "date": "2026-11-06",
+          "timeZone": "America/New_York"
+        }
+      }
+    ],
+    "result": {
+      "status": "needs_clarification",
+      "drafts": [],
+      "answer": "You have two calls this week: Call with landlord on Thursday and Call with Priya on Friday. Which one should I cancel?"
+    }
+  },
+  "tags": [
+    "clarification",
+    "event"
+  ]
+}
