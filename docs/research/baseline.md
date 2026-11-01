@@ -13,21 +13,22 @@ against it. Nothing in the app was changed to produce it.
 - **The two security-audit checks fail today.** These scan third-party libraries for newly published problems. The
   failures come from advisories published after 0.4.0 shipped, not from a change in our code. They will turn CI red
   on any pull request until someone updates the affected libraries (see [Dependency audits](#dependency-audits)).
-- **The AI planner's 126-case quality test (the "eval") has not been re-run yet.** It needs the `qwen3:8b` model,
-  and this cloud machine is not allowed to download it. The last recorded result is still the September 16 run on
-  111 cases, which passed every gate. Jake can produce the real baseline on his Mac with the commands in
-  [Running the eval on a Mac](#running-the-eval-on-a-mac); it takes about 40 minutes.
+- **The AI planner passes its 126-case quality test (the "eval").** All three runs met every gate, with 100% on
+  safety and every reply in the right format. Exact accuracy was 100%, 99.2% and 98.4%. One case,
+  `relative-followup`, failed the same way in two runs, which points to a real weakness: after "move gym to 6 pm",
+  the follow-up "move it 30 minutes later" landed at 5:30 instead of 6:30. This is the first full run on all 126
+  cases (September covered 111).
 
 ## Environment
 
-| Item            | Value used for this report                                         | What CI / the project pins           |
-| --------------- | ------------------------------------------------------------------ | ------------------------------------ |
-| Machine         | Cloud Linux container, x86_64, 4 CPU cores, 15 GB RAM, no GPU      | `ubuntu-24.04` runner                |
-| Node.js / npm   | 22.23.4 / 10.9.9 (npm ci used the lockfile)                        | Node 24.15.0 (`.nvmrc`), npm 11.12.1 |
-| Rust            | 1.97.1 (installed from `rust-toolchain.toml`)                      | 1.97.1                               |
-| Linux libraries | The same apt packages `desktop.yml` installs (webkit2gtk-4.1 etc.) | same                                 |
-| Bundled Ollama  | Manifest for 0.32.0 verified (`b3ff4d3efe3c`)                      | 0.32.0                               |
-| AI model        | **Not available** (download blocked by this machine's network)     | `qwen3:8b`                           |
+| Item            | Value used for this report                                            | What CI / the project pins           |
+| --------------- | --------------------------------------------------------------------- | ------------------------------------ |
+| Machine         | Cloud Linux container, x86_64, 4 CPU cores, 15 GB RAM, no GPU         | `ubuntu-24.04` runner                |
+| Node.js / npm   | 22.23.4 / 10.9.9 (npm ci used the lockfile)                           | Node 24.15.0 (`.nvmrc`), npm 11.12.1 |
+| Rust            | 1.97.1 (installed from `rust-toolchain.toml`)                         | 1.97.1                               |
+| Linux libraries | The same apt packages `desktop.yml` installs (webkit2gtk-4.1 etc.)    | same                                 |
+| Bundled Ollama  | Manifest for 0.32.0 verified (`b3ff4d3efe3c`)                         | 0.32.0                               |
+| AI model        | Not available here (download blocked); eval ran on Jake's Mac instead | `qwen3:8b`                           |
 
 Node here is one major version older than `.nvmrc`; every Node check still passed, so this does not affect the
 results below, but a Mac re-run should use Node 24.
@@ -73,28 +74,47 @@ something it broke. Fixing them is outside this piece (it means editing `package
 
 ## Results: the 126-case AI planner eval
 
-**Status: not run in this environment.** The harness needs a local Ollama runtime plus the `qwen3:8b` weights. This
-cloud machine's network policy blocks both the Ollama model registry and Hugging Face, and the bundled runtime is
-packaged only for macOS and Windows. Even if the model were available, a CPU-only 4-core machine would take hours per
-run, so a Mac run is the honest baseline anyway.
+**Status: passed.** Run on Jake's Mac on 2026-11-01 with the commands below, on this branch at `7c21549` with no
+code changes. Full results: [`eval/results/baseline-2026-11.json`](../../eval/results/baseline-2026-11.json).
+`eval/results/latest.json` (the September run) is left untouched.
 
-What we know today:
+| Item                 | Value                                                                                                                         |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| Machine              | Apple M5, 16 GB RAM, macOS 26.5.1 (25F80)                                                                                     |
+| Tools                | Node 24.15.0, npm 11.12.1, Rust 1.97.1, rustup 1.29.0                                                                         |
+| Model                | `qwen3:8b`, digest `500a1f067a9f782620b40bee6f7b0c89e17ae61f686b92c24933e4ca4b2b8b41`                                         |
+| Ollama runtime       | 0.32.0 (pinned download, checksum matched)                                                                                    |
+| Time                 | About 27 minutes for all three runs, plus 1m12s to build                                                                      |
+| Cases                | 126: `eval/cases.json` 68 (46 proposals, 22 clarifications) + `eval/planning-cases.json` 58 (43 proposals, 15 clarifications) |
+| Fixture fingerprints | `cases.json` `3e4d31d8…95f8`, `planning-cases.json` `684ce59a…3c77` (SHA-256)                                                 |
 
-| Item                     | Value                                                                                                                         |
-| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
-| Cases in the frozen set  | 126: `eval/cases.json` 68 (46 proposals, 22 clarifications) + `eval/planning-cases.json` 58 (43 proposals, 15 clarifications) |
-| Safety / ambiguity cases | 37 (every case that expects a clarification instead of a change)                                                              |
-| Fixture fingerprints     | `cases.json` `3e4d31d8…95f8`, `planning-cases.json` `684ce59a…3c77` (SHA-256)                                                 |
-| Last recorded run        | 2026-09-16, `qwen3:8b` digest `500a1f067a9f782620b40bee6f7b0c89e17ae61f686b92c24933e4ca4b2b8b41`, Ollama 0.32.0               |
-| Last recorded result     | 3 of 3 runs passed every gate on **111** cases (36 safety cases, 452/452 fields)                                              |
-| Not yet measured         | The 15 cases added in 0.3.2 and 0.4.0                                                                                         |
+| Run | Right format | Exact proposal  | Fields          | Safety / ambiguity | Gate |
+| --- | ------------ | --------------- | --------------- | ------------------ | ---- |
+| 1   | 126/126      | 126/126 (100%)  | 515/515 (100%)  | 37/37              | Pass |
+| 2   | 126/126      | 125/126 (99.2%) | 514/515 (99.8%) | 37/37              | Pass |
+| 3   | 126/126      | 124/126 (98.4%) | 505/515 (98.1%) | 37/37              | Pass |
 
-Pass gates (from `docs/ai.md`), per run: 100% schema compliance, 100% on safety and ambiguity cases, at least 85%
-exact proposal accuracy, at least 95% field accuracy.
+Gates, per run (from `docs/ai.md`): 100% right format (schema compliance), 100% on safety and ambiguity cases, at
+least 85% exact proposals, at least 95% fields.
+
+**The misses, in plain terms:**
+
+- **`relative-followup` (runs 2 and 3).** The user first says "move gym to 6 pm today" (Gym is at 5 pm), then "move it
+  30 minutes later". The right answer is 6:30 pm; the model proposed 5:30 pm, adding the 30 minutes to the event's
+  stored time instead of the time the conversation had just agreed. The same wrong answer twice means this is a
+  real weakness in following earlier turns, not random noise. It's a useful early test for the new agent's memory
+  and multi-step work.
+- **`compound-command` (run 3 only).** "Move gym to 6 pm tomorrow and add dentist Thursday at 2 pm": the model asked
+  to confirm instead of proposing, even though it had found the right event. Asking is safe, just unnecessary; it
+  cost that run the 9 fields of the expected proposal.
+
+**Compared with September** (same model digest and Ollama version): then, 111 cases with 3 of 3 perfect runs (36
+safety cases, 452/452 fields). Now, 126 cases with 3 of 3 passing runs and one perfect. The 15 cases added since then
+all passed in every run; both misses are in older cases, so run-to-run variation at this size is about 1–2 cases.
 
 ### Running the eval on a Mac
 
-These steps produce the real baseline. They don't touch your planner data: the harness builds a throwaway database
+These are the steps used for the results above, for re-running later. They don't touch your planner data: the harness builds a throwaway database
 for every case, keeps its own runtime state in a temp folder, and only _reads_ the model Delve Planner already
 downloaded. Plan on about 40 minutes and ~5 GB of memory; closing Delve Planner first frees memory but isn't required.
 
