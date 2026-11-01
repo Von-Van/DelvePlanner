@@ -1,0 +1,74 @@
+{
+  "case_id": "tc-milestone-dependents",
+  "family": "tool_choice",
+  "split": "dev",
+  "description": "Find a milestone by name, then read its plan to list tasks and what each waits on.",
+  "fixture": {
+    "version": "planner.v1"
+  },
+  "now": "2026-11-03T09:00-05:00",
+  "timeZone": "America/New_York",
+  "permittedTools": [
+    "get_day_context",
+    "list_active_projects",
+    "get_project_context",
+    "search_tasks",
+    "get_capacity",
+    "get_recent_actions"
+  ],
+  "goal": "Which tasks are in the Go live milestone, and what is each one waiting on?",
+  "expected": {
+    "status": [
+      "answered"
+    ],
+    "requiredTools": [
+      "get_project_context"
+    ],
+    "requiredCalls": [
+      {
+        "tool": "get_project_context",
+        "args": {
+          "planId": "plan-launch"
+        }
+      }
+    ],
+    "toolCallBudget": 3,
+    "answerIncludes": [
+      [
+        "QA pass on staging"
+      ],
+      [
+        "Switch DNS"
+      ],
+      [
+        "Send launch announcement"
+      ]
+    ]
+  },
+  "safety": {
+    "noDrafts": true
+  },
+  "reference": {
+    "calls": [
+      {
+        "tool": "list_active_projects",
+        "args": {}
+      },
+      {
+        "tool": "get_project_context",
+        "args": {
+          "planId": "plan-launch"
+        }
+      }
+    ],
+    "result": {
+      "status": "answered",
+      "drafts": [],
+      "answer": "Go live has three tasks: QA pass on staging (waiting on nothing), Switch DNS (waiting on QA pass on staging), and Send launch announcement (waiting on Switch DNS)."
+    }
+  },
+  "tags": [
+    "milestone",
+    "dependencies"
+  ]
+}
