@@ -15,7 +15,7 @@ pub enum ToolName {
     SearchTasks,
     GetCapacity,
     GetRecentActions,
-    /// Reserved for memory experiments; always answers `unavailable` for now.
+    /// What the person asked the assistant to remember (memory strategy M3).
     GetMemory,
 }
 
@@ -48,7 +48,7 @@ impl ToolName {
 
     /// Whether the tool is served yet. Reserved tools are listed so their names stay taken.
     pub fn implemented(self) -> bool {
-        self != Self::GetMemory
+        true
     }
 
     pub fn description(self) -> &'static str {
@@ -78,7 +78,14 @@ impl ToolName {
                 "Recently applied changes and failed attempts. historyAvailable is false until \
                  agent outcomes are recorded, so an empty list may mean not recorded yet."
             }
-            Self::GetMemory => "Reserved for memory experiments. Not available yet.",
+            Self::GetMemory => {
+                "Remembered decisions, project facts, and preferences, ranked by how well they \
+                 match the query, then confirmed before unconfirmed, then newest. Superseded and \
+                 expired memories are never returned. Each record says its source and whether \
+                 the person confirmed it; treat unconfirmed records as possibly wrong, and \
+                 prefer planner records when they disagree. memoryEnabled is false when the \
+                 person paused memory."
+            }
         }
     }
 
@@ -165,7 +172,31 @@ impl ToolName {
                 }),
                 &[],
             ),
-            Self::GetMemory => object(json!({}), &[]),
+            Self::GetMemory => object(
+                json!({
+                    "query": {
+                        "type": "string",
+                        "maxLength": super::memory::MAX_MEMORY_QUERY_LENGTH,
+                        "description": "Words to match. Without a query every current memory is a match."
+                    },
+                    "planId": {
+                        "$ref": "#/$defs/id",
+                        "description": "Only memories for this plan, plus memories not tied to any plan."
+                    },
+                    "kinds": {
+                        "type": "array",
+                        "items": { "$ref": "#/$defs/memoryKind" },
+                        "uniqueItems": true
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": super::memory::MAX_MEMORY_LIMIT,
+                        "default": super::memory::DEFAULT_MEMORY_LIMIT
+                    }
+                }),
+                &[],
+            ),
         }
     }
 
@@ -239,7 +270,15 @@ impl ToolName {
                 }),
                 &["actions", "historyAvailable"],
             ),
-            Self::GetMemory => json!({ "not": {} }),
+            Self::GetMemory => object(
+                json!({
+                    "memoryEnabled": { "type": "boolean" },
+                    "records": array("#/$defs/memory"),
+                    "totalMatches": { "type": "integer", "minimum": 0 },
+                    "truncated": { "type": "boolean" }
+                }),
+                &["memoryEnabled", "records", "totalMatches", "truncated"],
+            ),
         }
     }
 }
@@ -276,6 +315,23 @@ fn definitions() -> Value {
         "taskPriority": { "enum": ["low", "normal", "high", "critical"] },
         "planStatus": { "enum": ["planning", "active", "on_hold", "complete", "cancelled"] },
         "milestoneStatus": { "enum": ["pending", "complete", "skipped"] },
+        "memoryKind": { "enum": ["decision", "project_fact", "preference", "note"] },
+        "memory": object(
+            json!({
+                "id": { "$ref": "#/$defs/id" },
+                "kind": { "$ref": "#/$defs/memoryKind" },
+                "content": { "type": "string" },
+                "source": {
+                    "enum": ["user_stated", "user_correction", "approved_action", "assistant_inferred"]
+                },
+                "confirmation": { "enum": ["confirmed", "unconfirmed"] },
+                "planId": nullable_ref("#/$defs/id"),
+                "recordedAt": { "$ref": "#/$defs/instant" },
+                "expiresAt": { "$ref": "#/$defs/instant" },
+                "relevance": { "type": "number", "minimum": 0, "maximum": 1 }
+            }),
+            &["id", "kind", "content", "source", "confirmation", "planId", "recordedAt", "relevance"],
+        ),
         "timeRange": object(
             json!({
                 "startAtUtc": { "$ref": "#/$defs/instant" },

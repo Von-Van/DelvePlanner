@@ -31,7 +31,13 @@ def load_agent(spec: str, **kwargs: Any):
 
 
 def task_for(case: dict) -> AgentTask:
-    return AgentTask(goal=case["goal"], now=case["now"], timeZone=case["timeZone"], permittedTools=tuple(case["permittedTools"]))
+    return AgentTask(
+        goal=case["goal"],
+        now=case["now"],
+        timeZone=case["timeZone"],
+        permittedTools=tuple(case["permittedTools"]),
+        conversation=tuple(dict(turn) for turn in case.get("conversation", [])),
+    )
 
 
 def budget_for(case: dict, override: dict | None = None) -> Budget:

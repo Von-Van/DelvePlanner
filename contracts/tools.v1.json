@@ -221,6 +221,74 @@
       "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
       "type": "string"
     },
+    "memory": {
+      "additionalProperties": false,
+      "properties": {
+        "confirmation": {
+          "enum": [
+            "confirmed",
+            "unconfirmed"
+          ]
+        },
+        "content": {
+          "type": "string"
+        },
+        "expiresAt": {
+          "$ref": "#/$defs/instant"
+        },
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "kind": {
+          "$ref": "#/$defs/memoryKind"
+        },
+        "planId": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "recordedAt": {
+          "$ref": "#/$defs/instant"
+        },
+        "relevance": {
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        "source": {
+          "enum": [
+            "user_stated",
+            "user_correction",
+            "approved_action",
+            "assistant_inferred"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "content",
+        "source",
+        "confirmation",
+        "planId",
+        "recordedAt",
+        "relevance"
+      ],
+      "type": "object"
+    },
+    "memoryKind": {
+      "enum": [
+        "decision",
+        "project_fact",
+        "preference",
+        "note"
+      ]
+    },
     "milestone": {
       "additionalProperties": false,
       "properties": {
@@ -1183,17 +1251,65 @@
       "privacyClass": "agent_history"
     },
     {
-      "description": "Reserved for memory experiments. Not available yet.",
-      "implemented": false,
+      "description": "Remembered decisions, project facts, and preferences, ranked by how well they match the query, then confirmed before unconfirmed, then newest. Superseded and expired memories are never returned. Each record says its source and whether the person confirmed it; treat unconfirmed records as possibly wrong, and prefer planner records when they disagree. memoryEnabled is false when the person paused memory.",
+      "implemented": true,
       "inputSchema": {
         "additionalProperties": false,
-        "properties": {},
+        "properties": {
+          "kinds": {
+            "items": {
+              "$ref": "#/$defs/memoryKind"
+            },
+            "type": "array",
+            "uniqueItems": true
+          },
+          "limit": {
+            "default": 8,
+            "maximum": 20,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "planId": {
+            "$ref": "#/$defs/id",
+            "description": "Only memories for this plan, plus memories not tied to any plan."
+          },
+          "query": {
+            "description": "Words to match. Without a query every current memory is a match.",
+            "maxLength": 200,
+            "type": "string"
+          }
+        },
         "required": [],
         "type": "object"
       },
       "name": "get_memory",
       "outputSchema": {
-        "not": {}
+        "additionalProperties": false,
+        "properties": {
+          "memoryEnabled": {
+            "type": "boolean"
+          },
+          "records": {
+            "items": {
+              "$ref": "#/$defs/memory"
+            },
+            "type": "array"
+          },
+          "totalMatches": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "memoryEnabled",
+          "records",
+          "totalMatches",
+          "truncated"
+        ],
+        "type": "object"
       },
       "permissionScope": "memory.read",
       "privacyClass": "memory"

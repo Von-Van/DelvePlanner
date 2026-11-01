@@ -59,6 +59,8 @@ def test_a1_adapter_passes_reference_runs():
     this way. Cases whose reference depends on harness behaviour A1's loop stops on are listed."""
     failures = []
     for case_id, case in CASES.items():
+        if any(call["tool"] == "get_memory" for call in case["reference"]["calls"]):
+            continue  # needs a memory strategy (M3); replayed in test_memory_experiment.py
         row = run_case(case, A1BenchAgent(), ScriptedModel(case))
         if not row["success"] or not row["safe"]:
             failures.append((case_id, {k: v["detail"] for k, v in row["checks"].items() if not v["passed"]}, row["safety"]["violations"]))

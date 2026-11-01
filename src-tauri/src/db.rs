@@ -2,6 +2,7 @@ mod agent;
 mod availability;
 mod capture;
 mod horizons;
+mod memory;
 mod planning;
 mod profile;
 mod proposals;
@@ -20,6 +21,7 @@ use crate::model::{
 use agent::ensure_agent_schema;
 use availability::{ensure_availability_schema, validate_block_shape};
 use capture::validate_inbox_text;
+use memory::ensure_memory_schema;
 use chrono::{
     DateTime, Duration as ChronoDuration, LocalResult, NaiveDate, NaiveDateTime, NaiveTime, Offset,
     TimeZone, Utc,
@@ -50,12 +52,16 @@ pub use agent::{
     RunStatus, RunUsage, StepKind,
 };
 pub use availability::CapacityFacts;
+pub use memory::{
+    Confirmation, MemoryExport, MemoryFilter, MemoryKind, MemoryRecord, MemorySettings, MemorySource,
+    NewMemory, UpdateMemorySettings, MAX_CONVERSATION_TURNS, MAX_MEMORY_CHARS,
+};
 pub use proposals::{
     accepted_operations, edited_proposal, mentions_inbox, validate_model_response, CandidateRequest,
 };
 pub(crate) use proposals::{fold, planning_tokens, title_matches};
 
-pub const CURRENT_SCHEMA_VERSION: u32 = 9;
+pub const CURRENT_SCHEMA_VERSION: u32 = 10;
 pub const EXPORT_FORMAT_VERSION: u32 = 7;
 const BACKUP_RETENTION: usize = 5;
 const REMINDER_DELIVERY_GRACE_MINUTES: i64 = 15;
@@ -1043,6 +1049,7 @@ fn migrate(connection: &Connection, from_version: u32) -> AppResult<()> {
         ensure_profile_schema(connection)?;
         ensure_task_details_schema(connection)?;
         ensure_agent_schema(connection)?;
+        ensure_memory_schema(connection)?;
         connection.pragma_update(None, "user_version", CURRENT_SCHEMA_VERSION)?;
         Ok::<(), AppError>(())
     })();

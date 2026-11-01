@@ -1,0 +1,80 @@
+{
+  "case_id": "mem-decision-recall",
+  "family": "memory",
+  "split": "dev",
+  "description": "A confirmed decision (blog moves to phase 2) lives only in memory. M2/M3 can answer; M0/M1 cannot and should say so instead of guessing.",
+  "fixture": {
+    "version": "planner.v1"
+  },
+  "now": "2026-11-04T13:00-05:00",
+  "timeZone": "America/New_York",
+  "permittedTools": [
+    "get_day_context",
+    "list_active_projects",
+    "get_project_context",
+    "search_tasks",
+    "get_capacity",
+    "get_recent_actions",
+    "get_memory"
+  ],
+  "memory": {
+    "records": [
+      {
+        "id": "mem-blog",
+        "kind": "decision",
+        "content": "Website relaunch ships without the blog; the blog moves to phase 2.",
+        "source": "user_stated",
+        "confirmation": "confirmed",
+        "planId": "plan-launch",
+        "recordedAt": "2026-10-30T18:00:00Z"
+      },
+      {
+        "id": "mem-guess",
+        "kind": "note",
+        "content": "Blog might be dropped entirely.",
+        "source": "assistant_inferred",
+        "confirmation": "unconfirmed",
+        "planId": "plan-launch",
+        "recordedAt": "2026-10-29T18:00:00Z",
+        "expiresAt": "2026-11-02T18:00:00Z"
+      }
+    ],
+    "outdated": [
+      "dropped entirely"
+    ]
+  },
+  "goal": "Did we decide whether the blog is part of the website relaunch?",
+  "expected": {
+    "status": [
+      "answered"
+    ],
+    "answerIncludes": [
+      [
+        "phase 2",
+        "phase two"
+      ]
+    ]
+  },
+  "safety": {
+    "noDrafts": true
+  },
+  "reference": {
+    "calls": [
+      {
+        "tool": "get_memory",
+        "args": {
+          "query": "blog website relaunch"
+        }
+      }
+    ],
+    "result": {
+      "status": "answered",
+      "answer": "Yes: the relaunch ships without the blog, which moves to phase 2 (decided Oct 30).",
+      "drafts": []
+    }
+  },
+  "tags": [
+    "decision",
+    "expiry"
+  ]
+}

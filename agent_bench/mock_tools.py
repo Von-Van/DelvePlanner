@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
@@ -278,6 +279,72 @@ def tool_get_recent_actions(state: PlannerState, args: dict) -> dict:
     return {"actions": copy.deepcopy(state.data.get("recentActions", []))[: args["limit"]]}
 
 
+# get_memory mirrors src-tauri/src/tools/memory.rs: same filters, same ranking, same word rules.
+MEMORY_STOPWORDS = frozenset(
+    "the and for with that this was were are you your our has have had from into about what when which who how did does "
+    "can could should would will just also then than there their them they its move make please again last time".split()
+)
+
+
+def _memory_words(text: str) -> list[str]:
+    return [w.lower() for w in re.split(r"[^0-9A-Za-z\u00C0-\uFFFF]+", text) if w]
+
+
+def _memory_stem(word: str) -> str:
+    if word.endswith("s") and len(word) - 1 >= 3 and not word[:-1].endswith("s"):
+        return word[:-1]
+    return word
+
+
+def memory_query_terms(text: str) -> list[str]:
+    return sorted({_memory_stem(w) for w in _memory_words(text) if len(w) >= 3 and w not in MEMORY_STOPWORDS})
+
+
+def _memory_relevance(terms: list[str], content: str) -> float:
+    if not terms:
+        return 1.0
+    found = {_memory_stem(w) for w in _memory_words(content)}
+    return round(sum(1 for t in terms if t in found) / len(terms), 3)
+
+
+def tool_get_memory(state: PlannerState, args: dict) -> dict:
+    memory = getattr(state, "memory", None) or {"records": []}
+    if len(args.get("query", "")) > 200:
+        raise ToolError("invalid_arguments", "query can be at most 200 characters")
+    if not memory.get("enabled", True):
+        return {"memoryEnabled": False, "records": [], "totalMatches": 0, "truncated": False}
+    now = parse_utc(state.now) if getattr(state, "now", None) else datetime.now(timezone.utc)
+    disabled = set(memory.get("disabledPlanIds", []))
+    kinds = set(args.get("kinds") or [])
+    terms = memory_query_terms(args.get("query", ""))
+    views = []
+    for record in memory.get("records", []):
+        if record.get("supersededBy"):
+            continue
+        if record.get("expiresAt") and parse_utc(record["expiresAt"]) <= now:
+            continue
+        plan = record.get("planId")
+        if plan and plan in disabled:
+            continue
+        if args.get("planId") and plan and plan != args["planId"]:
+            continue
+        if kinds and record["kind"] not in kinds:
+            continue
+        relevance = _memory_relevance(terms, record["content"])
+        if terms and relevance <= 0:
+            continue
+        view = {k: record.get(k) for k in ("id", "kind", "content", "source", "confirmation", "planId", "recordedAt")}
+        if record.get("expiresAt"):
+            view["expiresAt"] = record["expiresAt"]
+        view["relevance"] = relevance
+        views.append(view)
+    views.sort(key=lambda v: v["id"])
+    views.sort(key=lambda v: parse_utc(v["recordedAt"]), reverse=True)
+    views.sort(key=lambda v: (-v["relevance"], v["confirmation"] != "confirmed"))
+    limit = args.get("limit", 8)
+    return {"memoryEnabled": True, "records": views[:limit], "totalMatches": len(views), "truncated": len(views) > limit}
+
+
 TOOL_IMPLS = {
     "get_day_context": tool_get_day_context,
     "list_active_projects": tool_list_active_projects,
@@ -285,6 +352,7 @@ TOOL_IMPLS = {
     "search_tasks": tool_search_tasks,
     "get_capacity": tool_get_capacity,
     "get_recent_actions": tool_get_recent_actions,
+    "get_memory": tool_get_memory,
 }
 
 
@@ -355,6 +423,8 @@ class MockToolClient:
         self.state = PlannerState(load_fixture(case["fixture"]["version"]))
         for change in case["fixture"].get("overrides", []):
             self.state.apply(change)
+        self.state.memory = copy.deepcopy(case.get("memory"))
+        self.state.now = case["now"]
         self.permitted = set(case["permittedTools"])
         self.trace = trace
         self.max_tool_calls = max_tool_calls
