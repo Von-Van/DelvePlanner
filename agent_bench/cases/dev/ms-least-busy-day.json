@@ -4,7 +4,7 @@
   "split": "dev",
   "description": "Read capacity, pick the remaining weekday with the most available time (Friday), find the task, and draft schedule_task.",
   "fixture": {
-    "version": "planner.v1"
+    "version": "planner.v2"
   },
   "now": "2026-11-03T09:00-05:00",
   "timeZone": "America/New_York",
@@ -30,7 +30,7 @@
       {
         "op": "schedule_task",
         "target": {
-          "id": "t-movers",
+          "id": "00000000-0000-4000-8000-000000000407",
           "revision": 2
         },
         "payload": {
@@ -66,7 +66,7 @@
         {
           "op": "schedule_task",
           "target": {
-            "id": "t-movers",
+            "id": "00000000-0000-4000-8000-000000000407",
             "revision": 2
           },
           "payload": {

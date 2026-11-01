@@ -4,7 +4,7 @@
   "split": "dev",
   "description": "The first get_day_context call times out (retryable). One retry succeeds.",
   "fixture": {
-    "version": "planner.v1"
+    "version": "planner.v2"
   },
   "now": "2026-11-03T09:00-05:00",
   "timeZone": "America/New_York",

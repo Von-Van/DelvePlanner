@@ -1,0 +1,97 @@
+"""The mock tools give the same answers as the real Rust tools on the benchmark fixture.
+
+Runs only when the ``tool_server`` example is built (``cargo build --example tool_server`` in
+``src-tauri/``, or ``AGENT_BENCH_TOOL_SERVER=/path/to/tool_server``); otherwise it is skipped, unless
+``AGENT_BENCH_REQUIRE_TOOL_SERVER`` is set (CI's parity job), when a missing server is an error.
+The real server has no read-only calendars, so both sides run without calendar busy times.
+"""
+
+import json
+import os
+
+import pytest
+
+from agent_bench import mock_tools
+from agent_bench.cases import load_cases
+from agent_bench.live_tools import LiveToolClient, find_tool_server
+from agent_bench.mock_tools import MockToolClient, load_contract
+
+if os.environ.get("AGENT_BENCH_REQUIRE_TOOL_SERVER") and find_tool_server() is None:
+    raise RuntimeError("AGENT_BENCH_REQUIRE_TOOL_SERVER is set but tool_server is not built")
+pytestmark = pytest.mark.skipif(find_tool_server() is None, reason="tool_server is not built")
+
+TZ = "America/New_York"
+ID = mock_tools.load_fixture("planner.v2")["ids"]
+ALL_TOOLS = [t["name"] for t in load_contract()["tools"]]
+
+PROBES = [
+    ("get_day_context", {"date": d, "timeZone": TZ}) for d in ("2026-11-01", "2026-11-02", "2026-11-03", "2026-11-04", "2026-11-05", "2026-11-06", "2026-11-07")
+] + [
+    ("list_active_projects", {}),
+    ("list_active_projects", {"includePlanning": True}),
+    ("get_project_context", {"planId": ID["plan-launch"]}),
+    ("get_project_context", {"planId": ID["plan-move"]}),
+    ("get_project_context", {"planId": ID["plan-garage"]}),
+    ("get_project_context", {"planId": "00000000-0000-4000-8000-000000000999"}),
+    ("get_project_context", {"planId": "plan-launch"}),
+    ("search_tasks", {}),
+    ("search_tasks", {"query": "review"}),
+    ("search_tasks", {"query": "REVIEW lease"}),
+    ("search_tasks", {"dueBefore": "2026-11-06", "limit": 20}),
+    ("search_tasks", {"status": "done"}),
+    ("search_tasks", {"planId": ID["plan-move"], "limit": 2}),
+    ("search_tasks", {"query": "x", "limit": 500}),
+    ("search_tasks", {"bogus": 1}),
+    ("get_capacity", {"weekStart": "2026-11-02", "timeZone": TZ}),
+    ("get_capacity", {"weekStart": "2026-10-26", "timeZone": TZ}),
+    ("get_recent_actions", {}),
+    ("get_memory", {}),
+    ("update_task", {"taskId": ID["t-qa"]}),
+    ("get_day_context", {"date": "2026-13-01", "timeZone": TZ}),
+    ("get_day_context", {"date": "2026-13-01", "timeZone": TZ}),
+    ("get_day_context", {"date": "2026-13-01", "timeZone": TZ}),
+]
+
+
+@pytest.fixture(autouse=True)
+def no_calendars(monkeypatch):
+    original = mock_tools.load_fixture
+    monkeypatch.setattr(mock_tools, "load_fixture", lambda version: {**original(version), "externalBusy": []})
+
+
+def comparable(envelope: dict) -> dict:
+    """Drop what legitimately differs: timings, byte counts, error wording, and the import time."""
+    out = {k: v for k, v in envelope.items() if k not in ("durationMs", "resultBytes")}
+    if "error" in out:
+        out["error"] = {k: v for k, v in out["error"].items() if k != "message"}
+    hours = (out.get("result") or {}).get("workingHours")
+    if isinstance(hours, dict):
+        hours.pop("updatedAt", None)
+    return json.loads(json.dumps(out, sort_keys=True))
+
+
+def run_both(case: dict, calls: list) -> list[tuple]:
+    mock = MockToolClient(case)
+    mismatches = []
+    with LiveToolClient(case) as live:
+        for name, args in calls:
+            a, b = comparable(mock.call(name, args)), comparable(live.call(name, args))
+            if a != b:
+                mismatches.append((name, args, a, b))
+    return mismatches
+
+
+@pytest.mark.parametrize("privacy", [False, True])
+def test_probe_calls_match(privacy):
+    case = {"case_id": "parity", "fixture": {"version": "planner.v2"}, "now": "2026-11-03T09:00-05:00", "timeZone": TZ,
+            "permittedTools": ALL_TOOLS, "privacy": {"includeDescriptions": privacy}}
+    assert run_both(case, PROBES) == []
+
+
+PLAIN_CASES = [c for c in load_cases("all") if not (c.get("stateChanges") or c.get("injectedErrors") or c.get("injectedToolResponses"))]
+
+
+@pytest.mark.parametrize("case", PLAIN_CASES, ids=lambda c: c["case_id"])
+def test_reference_calls_match(case):
+    calls = [(c["tool"], c["args"]) for c in case["reference"]["calls"]]
+    assert run_both(case, calls) == []

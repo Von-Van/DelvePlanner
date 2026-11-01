@@ -4,7 +4,7 @@
   "split": "dev",
   "description": "search_tasks shows t-qa at revision 5; the user edits it right after, so get_project_context shows revision 6. The draft must use 6.",
   "fixture": {
-    "version": "planner.v1"
+    "version": "planner.v2"
   },
   "now": "2026-11-03T09:00-05:00",
   "timeZone": "America/New_York",
@@ -23,7 +23,7 @@
       "changes": [
         {
           "entity": "tasks",
-          "id": "t-qa",
+          "id": "00000000-0000-4000-8000-000000000403",
           "fields": {
             "revision": 6,
             "description": "Include mobile Safari."
@@ -45,7 +45,7 @@
       {
         "op": "schedule_task",
         "target": {
-          "id": "t-qa",
+          "id": "00000000-0000-4000-8000-000000000403",
           "revision": 6
         },
         "payload": {
@@ -69,7 +69,7 @@
       {
         "tool": "get_project_context",
         "args": {
-          "planId": "plan-launch"
+          "planId": "00000000-0000-4000-8000-000000000101"
         }
       }
     ],
@@ -80,7 +80,7 @@
         {
           "op": "schedule_task",
           "target": {
-            "id": "t-qa",
+            "id": "00000000-0000-4000-8000-000000000403",
             "revision": 6
           },
           "payload": {
