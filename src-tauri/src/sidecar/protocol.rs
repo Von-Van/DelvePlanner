@@ -198,6 +198,27 @@ pub async fn read_bounded_line<R: AsyncBufRead + Unpin>(
     }
 }
 
+/// Throws away the rest of the current line, newline included, without holding any of it. Used
+/// after `LineRead::TooLong`, which leaves the stream mid-line.
+pub async fn skip_line<R: AsyncBufRead + Unpin>(reader: &mut R) -> io::Result<()> {
+    loop {
+        let available = reader.fill_buf().await?;
+        if available.is_empty() {
+            return Ok(());
+        }
+        match available.iter().position(|byte| *byte == b'\n') {
+            Some(newline) => {
+                reader.consume(newline + 1);
+                return Ok(());
+            }
+            None => {
+                let taken = available.len();
+                reader.consume(taken);
+            }
+        }
+    }
+}
+
 /// The error codes a `tool_result`, `model_result`, or `error` message can carry. The first eight
 /// are the shared tool taxonomy from the overhaul plan and `contracts/tools.v1.json`; the last three belong to
 /// the link itself.
@@ -340,6 +361,28 @@ mod tests {
                 .unwrap(),
             LineRead::TooLong
         );
+    }
+
+    #[tokio::test]
+    async fn an_overlong_line_can_be_skipped() {
+        let mut input = vec![b'x'; 50];
+        input.extend_from_slice(b"\nnext\n");
+        let mut reader = tokio::io::BufReader::with_capacity(16, &input[..]);
+        let mut buffer = Vec::new();
+        assert_eq!(
+            read_bounded_line(&mut reader, 10, &mut buffer)
+                .await
+                .unwrap(),
+            LineRead::TooLong
+        );
+        skip_line(&mut reader).await.unwrap();
+        assert_eq!(
+            read_bounded_line(&mut reader, 10, &mut buffer)
+                .await
+                .unwrap(),
+            LineRead::Line
+        );
+        assert_eq!(buffer, b"next");
     }
 
     #[tokio::test]

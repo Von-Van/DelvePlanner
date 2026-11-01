@@ -53,8 +53,10 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="delveops-agent")
     parser.add_argument("--runner", default="diagnostic")
     args = parser.parse_args(argv)
-    runner = load_runner(args.runner)
+    # Claimed before the runner is imported, so a module that prints at import time can't put
+    # anything on the protocol stream.
     reader, writer = claim_stdio()
+    runner = load_runner(args.runner)
     return AgentLink(runner, reader, writer, runner_name=args.runner).serve()
 
 

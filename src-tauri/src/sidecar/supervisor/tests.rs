@@ -275,6 +275,48 @@ async fn a_run_past_its_wall_clock_is_stopped() {
 }
 
 #[tokio::test]
+async fn the_run_clock_keeps_running_during_a_slow_call() {
+    let Some(sidecar) = sidecar_with(SidecarLimits {
+        tool_timeout: Duration::from_secs(30),
+        ..fast_limits()
+    }) else {
+        return;
+    };
+    let mut request = task("tool:slow_tool");
+    request.budget.max_wall_seconds = 1;
+    let started = Instant::now();
+    let outcome = sidecar
+        .run(&request, &TestHost::default(), &CancellationToken::new())
+        .await
+        .unwrap();
+    assert!(
+        started.elapsed() < Duration::from_secs(3),
+        "{:?}",
+        started.elapsed()
+    );
+    assert_eq!(outcome.stopped, Some(StopReason::TimedOut));
+    assert_eq!(outcome.result["stopReason"], "timeout");
+}
+
+#[tokio::test]
+async fn a_flood_of_stderr_without_newlines_is_drained() {
+    let Some(sidecar) = sidecar() else { return };
+    assert_eq!(
+        answer(&run(&sidecar, "stderr_flood").await.unwrap()),
+        "flooded"
+    );
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let diagnostics = sidecar.diagnostics();
+    assert!(
+        diagnostics.iter().any(|line| line == "after the flood"),
+        "{diagnostics:?}"
+    );
+    assert!(diagnostics
+        .iter()
+        .all(|line| line.len() <= STDERR_LINE_BYTES + 4));
+}
+
+#[tokio::test]
 async fn restarts_after_a_crash_but_not_in_a_loop() {
     let Some(sidecar) = sidecar_with(SidecarLimits {
         max_restarts: 2,

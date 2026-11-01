@@ -11,6 +11,7 @@ Rust tests start. The goal is a command:
 - ``stdout``            print to stdout (which must not reach the protocol), then answer
 - ``oversize``          write one line past the 1 MiB limit straight to the protocol stream
 - ``fail``              raise an ordinary exception
+- ``stderr_flood``      write a 64 KiB stderr line, then a short one, then answer
 - ``env:<NAME>``        say whether an environment variable reached the process
 """
 
@@ -18,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import time
 from typing import Any
 
@@ -63,6 +65,10 @@ def run(task: dict[str, Any], ctx: RunContext) -> dict[str, Any]:
                             + b"x" * MAX_MESSAGE_BYTES + b'"}}\n')
         time.sleep(5)
         return _answer("unreachable")
+    if command == "stderr_flood":
+        sys.stderr.write("x" * 65536 + "\nafter the flood\n")
+        sys.stderr.flush()
+        return _answer("flooded")
     if command == "env":
         return _answer("present" if argument in os.environ else "absent")
     if command == "fail":

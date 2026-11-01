@@ -14,9 +14,9 @@ AGENT_DIR = Path(__file__).resolve().parents[3]
 
 
 class Child:
-    def __init__(self, limits=None):
+    def __init__(self, limits=None, runner="diagnostic"):
         self.process = subprocess.Popen(
-            [sys.executable, "-s", "-m", "delveops_agent.protocol", "--runner", "diagnostic"],
+            [sys.executable, "-s", "-m", "delveops_agent.protocol", "--runner", runner],
             cwd=AGENT_DIR,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
@@ -149,6 +149,15 @@ class LinkTests(unittest.TestCase):
 
 
 class HandshakeTests(unittest.TestCase):
+    def test_import_time_prints_never_reach_the_protocol(self):
+        child = Child(runner="delveops_agent.protocol.tests.noisy_runner:run")
+        try:
+            self.assertEqual(child.hello.type, wire.HELLO_ACK)
+            child.start("run-1", "anything")
+            self.assertEqual(child.receive().payload["answer"], "quiet now")
+        finally:
+            child.close()
+
     def test_refuses_an_app_without_version_one(self):
         process = subprocess.Popen(
             [sys.executable, "-s", "-m", "delveops_agent.protocol"],

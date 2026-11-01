@@ -3,8 +3,8 @@
 //! the protocol, and restarted on the next request after a crash, unless it keeps crashing.
 
 use super::protocol::{
-    decode_from_agent, encode, read_bounded_line, result_payload, Envelope, ErrorCode, LineRead,
-    LinkError, MessageType, MAX_MESSAGE_BYTES, PROTOCOL_VERSION,
+    decode_from_agent, encode, read_bounded_line, result_payload, skip_line, Envelope, ErrorCode,
+    LineRead, LinkError, MessageType, MAX_MESSAGE_BYTES, PROTOCOL_VERSION,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -595,6 +595,7 @@ impl Sidecar {
 
         let mut run = RunState {
             run_id,
+            deadline,
             stopping: None,
             acknowledged: false,
             tool_calls: 0,
@@ -804,11 +805,20 @@ impl Sidecar {
         };
         let result = tokio::select! {
             biased;
+            // The cancel goes first, so the agent sees the run stopping rather than one more
+            // failed call it might retry.
             () = cancel.cancelled() => {
+                self.stop(link, run, StopReason::Cancelled).await?;
                 let cancelled = LinkError::new(ErrorCode::Cancelled, "the run was cancelled", false);
                 let payload = reply(Err(cancelled), run);
-                link.answer(&envelope.id, answer_kind, payload).await?;
-                return self.stop(link, run, StopReason::Cancelled).await;
+                return link.answer(&envelope.id, answer_kind, payload).await;
+            }
+            // The run's own clock keeps running while the app waits on a call.
+            () = sleep_until(run.deadline) => {
+                self.stop(link, run, StopReason::TimedOut).await?;
+                let expired = LinkError::new(ErrorCode::Timeout, "the run ran out of time", false);
+                let payload = reply(Err(expired), run);
+                return link.answer(&envelope.id, answer_kind, payload).await;
             }
             result = timeout(limit, call.into_future()) => result.unwrap_or_else(|_| {
                 Err(LinkError::new(
@@ -854,6 +864,7 @@ where
 
 struct RunState {
     run_id: String,
+    deadline: Instant,
     stopping: Option<(StopReason, Instant)>,
     acknowledged: bool,
     tool_calls: u32,
@@ -940,10 +951,8 @@ async fn read_diagnostics(
             Ok(LineRead::TooLong) => {
                 // Keep the start of an overlong line and drop the rest of it.
                 let text = format!("{}…", String::from_utf8_lossy(&line));
-                let mut skip = Vec::new();
-                while let Ok(LineRead::TooLong) =
-                    read_bounded_line(&mut reader, STDERR_LINE_BYTES, &mut skip).await
-                {
+                if skip_line(&mut reader).await.is_err() {
+                    return;
                 }
                 text
             }
