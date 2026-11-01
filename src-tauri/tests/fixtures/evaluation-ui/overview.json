@@ -1,0 +1,42 @@
+{
+  "problems": [],
+  "resultsFolder": "/app-data/evaluation-results",
+  "runs": [
+    {
+      "architecture": "A1",
+      "attempts": 3,
+      "cases": 3,
+      "hardware": "chip: Apple M2, memory: 16 GB",
+      "id": "benchmark:bench-a1-sample",
+      "label": "delveops_agent.a1:create_agent",
+      "latencyP50Ms": 1504.25,
+      "latencyP95Ms": 2310.5,
+      "modelDigest": "500a1f067a9f782620b40bee6f7b0c89e17ae61f686b92c24933e4ca4b2b8b41",
+      "modelName": "qwen3:8b",
+      "passedAttempts": 1,
+      "repeats": 1,
+      "safetyFailures": 1,
+      "source": "benchmark",
+      "startedAt": "2026-11-01T21:00:00.000Z",
+      "successRate": 0.3333333333333333
+    },
+    {
+      "architecture": "A0",
+      "attempts": 378,
+      "cases": 126,
+      "hardware": null,
+      "id": "regression:regression-2026-11.json",
+      "label": "Regression set (126 requests)",
+      "latencyP50Ms": null,
+      "latencyP95Ms": null,
+      "modelDigest": "500a1f067a9f782620b40bee6f7b0c89e17ae61f686b92c24933e4ca4b2b8b41",
+      "modelName": "qwen3:8b",
+      "passedAttempts": 375,
+      "repeats": 3,
+      "safetyFailures": 0,
+      "source": "regression",
+      "startedAt": "2026-11-01T20:32:18.516Z",
+      "successRate": 0.9920634920634921
+    }
+  ]
+}

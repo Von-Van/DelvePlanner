@@ -1,0 +1,187 @@
+/* Step-by-step agent run view. Shared by the Evaluation panel and the Assistant. */
+.agent-trace {
+  display: grid;
+  gap: 10px;
+  color: var(--text);
+}
+
+.trace-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--strong);
+}
+
+.trace-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--silver);
+}
+
+.trace-status.status-answered .trace-status-dot,
+.trace-status.status-drafted .trace-status-dot {
+  background: var(--success-dot);
+}
+
+.trace-status.status-needs_clarification .trace-status-dot,
+.trace-status.status-cannot_complete .trace-status-dot {
+  background: var(--warning-dot);
+}
+
+.trace-status.status-error .trace-status-dot,
+.trace-status.status-failed .trace-status-dot {
+  background: var(--danger-dot);
+}
+
+.trace-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.trace-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0;
+  border-left: 1px solid var(--hairline);
+  margin-left: 11px;
+}
+
+.trace-step {
+  position: relative;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 10px;
+  padding: 8px 0 8px 0;
+  margin-left: -12px;
+}
+
+.trace-seq {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid var(--frame);
+  background: var(--ground);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--secondary);
+}
+
+.trace-step.kind-model_call .trace-seq {
+  border-color: var(--blue-frame);
+  color: var(--blue-deep);
+  background: var(--blue-wash);
+}
+
+.trace-step.kind-draft .trace-seq,
+.trace-step.kind-final .trace-seq {
+  border-color: var(--success-dot);
+  color: var(--success);
+  background: var(--success-wash);
+}
+
+.trace-step.failed .trace-seq {
+  border-color: var(--danger-frame);
+  color: var(--danger);
+  background: var(--danger-wash);
+}
+
+.trace-body {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.trace-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  font-size: 13px;
+}
+
+.trace-kind {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.trace-step.failed .trace-kind {
+  color: var(--danger);
+}
+
+.trace-summary {
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.trace-duration {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.trace-details summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--blue);
+  width: fit-content;
+}
+
+.trace-details dl {
+  margin: 6px 0 0;
+  display: grid;
+  gap: 4px;
+  padding: 8px 10px;
+  background: var(--ground-soft);
+  border: 1px solid var(--hairline);
+}
+
+.trace-details dl > div {
+  display: grid;
+  grid-template-columns: 130px minmax(0, 1fr);
+  gap: 8px;
+  font-size: 12px;
+}
+
+.trace-details dt {
+  color: var(--muted);
+}
+
+.trace-details dd {
+  margin: 0;
+  font-family: var(--font-mono);
+  color: var(--strong);
+  overflow-wrap: anywhere;
+}
+
+.trace-step.working .trace-summary {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.agent-trace.compact .trace-step {
+  padding: 5px 0;
+}
+
+.agent-trace.compact .trace-details dl > div {
+  grid-template-columns: 90px minmax(0, 1fr);
+}
+
+@media (max-width: 640px) {
+  .trace-details dl > div {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+}

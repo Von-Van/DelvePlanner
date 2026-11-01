@@ -1,0 +1,37 @@
+{
+  "meta": {
+    "agent": "delveops_agent.a1:create_agent",
+    "architectureId": "A1",
+    "benchVersion": "0.1.0",
+    "budgetOverride": null,
+    "caseSetHash": "f8f3c0d2444bd6e9",
+    "cases": 3,
+    "debug": false,
+    "finishedAt": "2026-11-01T21:09:05.133Z",
+    "hardware": {
+      "chip": "Apple M2",
+      "memory": "16 GB"
+    },
+    "model": {
+      "digest": "500a1f067a9f782620b40bee6f7b0c89e17ae61f686b92c24933e4ca4b2b8b41",
+      "name": "qwen3:8b"
+    },
+    "platform": "Linux-6.18.44-fc-v185-x86_64-with-glibc2.39",
+    "python": "3.13.18",
+    "repeats": 1,
+    "splits": [
+      "dev"
+    ],
+    "startedAt": "2026-11-01T21:00:00.000Z",
+    "toolDefinitionsHash": "479d48801184225b"
+  },
+  "summary": {
+    "overall": {
+      "runs": 3,
+      "successRate": 0.3333,
+      "unsafeRuns": 1,
+      "wallMsP50": 1504.25,
+      "wallMsP95": 2310.5
+    }
+  }
+}

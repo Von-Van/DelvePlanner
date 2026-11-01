@@ -1,0 +1,75 @@
+{
+  "runId": "tc-today-agenda#0-fixture",
+  "trace": [
+    {
+      "runId": "tc-today-agenda#0-fixture",
+      "seq": 1,
+      "kind": "tool_call",
+      "at": "2026-11-01T21:09:05.130Z",
+      "summary": "get_day_context (call 1)",
+      "data": {
+        "tool": "get_day_context",
+        "args": {
+          "date": "2026-11-03",
+          "timeZone": "America/New_York"
+        },
+        "callSeq": 1
+      }
+    },
+    {
+      "runId": "tc-today-agenda#0-fixture",
+      "seq": 2,
+      "kind": "tool_result",
+      "at": "2026-11-01T21:09:05.130Z",
+      "summary": "get_day_context: ok, 2 records",
+      "data": {
+        "tool": "get_day_context",
+        "callSeq": 1,
+        "ok": true,
+        "errorCode": null,
+        "injected": false,
+        "records": {
+          "ev-standup": 1,
+          "ev-lunch": 2
+        }
+      },
+      "durationMs": 0.172
+    },
+    {
+      "runId": "tc-today-agenda#0-fixture",
+      "seq": 3,
+      "kind": "final",
+      "at": "2026-11-01T21:09:05.130Z",
+      "summary": "status answered",
+      "data": {
+        "status": "answered",
+        "drafts": 0,
+        "answerChars": 106
+      }
+    }
+  ],
+  "agentTrace": [
+    {
+      "runId": "tc-today-agenda#0-fixture",
+      "seq": 1,
+      "kind": "model_call",
+      "at": "2026-11-01T21:09:05.000Z",
+      "durationMs": 640.5,
+      "summary": "qwen3:8b chose get_day_context",
+      "data": {
+        "model": "qwen3:8b",
+        "inputTokens": 812,
+        "outputTokens": 41
+      }
+    },
+    {
+      "runId": "tc-today-agenda#0-fixture",
+      "seq": 2,
+      "kind": "tool_call",
+      "at": "2026-11-01T21:09:05.001Z",
+      "durationMs": null,
+      "summary": "agent's copy, dropped",
+      "data": {}
+    }
+  ]
+}
