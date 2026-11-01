@@ -1,0 +1,35 @@
+{
+  "task": {
+    "goal": "My 'Draft grant budget' task is overdue. Schedule it for Thursday.",
+    "now": "2026-11-03T09:00:00-05:00",
+    "timeZone": "America/Chicago",
+    "permittedTools": ["search_tasks", "get_day_context", "get_capacity"]
+  },
+  "budget": { "maxModelCalls": 6, "maxToolCalls": 4, "maxWallSeconds": 120, "maxContextTokens": 12000 },
+  "toolResponses": {
+    "search_tasks": {
+      "tasks": [
+        {
+          "id": "task-42",
+          "revision": 3,
+          "planId": "plan-7",
+          "milestoneId": "ms-2",
+          "title": "Draft grant budget",
+          "status": "todo",
+          "dueDate": "2026-10-31",
+          "scheduledDay": null
+        }
+      ]
+    },
+    "get_day_context": {
+      "date": "2026-11-05",
+      "timeZone": "America/Chicago",
+      "events": [{ "id": "evt-9", "title": "Team sync", "start": "2026-11-05T10:00:00-06:00", "end": "2026-11-05T11:00:00-06:00" }],
+      "scheduledTasks": [],
+      "taskBlocks": [],
+      "busy": [],
+      "free": [{ "start": "2026-11-05T11:00:00-06:00", "end": "2026-11-05T17:00:00-06:00" }]
+    },
+    "get_capacity": { "error": { "code": "unavailable", "message": "capacity not in this fixture", "retryable": false } }
+  }
+}
