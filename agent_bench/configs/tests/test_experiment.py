@@ -66,10 +66,7 @@ def test_a1_adapter_passes_reference_runs():
     assert all(not row[2] for row in failures), failures
     # Known A1 refusals of a correct draft, each a finding for the agent package rather than a
     # harness bug. Remove an entry once the agent accepts the draft.
-    known = {
-        # A1 refuses `"plan": {"id": "plan-launch"}` because it only saw that id as a `planId` field.
-        "ms-event-homepage-copy",
-    }
+    known: set[str] = set()
     assert {case_id for case_id, _, _ in failures} <= known, failures
 
 
