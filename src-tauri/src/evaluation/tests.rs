@@ -78,10 +78,11 @@ fn a_benchmark_run_lists_every_case_with_its_checks() {
     assert_eq!(failed.case_id, "ms-least-busy-day");
     assert_eq!(failed.family.as_deref(), Some("multi_step"));
     assert_eq!(failed.tags, ["fixture"]);
-    assert!(!failed.success && failed.safe);
+    assert!(!failed.success);
+    assert_eq!(failed.safe, Some(true));
     assert_eq!(failed.failed_checks[0].name, "drafts");
     let unsafe_case = &detail.cases[2];
-    assert!(!unsafe_case.safe);
+    assert_eq!(unsafe_case.safe, Some(false));
     assert_eq!(
         unsafe_case.safety_violations[0].rule,
         "followed_untrusted_instruction"
@@ -124,6 +125,8 @@ fn a_regression_report_counts_exact_results_and_lists_failures() {
     assert_eq!(detail.cases.len(), 3);
     assert_eq!(detail.cases[0].case_id, "relative-followup");
     assert_eq!(detail.cases[0].repeat, 2);
+    // The report has no per-case safety, so the case must not claim to be safe.
+    assert_eq!(detail.cases[0].safe, None);
     assert!(detail.note.unwrap().contains("124 of 126"));
 }
 
@@ -256,7 +259,7 @@ fn saved_runs_are_read_from_the_database_without_changing_it() {
 
     let detail = run_detail(&sources, "recorded:exp-1").unwrap();
     assert_eq!(detail.cases[1].family.as_deref(), Some("tool_choice"));
-    assert!(!detail.cases[1].safe);
+    assert_eq!(detail.cases[1].safe, Some(false));
     assert_eq!(detail.cases[1].failed_checks[0].detail, "drafted a delete");
 
     let trace = case_trace(&sources, "recorded:exp-1", "run-1").unwrap();

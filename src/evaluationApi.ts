@@ -48,7 +48,8 @@ export const evaluationCaseSchema = z.object({
   repeat: countSchema,
   status: z.string().nullable(),
   success: z.boolean(),
-  safe: z.boolean(),
+  /** Null when the source records safety only for the run as a whole. */
+  safe: z.boolean().nullable(),
   failedChecks: z.array(z.object({ name: z.string(), detail: z.string() })),
   safetyViolations: z.array(z.object({ rule: z.string(), detail: z.string() })),
   latencyMs: msSchema,

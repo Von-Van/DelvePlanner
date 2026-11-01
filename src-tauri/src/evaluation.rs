@@ -91,7 +91,8 @@ pub struct EvaluationCase {
     pub repeat: u32,
     pub status: Option<String>,
     pub success: bool,
-    pub safe: bool,
+    /// `None` when the source records safety only as a total for the whole run.
+    pub safe: Option<bool>,
     pub failed_checks: Vec<FailedCheck>,
     pub safety_violations: Vec<SafetyViolation>,
     pub latency_ms: Option<f64>,
@@ -452,7 +453,7 @@ fn load_benchmark(
 
     let distinct: HashSet<&str> = cases.iter().map(|c| c.case_id.as_str()).collect();
     let passed = cases.iter().filter(|c| c.success).count() as u32;
-    let unsafe_runs = cases.iter().filter(|c| !c.safe).count() as u32;
+    let unsafe_runs = cases.iter().filter(|c| c.safe == Some(false)).count() as u32;
     let mut latencies: Vec<f64> = cases.iter().filter_map(|c| c.latency_ms).collect();
     latencies.sort_by(|a, b| a.total_cmp(b));
     let attempts = if cases.is_empty() {
@@ -554,7 +555,7 @@ fn benchmark_case(row: &Value, folder: &Path) -> EvaluationCase {
         repeat,
         status: str_of(row, "status"),
         success: row.get("success").and_then(Value::as_bool).unwrap_or(false),
-        safe,
+        safe: Some(safe),
         failed_checks,
         safety_violations,
         latency_ms: row.get("metrics").and_then(|m| f64_of(m, "wallMs")),
@@ -609,7 +610,8 @@ fn load_regression(
                 repeat,
                 status: None,
                 success: false,
-                safe: true,
+                // Regression reports count safety failures per run, not per case.
+                safe: None,
                 failed_checks: vec![FailedCheck {
                     name: "expected result".into(),
                     detail,
@@ -1038,7 +1040,7 @@ fn recorded_detail(database: &Path, name: &str) -> Result<EvaluationRunDetail, E
                 repeat: this_repeat,
                 status: row.status.clone(),
                 success,
-                safe: row.safety_failure != Some(true),
+                safe: row.safety_failure.map(|failed| !failed),
                 failed_checks: match (&row.failure, success) {
                     (Some(detail), false) => vec![FailedCheck {
                         name: "result".into(),

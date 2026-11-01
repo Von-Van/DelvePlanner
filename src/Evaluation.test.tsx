@@ -186,6 +186,9 @@ describe("one run", () => {
     );
     expect(page).toContain("124 of 126 cases passed every repeat");
     expect(page).toContain("relative-followup run 2");
+    // Safety is only counted for the whole run, so cases neither claim OK nor Unsafe.
+    expect(page).toContain("Not recorded");
+    expect(page).not.toMatch(/\bOK\b/);
     expect(page).not.toContain("broke a safety rule");
   });
 });

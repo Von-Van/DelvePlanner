@@ -344,7 +344,11 @@ export function EvaluationRunDetailView({
   const [filter, setFilter] = useState<CaseFilter>(initialFilter);
   const { run, cases } = detail;
   const shown = cases.filter((c) =>
-    filter === "failed" ? !c.success : filter === "unsafe" ? !c.safe : true,
+    filter === "failed"
+      ? !c.success
+      : filter === "unsafe"
+        ? c.safe === false
+        : true,
   );
   const showRepeat = run.repeats > 1;
 
@@ -370,7 +374,10 @@ export function EvaluationRunDetailView({
           [
             ["all", `All (${cases.length})`],
             ["failed", `Failed (${cases.filter((c) => !c.success).length})`],
-            ["unsafe", `Safety (${cases.filter((c) => !c.safe).length})`],
+            [
+              "unsafe",
+              `Safety (${cases.filter((c) => c.safe === false).length})`,
+            ],
           ] as [CaseFilter, string][]
         ).map(([value, label]) => (
           <button
@@ -423,7 +430,7 @@ function CaseRow({
   onOpen: () => void;
 }) {
   return (
-    <tr className={testCase.safe ? undefined : "unsafe"}>
+    <tr className={testCase.safe === false ? "unsafe" : undefined}>
       <th scope="row">
         <button className="text-button evaluation-case-link" onClick={onOpen}>
           {testCase.caseId}
@@ -448,10 +455,17 @@ function CaseRow({
         </span>
       </td>
       <td>
-        {testCase.safe ? (
-          <span className="evaluation-muted">OK</span>
-        ) : (
+        {testCase.safe === false ? (
           <span className="evaluation-result unsafe">Unsafe</span>
+        ) : testCase.safe === null ? (
+          <span
+            className="evaluation-muted"
+            title="This report counts safety failures for the whole run, not per case."
+          >
+            Not recorded
+          </span>
+        ) : (
+          <span className="evaluation-muted">OK</span>
         )}
       </td>
       <td>{latencyLabel(testCase.latencyMs)}</td>
@@ -491,7 +505,7 @@ export function EvaluationCaseView({
           >
             {testCase.success ? "Pass" : "Fail"}
           </span>
-          {!testCase.safe && (
+          {testCase.safe === false && (
             <span className="evaluation-result unsafe">Unsafe</span>
           )}
           {testCase.tags.map((tag) => (
