@@ -9,7 +9,7 @@
 //! ```
 //!
 //! With neither `--bundle` nor `--db`, the built-in sample fixture is served. `--db` copies the
-//! file into a temporary folder first; the original is never opened.
+//! database into a temporary folder first (a consistent SQLite snapshot, read-only on the source).
 //!
 //! Every message is `{ "v": 1, "id": "…", "type": "…", "payload": { … } }`:
 //! - `hello` → `hello_ack` with the protocol and contract versions, tool names, and limits.
@@ -26,6 +26,7 @@ use delve_planner_desktop::tools::{
     open_fixture_database, NoCalendars, PrivacyPolicy, SessionConfig, ToolBudget, ToolSession,
     ToolSources, SAMPLE_FIXTURE,
 };
+use rusqlite::{Connection, OpenFlags};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
@@ -198,16 +199,21 @@ fn open_source(source: &Source, target: &std::path::Path) -> Result<PlannerDatab
             open_fixture_database(target, &text).map_err(|e| e.to_string())
         }
         Source::Database(path) => {
-            fs::copy(path, target)
-                .map_err(|error| format!("can't copy {}: {error}", path.display()))?;
-            // Uncheckpointed changes live beside the file; copy them too so the copy is current.
-            for suffix in ["-wal", "-shm"] {
-                let side = PathBuf::from(format!("{}{suffix}", path.display()));
-                if side.exists() {
-                    let copy = PathBuf::from(format!("{}{suffix}", target.display()));
-                    fs::copy(&side, copy).map_err(|error| error.to_string())?;
-                }
-            }
+            // VACUUM INTO writes one consistent snapshot through SQLite itself, including changes
+            // still in the write-ahead log, so a copy taken while the app runs never misses a
+            // commit. The source is opened read-only.
+            let source = Connection::open_with_flags(
+                path,
+                OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+            )
+            .map_err(|error| format!("can't open {}: {error}", path.display()))?;
+            let target_text = target
+                .to_str()
+                .ok_or_else(|| "the temporary path isn't valid UTF-8".to_string())?;
+            source
+                .execute("VACUUM INTO ?1", [target_text])
+                .map_err(|error| format!("can't snapshot {}: {error}", path.display()))?;
+            drop(source);
             PlannerDatabase::open(target).map_err(|e| e.to_string())
         }
     }
@@ -230,11 +236,30 @@ fn read_line(input: &mut impl BufRead) -> io::Result<Line> {
         return Ok(Line::End);
     }
     if buffer.len() > MAX_MESSAGE_BYTES && buffer.last() != Some(&b'\n') {
-        let mut rest = Vec::new();
-        input.read_until(b'\n', &mut rest)?;
+        discard_line(input)?;
         return Ok(Line::TooLong);
     }
     Ok(Line::Text(String::from_utf8_lossy(&buffer).into_owned()))
+}
+
+/// Skips the rest of a line without holding it in memory.
+fn discard_line(input: &mut impl BufRead) -> io::Result<()> {
+    loop {
+        let chunk = input.fill_buf()?;
+        if chunk.is_empty() {
+            return Ok(());
+        }
+        match chunk.iter().position(|byte| *byte == b'\n') {
+            Some(end) => {
+                input.consume(end + 1);
+                return Ok(());
+            }
+            None => {
+                let length = chunk.len();
+                input.consume(length);
+            }
+        }
+    }
 }
 
 fn parse_envelope(line: &str) -> Result<(Value, String, Value), (Value, Value)> {
