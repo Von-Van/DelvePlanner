@@ -1,6 +1,6 @@
 # agent-python: DelveOps agent runtime
 
-The Python side of the DelveOps overhaul (piece E in `docs/delveops/overhaul-plan.md`). It holds the agent
+The Python side of the DelveOps overhaul (piece E of the overhaul plan). It holds the agent
 architectures that get compared in experiments, starting with **A1: one local model choosing read-only tools**.
 
 Standard library only. No agent frameworks, no web server.
