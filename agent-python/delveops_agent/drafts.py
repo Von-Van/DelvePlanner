@@ -1,0 +1,101 @@
+"""Proposal drafts (overhaul plan, contract 2).
+
+The agent never writes planner data. It can only describe a change as a draft, and this module
+checks the draft is well formed and grounded before it leaves Python: the operation is one the
+planner already supports, a change to an existing record names a target the agent actually saw in a
+tool result (with its revision), and the evidence points at real tool calls from this run. Rust
+repeats all of this against live data before the user is ever asked to approve anything.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterable
+from typing import Any
+
+from .types import Draft
+
+# Exactly the variants of `MutationOperation` in src-tauri/src/model.rs, snake_case (plan contract 2).
+# Operations on an existing record; Rust needs its id and `expected_revision`.
+TARGETED_OPS = frozenset(
+    {
+        "update_event",
+        "delete_event",
+        "reschedule_event",
+        "set_event_plan",
+        "update_plan",
+        "update_milestone",
+        "delete_milestone",
+        "update_task",
+        "schedule_task",
+        "set_task_plan",
+        "delete_task",
+        "set_task_workstream",
+    }
+)
+# Operations that create something new; no target.
+CREATE_OPS = frozenset({"create_event", "create_plan", "create_milestone", "create_task", "create_workstream"})
+ALLOWED_OPS = TARGETED_OPS | CREATE_OPS
+
+
+class DraftError(ValueError):
+    pass
+
+
+def _collect_records(value: Any, out: dict[str, Any]) -> None:
+    """Index every {"id": ..., "revision"?: ...} object in a tool result by id."""
+    if isinstance(value, dict):
+        record_id = value.get("id")
+        # Later observations win, so a re-read refreshes the revision a draft must cite. A later
+        # result that omits the revision (a summary view) does not erase one seen earlier.
+        if isinstance(record_id, str) and (record_id not in out or "revision" in value):
+            out[record_id] = value.get("revision")
+        for child in value.values():
+            _collect_records(child, out)
+    elif isinstance(value, list):
+        for child in value:
+            _collect_records(child, out)
+
+
+def observed_records(tool_data: Iterable[Any]) -> dict[str, Any]:
+    records: dict[str, Any] = {}
+    for data in tool_data:
+        _collect_records(data, records)
+    return records
+
+
+def parse_draft(raw: Any, tool_call_ids: set[str], records: dict[str, Any]) -> Draft:
+    if not isinstance(raw, dict):
+        raise DraftError("each draft must be an object")
+    op = raw.get("op")
+    if op not in ALLOWED_OPS:
+        raise DraftError(f"unsupported op {op!r}; allowed: {', '.join(sorted(ALLOWED_OPS))}")
+    payload = raw.get("payload")
+    if not isinstance(payload, dict) or not payload:
+        raise DraftError(f"{op}: payload must be a non-empty object")
+    evidence = raw.get("evidence") or []
+    if not isinstance(evidence, list) or not all(isinstance(e, str) for e in evidence):
+        raise DraftError(f"{op}: evidence must be a list of tool call ids")
+    unknown = [e for e in evidence if e not in tool_call_ids]
+    if unknown:
+        raise DraftError(f"{op}: evidence refers to tool calls that did not happen: {', '.join(unknown)}")
+
+    target = raw.get("target")
+    if op in TARGETED_OPS:
+        if not isinstance(target, dict) or not isinstance(target.get("id"), str):
+            raise DraftError(f"{op}: target.id is required")
+        if not evidence:
+            raise DraftError(f"{op}: changing an existing record needs evidence")
+        record_id = target["id"]
+        if record_id not in records:
+            raise DraftError(f"{op}: target {record_id} was not seen in any tool result")
+        seen_revision = records[record_id]
+        revision = target.get("revision")
+        if not isinstance(seen_revision, int) or isinstance(seen_revision, bool):
+            raise DraftError(f"{op}: no revision was seen for {record_id}; look it up before changing it")
+        if revision != seen_revision:
+            raise DraftError(f"{op}: target {record_id} has revision {seen_revision}, draft says {revision}")
+        target = {"id": record_id, "revision": revision}
+    else:
+        target = None
+
+    return Draft(op=op, target=target, payload=payload, evidence=tuple(evidence))
