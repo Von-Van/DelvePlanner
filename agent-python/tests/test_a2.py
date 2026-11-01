@@ -66,11 +66,17 @@ def test_tool_outside_the_task_is_never_called():
     assert tools.calls == []
 
 
-def test_repeated_step_is_not_run_twice():
-    script = [plan(("list_active_projects", {})), plan(("list_active_projects", {})), answer()]
+def test_repeated_step_in_one_plan_is_not_run_twice():
+    script = [plan(("list_active_projects", {}), ("list_active_projects", {})), answer()]
     result, tools, model = run(script)
     assert len(tools.calls) == 1
-    assert "repeats tc-1" in model.requests[2].messages[-1]["content"]
+    assert "repeats tc-1" in model.requests[1].messages[-1]["content"]
+
+
+def test_a_later_plan_may_reread_on_purpose():
+    script = [plan(("list_active_projects", {})), plan(("list_active_projects", {})), answer()]
+    result, tools, _ = run(script)
+    assert len(tools.calls) == 2
 
 
 def test_question_before_reading_is_sent_back_once():

@@ -36,7 +36,9 @@ class ScriptedModel:
         result = ref["result"]
         tool_ids = [f"tc-{i + 1}" for i in range(len(ref["calls"]))]
         if result["status"] == "drafted":
-            drafts = [{**d, "evidence": tool_ids} for d in result["drafts"]]
+            # Cite the last call only: an earlier one may be a failure the case injected, and A1 refuses
+            # evidence that points at a failed call.
+            drafts = [{**d, "evidence": tool_ids[-1:]} for d in result["drafts"]]
             self.steps.append({"action": "draft", "summary": result.get("answer", ""), "drafts": drafts})
         elif result["status"] == "answered":
             self.steps.append({"action": "answer", "answer": result["answer"]})

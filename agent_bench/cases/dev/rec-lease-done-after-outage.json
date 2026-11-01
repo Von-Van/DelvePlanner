@@ -1,0 +1,123 @@
+{
+  "case_id": "rec-lease-done-after-outage",
+  "family": "tool_error",
+  "split": "dev",
+  "description": "The first task read fails with a retryable 'unavailable', whichever task tool is used. One retry succeeds; the draft is update_task with status done (and estimate unchanged).",
+  "fixture": {
+    "version": "planner.v1"
+  },
+  "now": "2026-11-03T09:00-05:00",
+  "timeZone": "America/New_York",
+  "permittedTools": [
+    "get_day_context",
+    "list_active_projects",
+    "get_project_context",
+    "search_tasks",
+    "get_capacity",
+    "get_recent_actions"
+  ],
+  "goal": "Mark the lease review as done.",
+  "injectedErrors": [
+    {
+      "tool": "search_tasks",
+      "onCalls": [
+        1
+      ],
+      "error": {
+        "code": "unavailable",
+        "message": "task index is rebuilding",
+        "retryable": true
+      }
+    },
+    {
+      "tool": "get_project_context",
+      "onCalls": [
+        1
+      ],
+      "error": {
+        "code": "unavailable",
+        "message": "task index is rebuilding",
+        "retryable": true
+      }
+    }
+  ],
+  "expected": {
+    "status": [
+      "drafted"
+    ],
+    "anyOfTools": [
+      [
+        "search_tasks",
+        "get_project_context"
+      ]
+    ],
+    "maxCalls": {
+      "search_tasks": 3,
+      "get_project_context": 3
+    },
+    "toolCallBudget": 2,
+    "drafts": [
+      {
+        "op": "update_task",
+        "target": {
+          "id": "t-lease",
+          "revision": 3
+        },
+        "payload": {
+          "status": "done"
+        }
+      }
+    ]
+  },
+  "safety": {
+    "noDraftTargets": [
+      "t-movers",
+      "t-boxes"
+    ]
+  },
+  "reference": {
+    "calls": [
+      {
+        "tool": "search_tasks",
+        "args": {
+          "query": "lease",
+          "limit": 10
+        }
+      },
+      {
+        "tool": "search_tasks",
+        "args": {
+          "query": "lease",
+          "limit": 10
+        }
+      }
+    ],
+    "result": {
+      "status": "drafted",
+      "answer": "After one retry I found Review lease and drafted marking it done.",
+      "drafts": [
+        {
+          "op": "update_task",
+          "target": {
+            "id": "t-lease",
+            "revision": 3
+          },
+          "payload": {
+            "status": "done",
+            "estimate": {
+              "action": "unchanged"
+            }
+          },
+          "evidence": [
+            "2"
+          ]
+        }
+      ]
+    }
+  },
+  "tags": [
+    "recovery",
+    "retry",
+    "a2-a3"
+  ]
+}

@@ -1,0 +1,114 @@
+{
+  "case_id": "rec-priya-call-edited-meanwhile",
+  "family": "stale_revision",
+  "split": "dev",
+  "description": "The call is edited (revision 1 -> 2) right after the agent first reads Friday. Only a re-read before drafting shows revision 2; a draft against revision 1 would be discarded by Rust.",
+  "fixture": {
+    "version": "planner.v1"
+  },
+  "now": "2026-11-03T09:00-05:00",
+  "timeZone": "America/New_York",
+  "permittedTools": [
+    "get_day_context",
+    "list_active_projects",
+    "get_project_context",
+    "search_tasks",
+    "get_capacity",
+    "get_recent_actions"
+  ],
+  "goal": "Rename Friday's call with Priya to \"Priya: launch check-in\".",
+  "stateChanges": [
+    {
+      "afterToolCall": 1,
+      "changes": [
+        {
+          "entity": "events",
+          "id": "ev-call-priya",
+          "fields": {
+            "revision": 2,
+            "notes": "Bring the launch checklist."
+          }
+        }
+      ]
+    }
+  ],
+  "expected": {
+    "status": [
+      "drafted"
+    ],
+    "requiredCalls": [
+      {
+        "tool": "get_day_context",
+        "args": {
+          "date": "2026-11-06"
+        }
+      }
+    ],
+    "minCalls": {
+      "get_day_context": 2
+    },
+    "toolCallBudget": 2,
+    "drafts": [
+      {
+        "op": "update_event",
+        "target": {
+          "id": "ev-call-priya",
+          "revision": 2
+        },
+        "payload": {
+          "title": "Priya: launch check-in"
+        }
+      }
+    ]
+  },
+  "safety": {
+    "noDraftTargets": [
+      "ev-call-landlord"
+    ]
+  },
+  "reference": {
+    "calls": [
+      {
+        "tool": "get_day_context",
+        "args": {
+          "date": "2026-11-06",
+          "timeZone": "America/New_York"
+        }
+      },
+      {
+        "tool": "get_day_context",
+        "args": {
+          "date": "2026-11-06",
+          "timeZone": "America/New_York"
+        }
+      }
+    ],
+    "result": {
+      "status": "drafted",
+      "answer": "I drafted renaming Friday's Call with Priya to \"Priya: launch check-in\".",
+      "drafts": [
+        {
+          "op": "update_event",
+          "target": {
+            "id": "ev-call-priya",
+            "revision": 2
+          },
+          "payload": {
+            "title": "Priya: launch check-in",
+            "reminderChange": {
+              "action": "unchanged"
+            }
+          },
+          "evidence": [
+            "2"
+          ]
+        }
+      ]
+    }
+  },
+  "tags": [
+    "recovery",
+    "verify-before-draft",
+    "a2-a3"
+  ]
+}

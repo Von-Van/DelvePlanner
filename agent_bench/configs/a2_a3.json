@@ -1,0 +1,53 @@
+{
+  "experimentId": "2026-11-a2-a3",
+  "description": "Planner-executor (A2) and draft verifier (A3) against A1 on agent_bench, with ablations of each verifier piece and systematic fault injection. Same model, machine and generation settings as 2026-11-a0-vs-a1.",
+  "report": "docs/research/experiments/a2-a3-2026-11/README.md",
+  "builds_on": "docs/research/experiments/2026-11-a0-vs-a1/README.md",
+  "model": {
+    "name": "qwen3:8b",
+    "expectedDigest": "500a1f067a9f782620b40bee6f7b0c89e17ae61f686b92c24933e4ca4b2b8b41",
+    "runtime": "bundled Ollama 0.32.0",
+    "endpoint": "http://127.0.0.1:11434"
+  },
+  "generation": {"temperature": 0, "seed": 7, "num_ctx": 16384, "think": false},
+  "agents": {
+    "A1": {"class": "A1Agent", "note": "unchanged from 2026-11-a0-vs-a1 (prompt a1-v1); re-run as the same-commit baseline"},
+    "A2": {"class": "A2Agent", "options": {}, "note": "planner-executor, prompt a2-v1 with the payload guide, A1's draft rules"},
+    "A3": {"class": "A3Agent", "options": {}, "note": "A1 loop + payload guide + every verifier check, up to 3 replies per fix"},
+    "A2+A3": {"class": "A2Agent", "options": {"verifier": {}}, "note": "planner-executor with the A3 verifier"},
+    "A1+guide": {"class": "A3Agent", "options": {"useVerifier": false, "maxRepairs": 2}, "note": "ablation: the prompt change alone"},
+    "A3-guide": {"class": "A3Agent", "options": {"payloadGuide": false}, "note": "ablation: verifier without the prompt change"},
+    "A3-normalize": {"class": "A3Agent", "options": {"verifier": {"normalize": false}}, "note": "ablation: no deterministic rewrites; the model fixes everything"},
+    "A3-payloads": {"class": "A3Agent", "options": {"verifier": {"checkPayloads": false}}, "note": "ablation: no payload-shape check"},
+    "A3-times": {"class": "A3Agent", "options": {"verifier": {"checkTimes": false}}, "note": "ablation: no overlap / hours / past warnings"},
+    "A3-freshness": {"class": "A3Agent", "options": {"verifier": {"checkFreshness": false}}, "note": "ablation: no re-read before finishing"},
+    "A3-repairs2": {"class": "A3Agent", "options": {"maxRepairs": 2}, "note": "ablation: A1's repair limit (2 replies)"}
+  },
+  "arms": {
+    "main": {
+      "split": "all",
+      "repeats": 3,
+      "agents": ["A1", "A2", "A3", "A2+A3"],
+      "note": "the decision run; held-out cases are used because nothing is tuned between runs"
+    },
+    "ablations": {
+      "split": "dev",
+      "repeats": 1,
+      "agents": ["A1+guide", "A3-guide", "A3-normalize", "A3-payloads", "A3-times", "A3-freshness", "A3-repairs2"],
+      "compareTo": "A3",
+      "note": "one repeat: at temperature 0 with a fixed seed, A1 reproduced every result exactly across repeats in 2026-11-a0-vs-a1"
+    },
+    "faults": {
+      "split": "dev",
+      "repeats": 1,
+      "profiles": ["transient", "outage", "stale"],
+      "agents": ["A1", "A2", "A3", "A2+A3"]
+    }
+  },
+  "scoring": {
+    "success": "every agent_bench check, as the harness scores it (all four architectures call tools, so no outcome-only adjustment is needed)",
+    "appReady": "a drafted run whose every draft passes draft_shapes and fresh_revisions: what the app would accept",
+    "graceful": "fault arm only: safe, and either successful or an honest stop with no drafts",
+    "caseVerdict": "a case counts as solved when most repeats succeed"
+  }
+}

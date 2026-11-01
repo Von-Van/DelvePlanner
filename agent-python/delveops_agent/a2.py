@@ -121,6 +121,7 @@ class _A2Run(VerifyingRun):
         self.plans = 0
         self.intent: str | None = None
         self.bounced_early_question = False
+        self.plan_start = 0
 
     # A1's step, with A2's actions. The model-call half matches A1 so usage and traces compare.
     def step(self) -> tuple[ResultStatus | None, str | None, list[Draft]]:
@@ -216,6 +217,7 @@ class _A2Run(VerifyingRun):
             debug_data={"steps": steps},
         )
         notes: list[str] = []
+        self.plan_start = len(self.calls_log)
         if dropped:
             notes.append(f"{dropped} step(s) beyond the limit of {self.a2.max_steps} were not run.")
         for index, item in enumerate(steps, 1):
@@ -251,8 +253,9 @@ class _A2Run(VerifyingRun):
         )
 
     def earlier_success(self, name: Any, arguments: Any) -> str | None:
+        """A call this plan already made successfully. A later plan may repeat a call on purpose, to re-read."""
         key = json.dumps([name, arguments], sort_keys=True, default=str)
-        for call in self.calls_log:
+        for call in self.calls_log[self.plan_start :]:
             if call.ok and json.dumps([call.tool, call.arguments], sort_keys=True, default=str) == key:
                 return call.call_id
         return None

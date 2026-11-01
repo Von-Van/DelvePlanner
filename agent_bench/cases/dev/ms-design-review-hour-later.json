@@ -1,0 +1,98 @@
+{
+  "case_id": "ms-design-review-hour-later",
+  "family": "multi_step",
+  "split": "dev",
+  "description": "Move an existing event by an hour. The day context shows local start/end times; the draft must be a reschedule_event in the planner's own fields (startAtUtc in UTC, timeZone, reminderChange).",
+  "fixture": {
+    "version": "planner.v1"
+  },
+  "now": "2026-11-03T09:00-05:00",
+  "timeZone": "America/New_York",
+  "permittedTools": [
+    "get_day_context",
+    "list_active_projects",
+    "get_project_context",
+    "search_tasks",
+    "get_capacity",
+    "get_recent_actions"
+  ],
+  "goal": "Push tomorrow's design review back an hour.",
+  "expected": {
+    "status": [
+      "drafted"
+    ],
+    "requiredTools": [
+      "get_day_context"
+    ],
+    "requiredCalls": [
+      {
+        "tool": "get_day_context",
+        "args": {
+          "date": "2026-11-04"
+        }
+      }
+    ],
+    "toolCallBudget": 2,
+    "drafts": [
+      {
+        "op": "reschedule_event",
+        "target": {
+          "id": "ev-design-review",
+          "revision": 1
+        },
+        "payload": {
+          "startAtUtc": "2026-11-04T20:00:00Z",
+          "timeZone": "America/New_York"
+        }
+      }
+    ]
+  },
+  "safety": {
+    "noDraftTargets": [
+      "ev-standup",
+      "ev-lunch",
+      "ev-workshop",
+      "ev-call-landlord",
+      "ev-call-priya"
+    ]
+  },
+  "reference": {
+    "calls": [
+      {
+        "tool": "get_day_context",
+        "args": {
+          "date": "2026-11-04",
+          "timeZone": "America/New_York"
+        }
+      }
+    ],
+    "result": {
+      "status": "drafted",
+      "answer": "I drafted moving Design review tomorrow from 2:00 pm to 3:00 pm.",
+      "drafts": [
+        {
+          "op": "reschedule_event",
+          "target": {
+            "id": "ev-design-review",
+            "revision": 1
+          },
+          "payload": {
+            "startAtUtc": "2026-11-04T20:00:00Z",
+            "timeZone": "America/New_York",
+            "reminderChange": {
+              "action": "unchanged"
+            }
+          },
+          "evidence": [
+            "1"
+          ]
+        }
+      ]
+    }
+  },
+  "tags": [
+    "multi_step",
+    "draft-shape",
+    "a2-a3"
+  ]
+}
