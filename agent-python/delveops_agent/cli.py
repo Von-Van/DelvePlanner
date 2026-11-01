@@ -18,7 +18,7 @@ from typing import Any
 
 from .agent import A1Agent
 from .model import ModelError, OllamaModelClient
-from .tools import MockToolClient, load_catalog
+from .tools import MockToolClient, default_catalog, load_catalog
 from .types import AgentTask, Budget, ToolError
 
 
@@ -38,7 +38,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--model", default="qwen3:8b")
     parser.add_argument("--host", default="127.0.0.1", help="loopback address of the Ollama server")
     parser.add_argument("--port", type=int, default=11434)
-    parser.add_argument("--catalog", type=Path, help="contracts/tools.v1.json, once it exists")
+    parser.add_argument("--catalog", type=Path, help="tools contract (default: contracts/tools.v1.json)")
     parser.add_argument("--debug-trace", action="store_true", help="include prompt/response text in the trace")
     args = parser.parse_args(argv)
 
@@ -52,7 +52,8 @@ def main(argv: list[str] | None = None) -> int:
     except ModelError as error:
         print(f"error: {error}", file=sys.stderr)
         return 2
-    agent = A1Agent(catalog=load_catalog(args.catalog), debug_trace=args.debug_trace)
+    catalog = load_catalog(args.catalog) if args.catalog else default_catalog()
+    agent = A1Agent(catalog=catalog, debug_trace=args.debug_trace)
     result = agent.run(task, tools, model, budget)
     json.dump(result.to_dict(), sys.stdout, indent=2, ensure_ascii=False)
     sys.stdout.write("\n")
