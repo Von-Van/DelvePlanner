@@ -45,8 +45,10 @@ def _collect_records(value: Any, out: dict[str, Any]) -> None:
     """Index every {"id": ..., "revision"?: ...} object in a tool result by id."""
     if isinstance(value, dict):
         record_id = value.get("id")
-        if isinstance(record_id, str):
-            out.setdefault(record_id, value.get("revision"))
+        # Later observations win, so a re-read refreshes the revision a draft must cite. A later
+        # result that omits the revision (a summary view) does not erase one seen earlier.
+        if isinstance(record_id, str) and (record_id not in out or "revision" in value):
+            out[record_id] = value.get("revision")
         for child in value.values():
             _collect_records(child, out)
     elif isinstance(value, list):

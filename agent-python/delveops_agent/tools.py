@@ -141,7 +141,11 @@ def check_arguments(spec: ToolSpec, arguments: Any) -> ToolError | None:
 
 class ToolClient(Protocol):
     """Runs one read tool. Implementations: `MockToolClient` here; the live client over the sidecar
-    link arrives with pieces C and D."""
+    link arrives with pieces C and D.
+
+    A call must return in bounded time: the agent cannot interrupt it. The live client relies on the
+    Rust supervisor's per-call timeout (plan contract 3) and reports overruns as a `timeout` error.
+    """
 
     def call(self, name: str, arguments: dict[str, Any]) -> ToolResult: ...
 
