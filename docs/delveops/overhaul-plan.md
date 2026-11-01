@@ -89,6 +89,19 @@ C publishes the exact JSON Schemas in `contracts/tools.v1.json` (name, descripti
 privacy class, permission scope). That file is the single source of truth once merged; B and E should start
 from the table above and switch to the file when it lands.
 
+As built by C (see `contracts/tools.v1.json` for the exact shapes):
+
+- `includePlanning` defaults to `false`; archived, on-hold, complete, and cancelled plans are never listed.
+- Descriptions and notes are left out unless the run's privacy policy sets `includeDescriptions`. Plan links are
+  never returned. Read-only calendar events are reduced to busy times with no titles or locations.
+- `get_recent_actions` returns `{ "actions": [], "historyAvailable": false }` until G stores outcomes.
+- Budgets per run: `maxToolCalls` (default 24), `maxResultBytes` (64 KiB), `maxCallMs` (2 s), and
+  `maxIdenticalFailures` (2: the same failing call is then refused with `budget_exhausted`). Refused calls
+  (unknown tool, not permitted, reserved) don't spend the call budget.
+- `tool_call` payload: `{ "tool": "search_tasks", "arguments": { … } }`. `tool_result` payload:
+  `{ "callId", "tool", "ok", "result" | "error", "durationMs", "resultBytes", "callsRemaining" }`. `callId` is
+  what drafts cite as evidence.
+
 ### 2. Proposal drafts (E produces; Rust validates)
 
 The agent never writes. A draft is one of the operations the existing planner can already propose
@@ -116,7 +129,10 @@ Message types (v1): `hello` / `hello_ack` (handshake, versions, limits), `run_st
 handshake timeout, per-call timeouts, cancel, restart after crash, never more than one child.
 
 `src-tauri/examples/tool_server.rs` (C) speaks the same envelope for `tool_call`/`tool_result` against a
-**fixture database copy**, so the benchmark can exercise real Rust tools without the desktop app.
+**fixture database copy**, so the benchmark can exercise real Rust tools without the desktop app. It also answers
+`hello` with `hello_ack` and accepts `run_start` (`now`, `timeZone`, `permittedTools`, `budget`, `privacy`), replying
+`run_start_ack` with the settings in force; D should adopt `run_start_ack` or say otherwise. Fixtures are app export
+bundles (`--bundle`), a copied database (`--db`), or the built-in sample week (`src-tauri/src/tools/fixtures/`).
 
 ### 4. Agent interface (E implements; B and H call)
 
