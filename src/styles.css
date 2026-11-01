@@ -5168,7 +5168,10 @@ kbd.off {
 .agent-run {
   display: grid;
   gap: 10px;
-  margin-top: 14px;
+  margin: 0 18px 16px;
+}
+.agent-run .proposal {
+  margin: 0;
 }
 .agent-run-head {
   display: flex;
@@ -5251,7 +5254,9 @@ kbd.off {
   font-weight: 600;
 }
 .agent-recent {
-  margin-top: 18px;
+  margin: 0 18px 8px;
+  padding-top: 14px;
+  border-top: 1px solid var(--hairline);
 }
 .agent-recent ul {
   display: grid;

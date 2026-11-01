@@ -208,7 +208,7 @@ export function AssistantAgentPanel({
 
       <p className="planner-footnote">
         <span aria-hidden="true">◌</span> Runs on this computer only. Every run
-        is measured; the numbers above are the same ones the test suite scores.
+        is measured the same way the test suite measures the agent.
       </p>
     </section>
   );
