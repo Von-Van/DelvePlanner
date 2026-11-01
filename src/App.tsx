@@ -840,10 +840,12 @@ export default function App() {
     calendarDay?.events ?? [],
     calendars,
   );
+  // Work scheduled on a non-working day still counts as overbooked, as on Today.
   const dayCapacityLine =
-    dayCapacity && dayCapacity.days[0]?.workingMinutes
+    dayCapacity && dayCapacity.days[0]
       ? capacityLine(capacityTotals(dayCapacity, { includePool: false }))
       : null;
+  const nonWorkingDay = dayCapacity?.days[0]?.workingMinutes === 0;
   const openDue = agenda.dueTasks.filter((task) => task.status !== "done");
   const assistantContext: DayContext = {
     day,
@@ -855,7 +857,9 @@ export default function App() {
     tasksTotal: agenda.tasks.length,
     dueOpen: openDue.length,
     milestones: agenda.milestones.length,
-    capacityLabel: dayCapacityLine?.label ?? null,
+    capacityLabel: nonWorkingDay
+      ? "Not a working day"
+      : (dayCapacityLine?.label ?? null),
   };
   // Day-specific items only make sense for today; a broken calendar matters on any day.
   const assistantAttention = worthAttention({
@@ -873,6 +877,8 @@ export default function App() {
       return;
     }
     if (target !== "plan-week") setDay(today);
+    // The Assistant counts every plan, so Today must too or the flagged tasks could be hidden.
+    if (target === "today") setPlanFilter("all");
     navigate({ kind: target });
   }
 
