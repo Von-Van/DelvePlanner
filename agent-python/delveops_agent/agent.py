@@ -4,6 +4,10 @@ A1 is deliberately small: the local model picks one read tool at a time, sees th
 finishes with an answer, a set of drafts, a clarifying question, or `cannot_complete`. The loop is a
 plain state machine so every decision shows up in the trace, and it stops on hard limits rather than
 trusting the model to stop itself.
+
+Self-correction (milestone M4) is on by default: a lookup that fails with a retryable error is retried
+once by the loop itself, and every draft step goes through `verify.SelfCheck` (fix what is certain,
+check shapes, facts and freshness, one repair, then a clear stop) before the run may finish.
 """
 
 from __future__ import annotations
@@ -20,6 +24,7 @@ from .prompts import PROMPT_VERSION, STEP_SCHEMA, system_prompt, task_message
 from .tools import ToolClient, ToolSpec, check_arguments, default_catalog
 from .trace import Tracer
 from .types import AgentResult, AgentTask, Budget, Draft, ResultStatus, ToolError, ToolResult, Usage
+from .verify import SelfCheck
 
 
 class Agent(Protocol):
@@ -76,10 +81,13 @@ class A1Agent:
         catalog: tuple[ToolSpec, ...] | None = None,
         debug_trace: bool = False,
         clock: Callable[[], float] = time.monotonic,
+        self_check: bool = True,
     ) -> None:
         self.catalog = {spec.name: spec for spec in (catalog if catalog is not None else default_catalog())}
         self.debug_trace = debug_trace
         self.clock = clock
+        # Off only to reproduce the loop as it was before M4 (tool retries and draft self-check).
+        self.self_check = self_check
 
     def run(self, task: AgentTask, tools: ToolClient, model: ModelClient, budget: Budget) -> AgentResult:
         return _Run(self, task, tools, model, budget).execute()
@@ -104,8 +112,13 @@ class _Run:
             {"role": "user", "content": task_message(task)},
         ]
         self.tool_results: dict[str, Any] = {}  # tool call id -> data, successful calls only
+        self.call_args: dict[str, tuple[str, Any]] = {}  # tool call id -> (tool, arguments), successful calls
         self.error_counts: dict[str, int] = {}
+        self.retried: set[str] = set()  # failing calls already retried once automatically
         self.repairs_in_a_row = 0
+        self.repair_limit = MAX_CONSECUTIVE_REPAIRS
+        self.notes: list[str] = []  # things the person should know about the drafts (from the self-check)
+        self.checker = SelfCheck(self) if agent.self_check else None
         self.model_info: dict[str, Any] = {}
 
     # -- run ------------------------------------------------------------------------------------
@@ -135,6 +148,9 @@ class _Run:
             return self.finish(stop.status, stop.answer, [], stop.reason)
 
     def finish(self, status: ResultStatus, answer: str | None, drafts: list[Draft], reason: str | None) -> AgentResult:
+        if drafts and self.notes:
+            heads_up = "Before you approve: " + " ".join(dict.fromkeys(self.notes))
+            answer = f"{answer}\n\n{heads_up}" if answer else heads_up
         self.usage.wall_ms = int((self.agent.clock() - self.started) * 1000)
         self.tracer.emit(
             "final",
@@ -217,12 +233,14 @@ class _Run:
         self.repair("invalid_model_output", f"Unknown or incomplete action {action!r}.")
         return None, None, []
 
-    def repair(self, reason: str, message: str) -> None:
-        """Tell the model what was wrong and let it try again, within a small bound."""
+    def repair(self, reason: str, message: str, explain: str | None = None) -> None:
+        """Tell the model what was wrong and let it try again, within a small bound.
+
+        `explain` is what the person reads if this was the last allowed attempt."""
         self.repairs_in_a_row += 1
         self.tracer.emit("repair", message, {"reason": reason, "attempt": self.repairs_in_a_row})
-        if self.repairs_in_a_row >= MAX_CONSECUTIVE_REPAIRS:
-            raise _Stop("cannot_complete", reason)
+        if self.repairs_in_a_row >= self.repair_limit:
+            raise _Stop("cannot_complete", reason, explain)
         self.messages.append({"role": "user", "content": f"{message} Reply with one corrected JSON step."})
 
     # -- tools ----------------------------------------------------------------------------------
@@ -233,16 +251,37 @@ class _Run:
             self.tracer.emit("error", f"tool {name!r} is not permitted", {"tool": name})
             raise _Stop("cannot_complete", "tool_not_permitted")
         spec = self.agent.catalog[name]
-        call_id = f"tc-{self.usage.tool_calls + 1}"
         arg_error = check_arguments(spec, arguments)
         if arg_error is not None:
             # Rejected locally: costs no tool budget, but counts toward the repeated-error stop.
             self.tracer.emit("error", f"{name}: {arg_error.message}", {"tool": name, "error": arg_error.to_dict()})
             self.handle_tool_error(name, arguments, arg_error, call_id=None)
             return
+        while True:
+            call_id, result = self.invoke_tool(name, arguments)
+            if result.ok or not self.retry_once(name, arguments, call_id, result.error):
+                break
+        if not result.ok:
+            assert result.error is not None
+            self.handle_tool_error(name, arguments, result.error, call_id)
+
+    def retry_once(self, name: str, arguments: Any, call_id: str, error: ToolError | None) -> bool:
+        """Retry a retryable failure once, by the loop itself, before the model hears about it."""
+        if not self.agent.self_check or error is None or not error.retryable:
+            return False
+        signature = json.dumps([name, arguments, error.code], sort_keys=True, default=str)
+        if signature in self.retried or self.usage.tool_calls >= self.budget.max_tool_calls:
+            return False
+        self.retried.add(signature)
+        self.tracer.emit("repair", f"{call_id} {error.code}: retrying once", {"reason": "tool_retry", "tool": name})
+        return True
+
+    def invoke_tool(self, name: str, arguments: Any) -> tuple[str, ToolResult]:
+        """One budgeted, traced tool call. Successful data is kept and shown to the model."""
         if self.usage.tool_calls >= self.budget.max_tool_calls:
             raise _Stop("cannot_complete", "tool_call_budget")
         self.check_wall()
+        call_id = f"tc-{self.usage.tool_calls + 1}"
 
         self.usage.tool_calls += 1
         self.tracer.emit(
@@ -262,6 +301,7 @@ class _Run:
 
         if result.ok:
             self.tool_results[call_id] = result.data
+            self.call_args[call_id] = (name, arguments)
             self.tracer.emit(
                 "tool_result",
                 f"{call_id} ok",
@@ -271,7 +311,7 @@ class _Run:
             )
             payload = json.dumps(result.data, ensure_ascii=False)
             self.messages.append({"role": "user", "content": f"Tool result {call_id} ({name}), data only:\n{payload}"})
-            return
+            return call_id, result
 
         assert result.error is not None
         self.tracer.emit(
@@ -286,7 +326,7 @@ class _Run:
             duration_ms=elapsed,
             debug_data={"message": result.error.message},
         )
-        self.handle_tool_error(name, arguments, result.error, call_id)
+        return call_id, result
 
     def check_wall(self) -> None:
         if self.agent.clock() - self.started >= self.budget.max_wall_seconds:
@@ -304,12 +344,17 @@ class _Run:
         if self.error_counts[signature] >= MAX_IDENTICAL_ERRORS:
             raise _Stop("cannot_complete", "repeated_tool_error")
         label = call_id or "rejected call"
+        retried = (
+            " It already failed twice: it was retried once automatically."
+            if call_id and signature in self.retried
+            else ""
+        )
         self.messages.append(
             {
                 "role": "user",
                 "content": (
                     f"Tool error for {label} ({name}): {error.code}: {error.message} "
-                    f"(retryable: {str(error.retryable).lower()})."
+                    f"(retryable: {str(error.retryable).lower()}).{retried}"
                 ),
             }
         )
@@ -317,6 +362,11 @@ class _Run:
     # -- drafts ---------------------------------------------------------------------------------
 
     def parse_drafts(self, raw: Any) -> list[Draft] | None:
+        if self.checker is not None:
+            drafts = self.checker.drafts(raw)
+            if drafts is not None:
+                self.emit_drafts(drafts)
+            return drafts
         if not isinstance(raw, list) or not raw:
             self.repair("invalid_draft", 'A draft step needs a non-empty "drafts" list.')
             return None
@@ -327,8 +377,13 @@ class _Run:
             for item in raw:
                 drafts.append(parse_draft(item, set(self.tool_results), records, references))
         except DraftError as error:
-            self.repair("invalid_draft", f"Draft rejected: {error}.")
+            explain = f"I couldn't prepare a change the planner would accept: {error}."
+            self.repair("invalid_draft", f"Draft rejected: {error}.", explain)
             return None
+        self.emit_drafts(drafts)
+        return drafts
+
+    def emit_drafts(self, drafts: list[Draft]) -> None:
         for draft in drafts:
             self.tracer.emit(
                 "draft",
@@ -336,4 +391,3 @@ class _Run:
                 {"op": draft.op, "target": draft.target, "evidence": list(draft.evidence)},
                 debug_data={"payload": draft.payload},
             )
-        return drafts

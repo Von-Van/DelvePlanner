@@ -14,6 +14,7 @@ Standard library only. No agent frameworks, no web server.
 | `delveops_agent/tools.py`   | Tool catalog from `contracts/tools.v1.json`, `ToolClient` interface, fixture-driven `MockToolClient`.     |
 | `delveops_agent/agent.py`   | `Agent` interface and the `A1Agent` loop with budgets and stop rules.                                     |
 | `delveops_agent/drafts.py`  | Draft validation against the Rust `MutationOperation` shapes, grounding, evidence (plan contract 2).      |
+| `delveops_agent/verify/`    | The self-check (milestone M4): safe fixes, fact checks, re-reads, one repair, then a clear stop.          |
 | `delveops_agent/trace.py`   | Trace events in the shared shape (plan contract 5); text only in opt-in debug traces.                     |
 | `delveops_agent/prompts.py` | Versioned prompt (`a1-v2`) and the JSON step format the model must reply in.                              |
 | `delveops_agent/cli.py`     | Run A1 once against a fixture file and a local Ollama, print the result and trace.                        |
@@ -47,6 +48,28 @@ Drafts are never applied here. Each one must be something the app will accept:
 
 `tests/test_drafts.py` checks the field table against `model.rs` and the benchmark's draft schema. Rust checks
 everything again against live data before the person sees a review.
+
+## How it corrects itself (milestone M4)
+
+On by default (`A1Agent(self_check=False)` gives the loop as it was before). Every step is bounded and traced.
+
+- **A flaky lookup is retried once.** A retryable tool error (timeout, unavailable) is retried by the loop
+  itself before the model hears about it. If it fails again, the model is told it was already retried, and a
+  third identical failure ends the run.
+- **Certain fixes are made without asking.** A local start/end pair becomes `startAtUtc` + `durationMinutes`,
+  `endAtUtc` becomes a length, a bare date becomes "set the day", and so on (`verify/operations.py`).
+- **Shape problems are listed all at once**, with hints ("unknown field 'duration' (the field is
+  durationMinutes)"). One repair attempt; if the next draft is still wrong, the run stops and the answer says
+  what was wrong.
+- **Drafts are checked against what the agent read** (`verify/facts.py`): an event on top of something else,
+  outside working hours or in the past; a task scheduled or finished before a task it waits on; more work on a
+  day than it has free time. These go back to the model once. If the model keeps its drafts (the clash may be
+  deliberate), they are handed over with a "Before you approve:" note that names the problem.
+- **Targets are re-read just before finishing** (`verify/freshness.py`). If a record changed, the model redrafts
+  against the fresh data once, and the answer says the record changed. If it can't, the run stops rather than
+  hand over a change Rust would refuse.
+
+Each round is a `verify` trace event with an `outcome` of `passed`, `fixed`, `sent_back`, `noted` or `stopped`.
 
 ## Safety boundary
 
