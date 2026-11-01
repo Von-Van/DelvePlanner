@@ -14,10 +14,10 @@ import uuid
 from collections.abc import Callable
 from typing import Any, Protocol
 
-from .drafts import DraftError, observed_records, parse_draft
+from .drafts import DraftError, observed_records, observed_references, parse_draft
 from .model import ModelClient, ModelError, ModelRequest
 from .prompts import PROMPT_VERSION, STEP_SCHEMA, system_prompt, task_message
-from .tools import V0_CATALOG, ToolClient, ToolSpec, check_arguments
+from .tools import ToolClient, ToolSpec, check_arguments, default_catalog
 from .trace import Tracer
 from .types import AgentResult, AgentTask, Budget, Draft, ResultStatus, ToolError, ToolResult, Usage
 
@@ -73,11 +73,11 @@ class A1Agent:
 
     def __init__(
         self,
-        catalog: tuple[ToolSpec, ...] = V0_CATALOG,
+        catalog: tuple[ToolSpec, ...] | None = None,
         debug_trace: bool = False,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
-        self.catalog = {spec.name: spec for spec in catalog}
+        self.catalog = {spec.name: spec for spec in (catalog if catalog is not None else default_catalog())}
         self.debug_trace = debug_trace
         self.clock = clock
 
@@ -321,10 +321,11 @@ class _Run:
             self.repair("invalid_draft", 'A draft step needs a non-empty "drafts" list.')
             return None
         records = observed_records(self.tool_results.values())
+        references = observed_references(self.tool_results.values())
         drafts: list[Draft] = []
         try:
             for item in raw:
-                drafts.append(parse_draft(item, set(self.tool_results), records))
+                drafts.append(parse_draft(item, set(self.tool_results), records, references))
         except DraftError as error:
             self.repair("invalid_draft", f"Draft rejected: {error}.")
             return None

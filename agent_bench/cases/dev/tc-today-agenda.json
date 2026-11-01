@@ -4,7 +4,7 @@
   "split": "dev",
   "description": "A plain day question should be one get_day_context call for today.",
   "fixture": {
-    "version": "planner.v1"
+    "version": "planner.v2"
   },
   "now": "2026-11-03T09:00-05:00",
   "timeZone": "America/New_York",

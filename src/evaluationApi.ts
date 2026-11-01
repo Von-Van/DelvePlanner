@@ -1,0 +1,142 @@
+/**
+ * Read-only access to benchmark and regression results for the Model & Evaluation panel. Every
+ * call reads files or saved runs; nothing here starts a benchmark or changes planner data.
+ */
+import { invoke } from "@tauri-apps/api/core";
+import { z } from "zod";
+import { TraceEvent, traceEventSchema } from "./AgentTrace";
+
+export const runSources = ["benchmark", "regression", "recorded"] as const;
+export type RunSource = (typeof runSources)[number];
+
+const countSchema = z.number().int().nonnegative();
+const msSchema = z.number().nonnegative().nullable();
+
+export const evaluationRunSchema = z.object({
+  id: z.string().min(1),
+  source: z.enum(runSources),
+  label: z.string(),
+  architecture: z.string().nullable(),
+  modelName: z.string().nullable(),
+  modelDigest: z.string().nullable(),
+  startedAt: z.string().nullable(),
+  hardware: z.string().nullable(),
+  cases: countSchema,
+  repeats: countSchema,
+  attempts: countSchema,
+  passedAttempts: countSchema,
+  successRate: z.number().min(0).max(1).nullable(),
+  safetyFailures: countSchema,
+  latencyP50Ms: msSchema,
+  latencyP95Ms: msSchema,
+});
+export type EvaluationRun = z.infer<typeof evaluationRunSchema>;
+
+export const evaluationOverviewSchema = z.object({
+  resultsFolder: z.string(),
+  runs: z.array(evaluationRunSchema),
+  problems: z.array(z.string()),
+});
+export type EvaluationOverview = z.infer<typeof evaluationOverviewSchema>;
+
+export const evaluationCaseSchema = z.object({
+  key: z.string().min(1),
+  caseId: z.string(),
+  family: z.string().nullable(),
+  split: z.string().nullable(),
+  tags: z.array(z.string()),
+  repeat: countSchema,
+  status: z.string().nullable(),
+  success: z.boolean(),
+  /** Null when the source records safety only for the run as a whole. */
+  safe: z.boolean().nullable(),
+  failedChecks: z.array(z.object({ name: z.string(), detail: z.string() })),
+  safetyViolations: z.array(z.object({ rule: z.string(), detail: z.string() })),
+  latencyMs: msSchema,
+  hasTrace: z.boolean(),
+});
+export type EvaluationCase = z.infer<typeof evaluationCaseSchema>;
+
+export const evaluationRunDetailSchema = z.object({
+  run: evaluationRunSchema,
+  cases: z.array(evaluationCaseSchema),
+  note: z.string().nullable(),
+});
+export type EvaluationRunDetail = z.infer<typeof evaluationRunDetailSchema>;
+
+export const evaluationTraceSchema = z.object({
+  events: z.array(traceEventSchema),
+  status: z.string().nullable(),
+});
+export type EvaluationTrace = { events: TraceEvent[]; status: string | null };
+
+const commandErrorSchema = z.object({ message: z.string() });
+
+async function read<T>(
+  schema: z.ZodType<T>,
+  command: string,
+  args?: Record<string, unknown>,
+): Promise<T> {
+  let raw: unknown;
+  try {
+    raw = await invoke(command, args);
+  } catch (cause) {
+    const parsed = commandErrorSchema.safeParse(cause);
+    throw new Error(parsed.success ? parsed.data.message : String(cause));
+  }
+  const parsed = schema.safeParse(raw);
+  if (!parsed.success) {
+    throw new Error(
+      "The test results came back in a shape this view can't read.",
+    );
+  }
+  return parsed.data;
+}
+
+export const evaluationApi = {
+  listRuns: () => read(evaluationOverviewSchema, "list_evaluation_runs"),
+  getRun: (runId: string) =>
+    read(evaluationRunDetailSchema, "get_evaluation_run", { runId }),
+  getTrace: (runId: string, caseKey: string) =>
+    read(evaluationTraceSchema, "get_evaluation_trace", { runId, caseKey }),
+};
+export type EvaluationApi = typeof evaluationApi;
+
+// ---------------------------------------------------------------------------------------------
+// Formatting shared by the panel and its tests.
+
+export const sourceLabels: Record<RunSource, string> = {
+  benchmark: "Benchmark",
+  regression: "Regression set",
+  recorded: "Saved in app",
+};
+
+export function percentLabel(rate: number | null) {
+  return rate === null ? "—" : `${Math.round(rate * 1000) / 10}%`;
+}
+
+export function latencyLabel(ms: number | null) {
+  if (ms === null) return "—";
+  if (ms < 1) return "<1 ms";
+  if (ms < 1000) return `${Math.round(ms)} ms`;
+  return `${(ms / 1000).toFixed(ms < 10_000 ? 2 : 1)} s`;
+}
+
+/** The first 12 characters of a model digest, enough to tell two builds apart. */
+export function shortDigest(digest: string | null) {
+  if (!digest) return null;
+  return digest.replace(/^sha256:/, "").slice(0, 12);
+}
+
+export function dateLabel(iso: string | null) {
+  if (!iso) return "Unknown date";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  return date.toLocaleString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}

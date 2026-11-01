@@ -11,11 +11,11 @@ Standard library only. No agent frameworks, no web server.
 | --------------------------- | --------------------------------------------------------------------------------------------------------- |
 | `delveops_agent/types.py`   | `AgentTask`, `Budget`, `AgentResult`, `Draft`, `ToolError`: the shared shapes (plan contract 4).          |
 | `delveops_agent/model.py`   | `ModelClient` interface and `OllamaModelClient` (loopback only; records model, digest, options, latency). |
-| `delveops_agent/tools.py`   | Read-tool catalog (plan contract 1), `ToolClient` interface, fixture-driven `MockToolClient`.             |
+| `delveops_agent/tools.py`   | Tool catalog from `contracts/tools.v1.json`, `ToolClient` interface, fixture-driven `MockToolClient`.     |
 | `delveops_agent/agent.py`   | `Agent` interface and the `A1Agent` loop with budgets and stop rules.                                     |
-| `delveops_agent/drafts.py`  | Draft validation: allowed operations, target/revision grounding, evidence checks (plan contract 2).       |
+| `delveops_agent/drafts.py`  | Draft validation against the Rust `MutationOperation` shapes, grounding, evidence (plan contract 2).      |
 | `delveops_agent/trace.py`   | Trace events in the shared shape (plan contract 5); text only in opt-in debug traces.                     |
-| `delveops_agent/prompts.py` | Versioned prompt (`a1-v1`) and the JSON step format the model must reply in.                              |
+| `delveops_agent/prompts.py` | Versioned prompt (`a1-v2`) and the JSON step format the model must reply in.                              |
 | `delveops_agent/cli.py`     | Run A1 once against a fixture file and a local Ollama, print the result and trace.                        |
 | `delveops_agent/protocol/`  | Python end of the Rust ↔ Python link. Owned by piece D, not this package's code.                          |
 
@@ -36,9 +36,17 @@ Stop rules, all ending in a normal result rather than an exception:
 | Two unusable replies in a row (bad JSON or rejected draft) | `cannot_complete` (`invalid_model_output` / `invalid_draft`) |
 | Ollama unreachable or errors                               | `cannot_complete` (`model_error`)                            |
 
-Drafts are never applied here. A draft that changes an existing record must name a target id and revision that
-appeared in a tool result during this run, and cite the tool call ids it relies on. Rust checks all of it again
-against live data before the person sees a review.
+Drafts are never applied here. Each one must be something the app will accept:
+
+- `op` is one of the 17 `MutationOperation` variants in `src-tauri/src/model.rs`, and `payload` has exactly
+  that variant's fields, names and value shapes (for example `scheduledDay: {"action": "set", "day": "2026-11-05"}`).
+  A left-out "change" field means unchanged. `mutation_operation(draft)` produces the exact JSON Rust reads.
+- A change to an existing record names a target id and revision that appeared in a tool result during this
+  run, and existing records mentioned in the payload must have been seen too.
+- Evidence cites real tool call ids from the run.
+
+`tests/test_drafts.py` checks the field table against `model.rs` and the benchmark's draft schema. Rust checks
+everything again against live data before the person sees a review.
 
 ## Safety boundary
 
@@ -63,4 +71,5 @@ python -m delveops_agent.cli examples/reschedule_overdue.json --model qwen3:8b -
 
 - The live `ToolClient` over the sidecar link (pieces C and D). Until then, tests and the CLI use `MockToolClient`.
 - In the desktop app, model calls will go through the Rust model broker; that is another `ModelClient`.
-- Once `contracts/tools.v1.json` lands, pass it with `--catalog` (or `load_catalog`) instead of the built-in table.
+- The tool list comes from `contracts/tools.v1.json` (override with `DELVE_TOOLS_CONTRACT` or `--catalog`); the
+  built-in v0 table is only a fallback when that file is missing.

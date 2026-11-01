@@ -16,7 +16,7 @@ from typing import Any, Callable
 from . import __version__
 from .cases import case_set_hash
 from .interfaces import AgentResult, AgentTask, Budget, coerce_result
-from .mock_tools import TOOLS_PATH, MockToolClient
+from .mock_tools import CONTRACT_PATH, MockToolClient
 from .scoring import score_run
 from .trace import TraceRecorder, utc_now, validate_events
 
@@ -136,7 +136,7 @@ def run_suite(
         "architectureId": getattr(agent, "architecture_id", None),
         "model": model.describe() if model is not None and hasattr(model, "describe") else None,
         "caseSetHash": case_set_hash(cases),
-        "toolDefinitionsHash": _file_hash(TOOLS_PATH),
+        "toolDefinitionsHash": _file_hash(CONTRACT_PATH),
         "cases": len(cases),
         "splits": sorted({c["split"] for c in cases}),
         "repeats": repeats,

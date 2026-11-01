@@ -4,7 +4,7 @@ import json
 
 from conftest import FakeClock, ScriptedModel
 
-from delveops_agent import A1Agent, AgentTask, Budget, MockToolClient, ToolError
+from delveops_agent import V0_CATALOG, A1Agent, AgentTask, Budget, MockToolClient, ToolError, mutation_operation
 from delveops_agent.model import ModelError
 from delveops_agent.trace import TRACE_KINDS
 
@@ -35,7 +35,7 @@ def search(query="grant"):
 def run(script, responses=None, task=None, budget=None, clock=None, debug=False):
     model = ScriptedModel(script)
     tools = MockToolClient(responses if responses is not None else {"search_tasks": TASK_SEARCH})
-    agent = A1Agent(debug_trace=debug, clock=clock or FakeClock())
+    agent = A1Agent(catalog=V0_CATALOG, debug_trace=debug, clock=clock or FakeClock())
     result = agent.run(task or make_task(), tools, model, budget or Budget())
     return result, tools, model
 
@@ -47,7 +47,7 @@ SCHEDULE_DRAFT = {
         {
             "op": "schedule_task",
             "target": {"id": "task-42", "revision": 3},
-            "payload": {"scheduledDay": "2026-11-05"},
+            "payload": {"scheduledDay": {"action": "set", "day": "2026-11-05"}},
             "evidence": ["tc-1"],
         }
     ],
@@ -76,10 +76,23 @@ def test_grounded_draft_is_returned_not_applied():
         {
             "op": "schedule_task",
             "target": {"id": "task-42", "revision": 3},
-            "payload": {"scheduledDay": "2026-11-05"},
+            "payload": {
+                "scheduledDay": {"action": "set", "day": "2026-11-05"},
+                "dueDate": {"action": "unchanged"},
+                "plannedWeek": {"action": "unchanged"},
+            },
             "evidence": ["tc-1"],
         }
     ]
+    # The exact JSON Rust's MutationOperation deserialises.
+    assert mutation_operation(result.drafts[0]) == {
+        "type": "schedule_task",
+        "taskId": "task-42",
+        "expectedRevision": 3,
+        "scheduledDay": {"action": "set", "day": "2026-11-05"},
+        "dueDate": {"action": "unchanged"},
+        "plannedWeek": {"action": "unchanged"},
+    }
     # Only read tools were ever invoked; drafting did not call anything.
     assert [name for name, _ in tools.calls] == ["search_tasks"]
 
@@ -88,7 +101,14 @@ def test_create_draft_needs_no_target():
     draft = {
         "action": "draft",
         "summary": "Add a task.",
-        "drafts": [{"op": "create_task", "target": None, "payload": {"title": "Call Sam"}, "evidence": []}],
+        "drafts": [
+            {
+                "op": "create_task",
+                "target": None,
+                "payload": {"title": "Call Sam", "description": "", "status": "todo", "priority": "normal"},
+                "evidence": [],
+            }
+        ],
     }
     result, tools, _ = run([draft])
     assert result.status == "drafted"
@@ -258,7 +278,7 @@ def test_wall_clock_budget(clock):
         clock.now += 40
 
     model = ScriptedModel([search(), search("b"), search("c"), search("d")], on_call=tick)
-    agent = A1Agent(clock=clock)
+    agent = A1Agent(catalog=V0_CATALOG, clock=clock)
     result = agent.run(make_task(), MockToolClient({"search_tasks": TASK_SEARCH}), model, Budget(max_wall_seconds=100))
     assert result.status == "cannot_complete"
     assert result.stop_reason == "wall_clock_budget"
@@ -346,7 +366,7 @@ def test_model_calls_get_the_remaining_wall_clock_budget(clock):
         clock.now += 30
 
     model = ScriptedModel([search(), search("b"), {"action": "answer", "answer": "ok"}], on_call=tick)
-    agent = A1Agent(clock=clock)
+    agent = A1Agent(catalog=V0_CATALOG, clock=clock)
     agent.run(make_task(), MockToolClient({"search_tasks": TASK_SEARCH}), model, Budget(max_wall_seconds=100))
     assert [r.timeout_seconds for r in model.requests] == [100, 70, 40]
 
@@ -355,3 +375,38 @@ def test_debug_trace_includes_text_when_opted_in():
     result, _, _ = run([search(), {"action": "answer", "answer": "ok"}], debug=True)
     dumped = json.dumps(result.trace)
     assert "Draft grant budget" in dumped
+
+
+def test_payload_may_name_a_record_seen_only_as_a_foreign_key():
+    # search_tasks shows plan-7 only as a task's planId; that is enough to file a new event under it,
+    # but not enough to target plan-7 itself (no revision was seen).
+    create = {
+        "action": "draft",
+        "summary": "Add a work session.",
+        "drafts": [
+            {
+                "op": "create_event",
+                "target": None,
+                "payload": {
+                    "title": "Grant budget",
+                    "notes": "",
+                    "startAtUtc": "2026-11-05T17:00:00Z",
+                    "timeZone": "America/Chicago",
+                    "durationMinutes": 60,
+                    "plan": {"id": "plan-7"},
+                },
+                "evidence": ["tc-1"],
+            }
+        ],
+    }
+    result, _, _ = run([search(), create])
+    assert result.status == "drafted"
+    update_plan = {
+        "action": "draft",
+        "summary": "x",
+        "drafts": [
+            {"op": "update_plan", "target": {"id": "plan-7", "revision": 1}, "payload": {}, "evidence": ["tc-1"]}
+        ],
+    }
+    result, _, _ = run([search(), update_plan, update_plan])
+    assert result.stop_reason == "invalid_draft"

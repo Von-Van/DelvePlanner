@@ -430,3 +430,63 @@ async fn an_idle_child_is_stopped() {
     assert!(sidecar.stop_if_idle(Duration::ZERO).await);
     assert!(!sidecar.running().await);
 }
+
+/// The real read-tool broker (piece C) as the host, against its built-in sample week: the
+/// payloads both sides agreed on travel through unchanged.
+struct BrokerHost {
+    inner: StdMutex<(crate::db::PlannerDatabase, crate::tools::ToolSession)>,
+}
+
+impl SidecarHost for BrokerHost {
+    async fn call_tool(
+        &self,
+        _run_id: &str,
+        name: &str,
+        arguments: &Value,
+    ) -> Result<Value, LinkError> {
+        let mut inner = self.inner.lock().unwrap();
+        let (database, session) = &mut *inner;
+        let sources = crate::tools::ToolSources {
+            database,
+            calendars: &crate::tools::NoCalendars,
+        };
+        let outcome = session.call(&sources, name, arguments.clone());
+        Ok(serde_json::to_value(outcome).unwrap())
+    }
+
+    async fn call_model(&self, _run_id: &str, _request: &Value) -> Result<Value, LinkError> {
+        Err(LinkError::new(
+            ErrorCode::Unavailable,
+            "no model here",
+            true,
+        ))
+    }
+
+    fn trace(&self, _run_id: &str, _event: &Value) {}
+}
+
+#[tokio::test]
+async fn speaks_the_read_tool_brokers_contract() {
+    let Some(sidecar) = sidecar() else { return };
+    let folder = tempfile::tempdir().unwrap();
+    let database = crate::tools::open_fixture_database(
+        &folder.path().join("fixture.sqlite3"),
+        crate::tools::SAMPLE_FIXTURE,
+    )
+    .unwrap();
+    let config =
+        crate::tools::SessionConfig::new(chrono::Utc::now(), "America/Chicago".parse().unwrap());
+    let host = BrokerHost {
+        inner: StdMutex::new((database, crate::tools::ToolSession::new(config))),
+    };
+    let mut request = task("tool:list_active_projects");
+    request.permitted_tools.push("list_active_projects".into());
+    let outcome = sidecar
+        .run(&request, &host, &CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(outcome.result["status"], "answered", "{}", outcome.result);
+    let reply: Value = serde_json::from_str(answer(&outcome)).unwrap();
+    assert_eq!(reply["callId"], "call-1");
+    assert!(reply["result"]["plans"].is_array(), "{reply}");
+}
