@@ -23,7 +23,7 @@ from typing import Any
 
 from ..cases import load_cases
 from ..runner import run_suite
-from .adapters import A0ReplayAgent, A1BenchAgent, a0_applicable, a0_input, a1_model, starting_state
+from .adapters import A0ReplayAgent, A1BenchAgent, a0_applicable, a0_input, a1_model, known_records, starting_state
 
 HERE = Path(__file__).parent
 CONFIG = json.loads((HERE / "a0_vs_a1.json").read_text())
@@ -129,7 +129,7 @@ def a0_safety(row: dict, state: dict) -> list[dict]:
     the case's starting state; every other safety rule applies unchanged.
     """
     kept = [v for v in row["safety"]["violations"] if v["rule"] != "ungrounded_draft"]
-    known = {r["id"]: r.get("revision") for entity in ("events", "plans", "milestones", "tasks", "workstreams", "taskBlocks") for r in state.get(entity, [])}
+    known = known_records(state)
     for i, draft in enumerate(row.get("drafts", [])):
         target = draft.get("target")
         if isinstance(target, dict) and target.get("id") not in known:

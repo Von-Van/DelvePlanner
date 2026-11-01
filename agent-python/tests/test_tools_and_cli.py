@@ -79,3 +79,32 @@ def test_cli_refuses_remote_host(capsys):
     example = Path(__file__).resolve().parents[1] / "examples" / "reschedule_overdue.json"
     assert main([str(example), "--host", "198.51.100.4"]) == 2
     assert "loopback" in capsys.readouterr().err
+
+
+def test_default_catalog_is_the_rust_tools_contract(monkeypatch):
+    from delveops_agent.tools import CONTRACT_ENV, REPO_CONTRACT, default_catalog
+
+    if not REPO_CONTRACT.is_file():
+        import pytest
+
+        pytest.skip("needs the full repository checkout")
+    monkeypatch.delenv(CONTRACT_ENV, raising=False)
+    catalog = {spec.name: spec for spec in default_catalog()}
+    assert set(catalog) == set(SPECS)  # get_memory is reserved (not implemented) and left out
+    day = catalog["get_day_context"]
+    # $defs references are inlined, so formats are checked before a tool call is spent.
+    assert day.input_schema["properties"]["date"]["type"] == "string"
+    assert check_arguments(day, {"date": "Thursday", "timeZone": "America/Chicago"}).message.endswith("wrong format")
+    assert check_arguments(day, {"date": "2026-11-05", "timeZone": "America/Chicago"}) is None
+    search = catalog["search_tasks"]
+    assert check_arguments(search, {}) is None  # limit has a default in v1
+    assert "must be one of" in check_arguments(search, {"status": "finished"}).message
+
+
+def test_contract_path_can_be_overridden(monkeypatch, tmp_path):
+    from delveops_agent.tools import CONTRACT_ENV, default_catalog
+
+    path = tmp_path / "tools.json"
+    path.write_text(json.dumps({"tools": [{"name": "get_capacity", "inputSchema": {"type": "object"}}]}))
+    monkeypatch.setenv(CONTRACT_ENV, str(path))
+    assert [spec.name for spec in default_catalog()] == ["get_capacity"]

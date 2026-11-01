@@ -22,9 +22,11 @@ from agent_bench.configs.adapters import (
     operation_to_draft,
     starting_state,
 )
+from agent_bench.mock_tools import PlannerState, load_fixture
 from agent_bench.runner import run_case, run_suite
 
 CASES = {c["case_id"]: c for c in load_cases("all")}
+IDS = load_fixture("planner.v2")["ids"]  # readable name -> the fixture's real record id
 
 
 class ScriptedModel:
@@ -36,7 +38,8 @@ class ScriptedModel:
         result = ref["result"]
         tool_ids = [f"tc-{i + 1}" for i in range(len(ref["calls"]))]
         if result["status"] == "drafted":
-            drafts = [{**d, "evidence": tool_ids} for d in result["drafts"]]
+            # Cite only the last read: A1 refuses evidence that points at a failed call.
+            drafts = [{**d, "evidence": tool_ids[-1:]} for d in result["drafts"]]
             self.steps.append({"action": "draft", "summary": result.get("answer", ""), "drafts": drafts})
         elif result["status"] == "answered":
             self.steps.append({"action": "answer", "answer": result["answer"]})
@@ -64,10 +67,11 @@ def test_a1_adapter_passes_reference_runs():
         row = run_case(case, A1BenchAgent(), ScriptedModel(case))
         if not row["success"] or not row["safe"]:
             failures.append((case_id, {k: v["detail"] for k, v in row["checks"].items() if not v["passed"]}, row["safety"]["violations"]))
-    # A1 stops after the same tool error twice (by design); a case whose reference retries the
-    # identical failing call more than that cannot be replayed step for step.
     assert all(not row[2] for row in failures), failures
-    assert not failures, failures
+    # Known A1 refusals of a correct draft, each a finding for the agent package rather than a
+    # harness bug. Remove an entry once the agent accepts the draft.
+    known: set[str] = set()
+    assert {case_id for case_id, _, _ in failures} <= known, failures
 
 
 def test_a1_adapter_reports_usage_and_valid_trace():
@@ -86,31 +90,31 @@ def test_a0_input_skips_cases_that_need_tool_calls():
     assert "stale-event-moved" not in ids and "err-timeout-then-retry" not in ids
     sample = payload["cases"][0]
     assert set(sample) == {"caseId", "goal", "day", "timeZone", "state"}
-    assert sample["state"]["events"], "the starting state carries the planner records"
+    assert sample["state"]["bundle"]["events"], "the starting state carries the planner export"
 
 
 def test_starting_state_applies_overrides():
     case = next(c for c in CASES.values() if c["fixture"].get("overrides"))
     change = case["fixture"]["overrides"][0]
-    state = starting_state(case)
+    rows = PlannerState({"bundle": starting_state(case)["bundle"], "externalBusy": starting_state(case)["externalBusy"]}).rows(change["entity"])
     if "add" in change:
-        assert change["add"] in state[change["entity"]]
+        assert change["add"] in rows
     else:
-        row = next(r for r in state[change["entity"]] if r["id"] == change["id"])
+        row = next(r for r in rows if r["id"] == change["id"])
         assert all(row[k] == v for k, v in change["fields"].items())
 
 
 def test_operation_to_draft_moves_target_and_revision():
     state = starting_state(CASES["tc-today-agenda"])
     draft = operation_to_draft(
-        {"type": "reschedule_event", "eventId": "ev-lunch", "expectedRevision": 1, "title": None, "notes": None, "startAtUtc": "2026-11-03T19:00:00Z", "timeZone": "America/New_York", "durationMinutes": None, "reminderChange": {"action": "unchanged"}},
+        {"type": "reschedule_event", "eventId": IDS["ev-lunch"], "expectedRevision": 2, "title": None, "notes": None, "startAtUtc": "2026-11-03T19:00:00Z", "timeZone": "America/New_York", "durationMinutes": None, "reminderChange": {"action": "unchanged"}},
         state,
     )
     assert draft["op"] == "reschedule_event"
-    assert draft["target"] == {"id": "ev-lunch", "revision": 2}
+    assert draft["target"] == {"id": IDS["ev-lunch"], "revision": 2}
     assert "eventId" not in draft["payload"] and "expectedRevision" not in draft["payload"]
-    create = operation_to_draft({"type": "create_task", "title": "x", "description": "", "plan": {"id": "plan-launch"}, "milestone": None, "scheduledDay": None, "dueDate": None, "status": "todo", "priority": "normal"}, state)
-    assert create["target"] is None and create["payload"]["plan"] == {"id": "plan-launch"}
+    create = operation_to_draft({"type": "create_task", "title": "x", "description": "", "plan": {"id": IDS["plan-launch"]}, "milestone": None, "scheduledDay": None, "dueDate": None, "status": "todo", "priority": "normal"}, state)
+    assert create["target"] is None and create["payload"]["plan"] == {"id": IDS["plan-launch"]}
 
 
 def _a0_output(cases: list[dict], repeats: int = 1) -> dict:
@@ -129,7 +133,7 @@ def _a0_output(cases: list[dict], repeats: int = 1) -> dict:
                     if d["target"]:
                         field = {"event": "eventId", "task": "taskId", "plan": "planId", "milestone": "milestoneId"}
                         key = next(v for k, v in field.items() if k in d["op"])
-                        op[key], op["expectedRevision"] = d["target"]["id"], 1
+                        op[key], op["expectedRevision"] = d["target"]["id"], d["target"]["revision"]
                     run["operations"].append(op)
             elif ref["status"] == "needs_clarification":
                 run["kind"], run["question"] = "clarification", ref["answer"]

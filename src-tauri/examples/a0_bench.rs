@@ -3,9 +3,10 @@
 //!
 //! A0 has no tools: the app hands it a snapshot of relevant records and it answers with one
 //! proposal or one clarifying question. This example gives it exactly that. For each case it seeds
-//! a throwaway database from the case's starting planner state, asks the planner the case's goal
-//! the way the desktop app does (`propose_schedule_changes` in `lib.rs`), and records the reply
-//! with every database id translated back to the fixture's ids so `agent_bench` can score it.
+//! a throwaway database by importing the case's starting planner export (the benchmark fixture is
+//! a real export bundle, so ids and revisions are exactly the benchmark's), asks the planner the
+//! case's goal the way the desktop app does (`propose_schedule_changes` in `lib.rs`), and records
+//! the reply so `agent_bench` can score it.
 //!
 //! It never touches the app's own database, and it only reads the model the app already
 //! downloaded (the same arrangement as `eval_agent`).
@@ -23,14 +24,12 @@ use chrono::{Days, NaiveDate, SecondsFormat, Utc};
 use delve_planner_desktop::agent::{asks_to_choose, PlannerAgent, PlannerRequest, MODEL_NAME};
 use delve_planner_desktop::db::{CandidateRequest, PlannerDatabase};
 use delve_planner_desktop::model::{
-    CreateEventInput, CreateMilestoneInput, CreatePlanInput, CreateTaskBlockInput, CreateTaskInput,
-    CreateWorkstreamInput, ExternalEvent, MilestoneStatus, PlanStatus, PlannerResponse,
-    PlanningFacts, TaskPriority, TaskStatus, UpdatePlanInput, UpdatePlanningProfileInput,
+    ExternalEvent, PlannerResponse, PlanningFacts, UpdatePlanningProfileInput,
 };
 use delve_planner_desktop::runtime::OllamaRuntime;
+use delve_planner_desktop::tools::open_fixture_database;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
@@ -59,32 +58,30 @@ struct BenchCase {
     state: State,
 }
 
-/// The starting planner state, in `agent_bench/fixtures/planner.v1.json`'s shape.
-#[derive(Deserialize, Default)]
+/// The starting planner state, in `agent_bench/fixtures/planner.v2.json`'s shape: a Delve Planner
+/// export bundle plus calendar busy times and working hours.
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct State {
+    bundle: Value,
+    #[serde(default)]
+    external_busy: Vec<Busy>,
     #[serde(default)]
     working_hours: Option<WorkingHours>,
-    #[serde(default)]
-    plans: Vec<Value>,
-    #[serde(default)]
-    milestones: Vec<Value>,
-    #[serde(default)]
-    workstreams: Vec<Value>,
-    #[serde(default)]
-    tasks: Vec<Value>,
-    #[serde(default)]
-    events: Vec<Value>,
-    #[serde(default)]
-    task_blocks: Vec<Value>,
-    #[serde(default)]
-    external_busy: Vec<Value>,
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Busy {
+    start_at_utc: String,
+    end_at_utc: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct WorkingHours {
-    start: String,
-    end: String,
+    start_minute: i64,
+    end_minute: i64,
     /// ISO weekdays, Monday = 1.
     days: Vec<u8>,
 }
@@ -111,7 +108,7 @@ struct CaseRun {
     kind: &'static str,
     summary: Option<String>,
     question: Option<String>,
-    /// Each operation is a `MutationOperation` (`{"type": …, …}`) with fixture ids.
+    /// Each operation is a `MutationOperation` (`{"type": …, …}`).
     operations: Vec<Value>,
     error: Option<String>,
 }
@@ -212,9 +209,12 @@ async fn main() {
 
 async fn run_case(case: &BenchCase, repeat: usize, endpoint: &str) -> CaseRun {
     let directory = tempdir().expect("temporary directory");
-    let mut database =
-        PlannerDatabase::open(&directory.path().join("a0-bench.sqlite3")).expect("database");
-    let ids = seed(&mut database, case);
+    let mut database = open_fixture_database(
+        &directory.path().join("a0-bench.sqlite3"),
+        &case.state.bundle.to_string(),
+    )
+    .unwrap_or_else(|error| panic!("{}: fixture import failed: {error}", case.case_id));
+    set_working_hours(&mut database, case);
     let external = external_busy(case);
     // A fresh planner per run: no conversation carries over between cases or repeats.
     let agent = PlannerAgent::new(endpoint, MODEL_NAME);
@@ -241,11 +241,7 @@ async fn run_case(case: &BenchCase, repeat: usize, endpoint: &str) -> CaseRun {
             run.summary = Some(summary);
             run.operations = operations
                 .into_iter()
-                .map(|operation| {
-                    let mut value = serde_json::to_value(operation.change).expect("operation");
-                    to_fixture_ids(&mut value, &ids);
-                    value
-                })
+                .map(|operation| serde_json::to_value(operation.change).expect("operation"))
                 .collect();
         }
         Ok(PlannerResponse::Clarification { question }) => {
@@ -317,219 +313,43 @@ fn external_busy(case: &BenchCase) -> Vec<ExternalEvent> {
     case.state
         .external_busy
         .iter()
-        .filter_map(|busy| {
-            let start = text(busy, "startAtUtc")?;
-            let minutes = busy.get("durationMinutes")?.as_i64()?;
-            let start_at = chrono::DateTime::parse_from_rfc3339(&start).ok()?;
-            let end_at = start_at + chrono::Duration::minutes(minutes);
-            Some(ExternalEvent {
-                calendar_id: text(busy, "calendar").unwrap_or_default(),
-                key: text(busy, "id").unwrap_or_default(),
-                title: "Busy".into(),
-                location: String::new(),
-                all_day: false,
-                start_at_utc: Some(start_at.with_timezone(&Utc).to_rfc3339()),
-                end_at_utc: Some(end_at.with_timezone(&Utc).to_rfc3339()),
-                start_date: None,
-                end_date: None,
-                busy: true,
-                tentative: false,
-                recurring: false,
-            })
+        .enumerate()
+        .map(|(index, busy)| ExternalEvent {
+            calendar_id: "fixture".into(),
+            key: format!("busy-{index}"),
+            title: "Busy".into(),
+            location: String::new(),
+            all_day: false,
+            start_at_utc: Some(busy.start_at_utc.clone()),
+            end_at_utc: Some(busy.end_at_utc.clone()),
+            start_date: None,
+            end_date: None,
+            busy: true,
+            tentative: false,
+            recurring: false,
         })
         .collect()
 }
 
-fn text(value: &Value, key: &str) -> Option<String> {
-    value.get(key).and_then(Value::as_str).map(str::to_string)
-}
-
-fn parse<T: serde::de::DeserializeOwned + Default>(value: &Value, key: &str) -> T {
-    value
-        .get(key)
-        .cloned()
-        .and_then(|raw| serde_json::from_value(raw).ok())
-        .unwrap_or_default()
-}
-
-fn priority(value: &Value) -> TaskPriority {
-    match value.get("priority").and_then(Value::as_str) {
-        Some("low") => TaskPriority::Low,
-        Some("high") => TaskPriority::High,
-        Some("critical") => TaskPriority::Critical,
-        // The fixture says "medium" for the app's "normal".
-        _ => TaskPriority::Normal,
-    }
-}
-
-fn minute_of_day(clock: &str) -> Option<i64> {
-    let (hours, minutes) = clock.split_once(':')?;
-    Some(hours.parse::<i64>().ok()? * 60 + minutes.parse::<i64>().ok()?)
-}
-
-/// Creates the case's records and returns database id -> fixture id.
-fn seed(database: &mut PlannerDatabase, case: &BenchCase) -> HashMap<String, String> {
-    let state = &case.state;
-    let mut db_ids: HashMap<String, String> = HashMap::new(); // fixture id -> database id
-    let id_of = |value: &Value| text(value, "id").expect("fixture record id");
-
-    if let Some(hours) = &state.working_hours {
-        let profile = database.planning_profile().expect("profile");
-        database
-            .update_planning_profile(UpdatePlanningProfileInput {
-                revision: profile.revision,
-                preferred_start_minute: minute_of_day(&hours.start),
-                preferred_end_minute: minute_of_day(&hours.end),
-                max_planned_minutes: None,
-                focus_minutes: None,
-                break_minutes: None,
-                no_work_days: (1..=7).filter(|day| !hours.days.contains(day)).collect(),
-                energy: None,
-                muted_observations: Vec::new(),
-            })
-            .expect("fixture working hours");
-    }
-    for fixture in &state.plans {
-        let plan = database
-            .create_plan(CreatePlanInput {
-                title: text(fixture, "title").expect("plan title"),
-                description: text(fixture, "description").unwrap_or_default(),
-                status: parse::<PlanStatus>(fixture, "status"),
-                start_date: text(fixture, "startDate"),
-                target_date: text(fixture, "targetDate"),
-                color: None,
-                links: Vec::new(),
-            })
-            .expect("fixture plan");
-        if fixture.get("archived").and_then(Value::as_bool) == Some(true) {
-            database
-                .update_plan(UpdatePlanInput {
-                    id: plan.id.clone(),
-                    revision: plan.revision,
-                    title: plan.title.clone(),
-                    description: plan.description.clone(),
-                    status: plan.status,
-                    start_date: plan.start_date.clone(),
-                    target_date: plan.target_date.clone(),
-                    color: plan.color,
-                    archived: true,
-                    links: Vec::new(),
-                })
-                .expect("archive fixture plan");
-        }
-        db_ids.insert(id_of(fixture), plan.id);
-    }
-    let lookup = |db_ids: &HashMap<String, String>, value: &Value, key: &str| {
-        text(value, key).and_then(|id| db_ids.get(&id).cloned())
+/// The fixture's working hours become the planning profile's preferred hours and days off.
+fn set_working_hours(database: &mut PlannerDatabase, case: &BenchCase) {
+    let Some(hours) = &case.state.working_hours else {
+        return;
     };
-    for fixture in &state.workstreams {
-        let workstream = database
-            .create_workstream(CreateWorkstreamInput {
-                plan_id: lookup(&db_ids, fixture, "planId").expect("workstream plan"),
-                name: text(fixture, "name").expect("workstream name"),
-                description: String::new(),
-            })
-            .expect("fixture workstream");
-        db_ids.insert(id_of(fixture), workstream.id);
-    }
-    for fixture in &state.milestones {
-        let milestone = database
-            .create_milestone(CreateMilestoneInput {
-                plan_id: lookup(&db_ids, fixture, "planId").expect("milestone plan"),
-                title: text(fixture, "title").expect("milestone title"),
-                description: text(fixture, "description").unwrap_or_default(),
-                target_date: text(fixture, "targetDate"),
-                status: parse::<MilestoneStatus>(fixture, "status"),
-                workstream_id: None,
-            })
-            .expect("fixture milestone");
-        db_ids.insert(id_of(fixture), milestone.id);
-    }
-    for fixture in &state.tasks {
-        // A task can only wait on one created before it; the fixture lists them in that order.
-        let waiting_on = fixture
-            .get("waitingOn")
-            .and_then(Value::as_array)
-            .map(|ids| {
-                ids.iter()
-                    .filter_map(Value::as_str)
-                    .filter_map(|id| db_ids.get(id).cloned())
-                    .collect()
-            })
-            .unwrap_or_default();
-        let task = database
-            .create_task(CreateTaskInput {
-                title: text(fixture, "title").expect("task title"),
-                description: text(fixture, "description").unwrap_or_default(),
-                plan_id: lookup(&db_ids, fixture, "planId"),
-                milestone_id: lookup(&db_ids, fixture, "milestoneId"),
-                workstream_id: lookup(&db_ids, fixture, "workstreamId"),
-                owner_id: None,
-                due_date: text(fixture, "dueDate"),
-                scheduled_day: text(fixture, "scheduledDay"),
-                planned_week: None,
-                estimated_minutes: fixture.get("estimatedMinutes").and_then(Value::as_i64),
-                status: parse::<TaskStatus>(fixture, "status"),
-                priority: priority(fixture),
-                checklist: Vec::new(),
-                recurrence: None,
-                waiting_on,
-            })
-            .expect("fixture task");
-        db_ids.insert(id_of(fixture), task.id);
-    }
-    for fixture in &state.events {
-        let event = database
-            .create_event(CreateEventInput {
-                title: text(fixture, "title").expect("event title"),
-                notes: text(fixture, "notes").unwrap_or_default(),
-                start_at_utc: text(fixture, "startAtUtc").expect("event start"),
-                time_zone: text(fixture, "timeZone").unwrap_or_else(|| case.time_zone.clone()),
-                duration_minutes: fixture
-                    .get("durationMinutes")
-                    .and_then(Value::as_i64)
-                    .expect("event duration"),
-                reminder_minutes_before: None,
-                plan_id: lookup(&db_ids, fixture, "planId"),
-                location: String::new(),
-                workstream_id: None,
-                owner_id: None,
-            })
-            .expect("fixture event");
-        db_ids.insert(id_of(fixture), event.id);
-    }
-    for fixture in &state.task_blocks {
-        let block = database
-            .create_task_block(CreateTaskBlockInput {
-                task_id: lookup(&db_ids, fixture, "taskId").expect("task block task"),
-                start_at_utc: text(fixture, "startAtUtc").expect("task block start"),
-                time_zone: case.time_zone.clone(),
-                duration_minutes: fixture
-                    .get("durationMinutes")
-                    .and_then(Value::as_i64)
-                    .expect("task block duration"),
-            })
-            .expect("fixture task block");
-        db_ids.insert(id_of(fixture), block.block.id);
-    }
-    db_ids
-        .into_iter()
-        .map(|(fixture, db)| (db, fixture))
-        .collect()
-}
-
-/// Replaces every database id inside an operation with the fixture id it was seeded from.
-fn to_fixture_ids(value: &mut Value, ids: &HashMap<String, String>) {
-    match value {
-        Value::String(text) => {
-            if let Some(fixture) = ids.get(text.as_str()) {
-                *text = fixture.clone();
-            }
-        }
-        Value::Array(items) => items.iter_mut().for_each(|item| to_fixture_ids(item, ids)),
-        Value::Object(map) => map.values_mut().for_each(|item| to_fixture_ids(item, ids)),
-        _ => {}
-    }
+    let profile = database.planning_profile().expect("profile");
+    database
+        .update_planning_profile(UpdatePlanningProfileInput {
+            revision: profile.revision,
+            preferred_start_minute: Some(hours.start_minute),
+            preferred_end_minute: Some(hours.end_minute),
+            max_planned_minutes: None,
+            focus_minutes: None,
+            break_minutes: None,
+            no_work_days: (1..=7).filter(|day| !hours.days.contains(day)).collect(),
+            energy: None,
+            muted_observations: Vec::new(),
+        })
+        .expect("fixture working hours");
 }
 
 /// Runtime state lives in a temp folder, never the app's own: see `eval_agent`.
