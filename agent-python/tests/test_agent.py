@@ -137,9 +137,18 @@ def test_evidence_must_be_a_real_tool_call():
 
 
 def test_unsupported_op_is_rejected():
-    result, _, _ = run([search(), _bad_draft(op="delete_task"), _bad_draft(op="apply_sql")])
+    result, _, _ = run([search(), _bad_draft(op="set_task_status"), _bad_draft(op="create_task_block")])
     assert result.status == "cannot_complete"
     assert result.stop_reason == "invalid_draft"
+
+
+def test_target_without_a_seen_revision_is_rejected():
+    responses = {"search_tasks": {"tasks": [{"id": "task-42", "title": "no revision here"}]}}
+    bad = _bad_draft(target={"id": "task-42", "revision": 3})
+    result, _, model = run([search(), bad, bad], responses=responses)
+    assert result.status == "cannot_complete"
+    assert result.stop_reason == "invalid_draft"
+    assert "no revision was seen" in model.requests[2].messages[-1]["content"]
 
 
 # -- stop conditions ------------------------------------------------------------------------------
