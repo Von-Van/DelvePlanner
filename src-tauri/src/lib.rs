@@ -7,6 +7,8 @@ pub mod model;
 pub mod recurrence;
 pub mod runtime;
 pub mod shortcut;
+pub mod sidecar;
+pub mod tools;
 
 use agent::{OllamaStatus, PlannerAgent, PlannerRequest};
 use calendar::{parse_zone, CalendarService, DayRange};

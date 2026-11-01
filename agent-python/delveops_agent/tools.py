@@ -1,13 +1,16 @@
 """Read-tool catalog and clients (overhaul plan, contract 1).
 
-The catalog below mirrors the v0 table in docs/delveops/overhaul-plan.md. When piece C merges
-`contracts/tools.v1.json`, `load_catalog` reads that file instead, so the agent and the Rust broker
-share one definition. All tools are read-only; the agent has no write tool at all.
+The built-in catalog below mirrors the v0 tool table in the overhaul plan. Now that piece C has merged
+`contracts/tools.v1.json`, `default_catalog` reads that file (the v0 table is only a fallback when
+the file is absent), so the agent and the Rust broker share one definition. All tools are read-only;
+the agent has no write tool at all.
 """
 
 from __future__ import annotations
 
 import json
+import os
+import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -80,22 +83,53 @@ V0_CATALOG: tuple[ToolSpec, ...] = (
 )
 
 
+# contracts/tools.v1.json, published by the Rust broker (piece C), is the source of truth.
+CONTRACT_ENV = "DELVE_TOOLS_CONTRACT"
+REPO_CONTRACT = Path(__file__).resolve().parents[2] / "contracts" / "tools.v1.json"
+
+
+def _resolve_refs(node: Any, defs: dict[str, Any]) -> Any:
+    """Inline local `#/$defs/...` references so argument checks and the prompt see real types."""
+    if isinstance(node, list):
+        return [_resolve_refs(item, defs) for item in node]
+    if not isinstance(node, dict):
+        return node
+    ref = node.get("$ref")
+    if isinstance(ref, str) and ref.startswith("#/$defs/"):
+        target = _resolve_refs(defs.get(ref.split("/")[-1], {}), defs)
+        return {**target, **{k: _resolve_refs(v, defs) for k, v in node.items() if k != "$ref"}}
+    return {k: _resolve_refs(v, defs) for k, v in node.items()}
+
+
 def load_catalog(path: str | Path | None = None) -> tuple[ToolSpec, ...]:
-    """Load tool specs from contracts/tools.v1.json if given and present, else the v0 table."""
+    """Load tool specs from a tools contract file; the built-in v0 table if it is missing.
+
+    Tools the contract marks `"implemented": false` (reserved, like get_memory) are left out.
+    """
     if path is None or not Path(path).is_file():
         return V0_CATALOG
     raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    defs = raw.get("$defs", {}) if isinstance(raw, dict) else {}
     entries = raw.get("tools", raw) if isinstance(raw, dict) else raw
     specs = []
     for entry in entries:
+        if entry.get("implemented") is False:
+            continue
+        schema = entry.get("inputSchema") or entry.get("input_schema") or _obj({}, [])
         specs.append(
             ToolSpec(
                 name=entry["name"],
                 description=entry.get("description", ""),
-                input_schema=entry.get("inputSchema") or entry.get("input_schema") or _obj({}, []),
+                input_schema=_resolve_refs(schema, defs),
             )
         )
     return tuple(specs)
+
+
+def default_catalog() -> tuple[ToolSpec, ...]:
+    """The tools contract from $DELVE_TOOLS_CONTRACT or the repository, else the v0 table."""
+    override = os.environ.get(CONTRACT_ENV)
+    return load_catalog(override if override else REPO_CONTRACT)
 
 
 _JSON_TYPES: dict[str, tuple[type, ...]] = {
@@ -136,6 +170,12 @@ def check_arguments(spec: ToolSpec, arguments: Any) -> ToolError | None:
                 return ToolError("invalid_arguments", f"argument {name!r} must be at most {rule['maximum']}")
             if "minimum" in rule and value < rule["minimum"]:
                 return ToolError("invalid_arguments", f"argument {name!r} must be at least {rule['minimum']}")
+        if "enum" in rule and value not in rule["enum"]:
+            return ToolError(
+                "invalid_arguments", f"argument {name!r} must be one of {', '.join(map(str, rule['enum']))}"
+            )
+        if isinstance(value, str) and "pattern" in rule and not re.search(rule["pattern"], value):
+            return ToolError("invalid_arguments", f"argument {name!r} has the wrong format")
     return None
 
 

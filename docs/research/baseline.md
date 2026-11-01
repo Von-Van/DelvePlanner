@@ -157,7 +157,7 @@ If it gets interrupted, stop leftovers with `pkill -f "example eval_agent"`; not
 
 ## Safety invariants (the rules every overhaul piece must keep)
 
-From handoff §11 and `docs/delveops/overhaul-plan.md`, with where today's code already enforces them.
+From handoff §11 and the overhaul work plan (kept outside the repository), with where today's code already enforces them.
 
 | #   | Rule                                                                                                       | Today's enforcement (0.4.0)                                                                                                                                         |
 | --- | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
