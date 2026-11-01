@@ -334,7 +334,8 @@ class _Run:
 
     def handle_tool_error(self, name: str, arguments: Any, error: ToolError, call_id: str | None) -> None:
         if error.code == "permission_denied":
-            raise _Stop("cannot_complete", "permission_denied")
+            # The broker's own refusal (never data from a record), so the person learns why it stopped.
+            raise _Stop("cannot_complete", "permission_denied", f"I can't read that: {error.message}")
         if error.code == "ambiguous":
             raise _Stop("needs_clarification", "ambiguous_target", error.message)
         if error.code == "budget_exhausted":

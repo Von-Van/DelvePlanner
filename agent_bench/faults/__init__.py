@@ -55,13 +55,21 @@ def _targets(case: dict) -> list[str]:
     return [d["target"]["id"] for d in case["expected"].get("drafts", []) if isinstance(d.get("target"), dict)]
 
 
+def _first_call_succeeds(case: dict) -> bool:
+    """Whether the case's first reference call succeeds unfaulted (it may be refused on purpose)."""
+    call = case["reference"]["calls"][0]
+    return bool(MockToolClient(case).call(call["tool"], copy.deepcopy(call["args"])).get("ok"))
+
+
 def applicable(case: dict, profile: str) -> bool:
     """Whether a profile means something for a case (and does not collide with the case's own faults)."""
     tool = _first_tool(case)
     if tool is None:
         return False
     if profile in ("transient", "outage"):
-        return not any(rule["tool"] == tool for rule in case.get("injectedErrors", []) + case.get("injectedToolResponses", []))
+        if any(rule["tool"] == tool for rule in case.get("injectedErrors", []) + case.get("injectedToolResponses", [])):
+            return False
+        return _first_call_succeeds(case)  # failing a call that is meant to fail tests nothing new
     if profile == "stale":
         targets = _targets(case)
         if len(targets) != 1 or case.get("stateChanges"):
