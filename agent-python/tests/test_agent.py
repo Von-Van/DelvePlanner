@@ -241,6 +241,8 @@ def test_permission_denied_stops():
     result, _, _ = run([search()], responses={"search_tasks": ToolError("permission_denied", "nope")})
     assert result.status == "cannot_complete"
     assert result.stop_reason == "permission_denied"
+    # The person is told why, in the broker's own words.
+    assert result.answer == "nope"
 
 
 def test_ambiguous_target_asks_for_clarification():
