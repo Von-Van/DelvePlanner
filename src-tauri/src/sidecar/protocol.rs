@@ -199,7 +199,7 @@ pub async fn read_bounded_line<R: AsyncBufRead + Unpin>(
 }
 
 /// The error codes a `tool_result`, `model_result`, or `error` message can carry. The first eight
-/// are the shared tool taxonomy from `docs/delveops/overhaul-plan.md`; the last three belong to
+/// are the shared tool taxonomy from the overhaul plan and `contracts/tools.v1.json`; the last three belong to
 /// the link itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
