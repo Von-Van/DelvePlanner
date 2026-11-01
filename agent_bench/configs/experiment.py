@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from ..cases import load_cases
-from ..runner import run_suite
+from ..runner import budget_for, run_suite
 from .adapters import A0ReplayAgent, A1BenchAgent, a0_applicable, a0_input, a1_model, known_records, starting_state
 
 HERE = Path(__file__).parent
@@ -159,9 +159,15 @@ def compare(a0_dir: Path, a1_dir: Path) -> dict:
 
     for row in a0_rows:
         row["arch"] = "A0"
+        row["latencyMs"] = row["metrics"]["agentUsage"]["latencyMs"]
+        # The replay itself is instant, so hold A0 to the case's wall-time budget using the time the
+        # planner really took, as A1 is held to its own.
+        limit_ms = budget_for(cases[row["caseId"]]).maxWallSeconds * 1000
+        if row["latencyMs"] > limit_ms:
+            row["checks"]["wall_time"] = {"passed": False, "detail": f"{row['latencyMs']:.0f} ms over the {limit_ms:.0f} ms budget"}
+            row["success"] = False
         row["outcome"] = outcome_success(row)
         row["violations"] = a0_safety(row, starting_state(cases[row["caseId"]]))
-        row["latencyMs"] = row["metrics"]["agentUsage"]["latencyMs"]
     for row in a1_rows:
         row["arch"] = "A1"
         row["outcome"] = outcome_success(row)
@@ -177,7 +183,8 @@ def compare(a0_dir: Path, a1_dir: Path) -> dict:
     per_case = []
     for case_id in sorted(by_case, key=lambda c: (cases[c]["split"], cases[c]["family"], c)):
         case, runs = cases[case_id], by_case[case_id]
-        applicable = a0_applicable(case) and bool(runs["A0"])
+        # Compared only where both architectures actually ran the case.
+        applicable = a0_applicable(case) and bool(runs["A0"]) and bool(runs["A1"])
         entry: dict[str, Any] = {
             "caseId": case_id,
             "family": case["family"],
@@ -197,12 +204,14 @@ def compare(a0_dir: Path, a1_dir: Path) -> dict:
                 "unsafeRuns": sum(not r["safeAdj"] for r in rows),
                 "failedChecks": sorted({name for r in rows for name, c in r["checks"].items() if not c["passed"] and (arch == "A1" or name not in PROCESS_CHECKS)}),
             }
-        if applicable and runs["A1"]:
+        if applicable:
             a0_ok, a1_ok = _solved(runs["A0"], "outcome"), _solved(runs["A1"], "outcome")
             entry["verdict"] = {(True, True): "both", (False, True): "A1 only", (True, False): "A0 only", (False, False): "neither"}[(a0_ok, a1_ok)]
-        else:
+        elif runs["A1"]:
             # Nothing to compare against, so A1 is held to every check, tool use included.
-            entry["verdict"] = "A1 only tested" if runs["A1"] and _solved(runs["A1"], "success") else "A1 only tested, not solved"
+            entry["verdict"] = "A1 only tested" if _solved(runs["A1"], "success") else "A1 only tested, not solved"
+        else:
+            entry["verdict"] = "A0 only tested" if _solved(runs["A0"], "outcome") else "A0 only tested, not solved"
         per_case.append(entry)
 
     def block(rows: list[dict], arch: str) -> dict:
@@ -311,10 +320,10 @@ def render(result: dict) -> str:
     lines += ["", "## Per case", "", "| Case | Split | A0 | A1 outcome | A1 full | Verdict | Failed checks (A0; A1) |", "| --- | --- | --- | --- | --- | --- | --- |"]
     for e in result["cases"]:
         a0, a1 = e.get("A0"), e.get("A1")
-        a0_txt = f"{a0['outcomePasses']}/{a0['runs']}" if a0 and e["a0Applicable"] else "n/a"
+        a0_txt = f"{a0['outcomePasses']}/{a0['runs']}" if a0 else "n/a"
         a1_txt = f"{a1['outcomePasses']}/{a1['runs']}" if a1 else "—"
         full = f"{a1['fullPasses']}/{a1['runs']}" if a1 else "—"
-        fails = f"{', '.join(a0['failedChecks']) if a0 and e['a0Applicable'] else '—'}; {', '.join(a1['failedChecks']) if a1 else '—'}"
+        fails = f"{', '.join(a0['failedChecks']) if a0 else '—'}; {', '.join(a1['failedChecks']) if a1 else '—'}"
         lines.append(f"| `{e['caseId']}` | {e['split']} | {a0_txt} | {a1_txt} | {full} | {e['verdict']} | {fails} |")
     lines += ["", "## Safety violations", ""]
     lines += [f"- {v['arch']} `{v['caseId']}` r{v['repeat']}: {v['rule']} — {v['detail']}" for v in result["safetyViolations"]] or ["None."]
