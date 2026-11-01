@@ -1,0 +1,140 @@
+name: Sidecar packaging probe
+
+# DelveOps piece D packaging gate: can the Python agent ship inside the desktop app on macOS and
+# Windows? Builds the agent two ways and drives each through the real Rust supervisor.
+# Results: the job summaries and the uploaded report artifacts; decision in docs/delveops/sidecar.md.
+
+on:
+  pull_request:
+    paths:
+      - agent-python/delveops_agent/protocol/**
+      - src-tauri/src/sidecar.rs
+      - src-tauri/src/sidecar/**
+      - src-tauri/examples/sidecar_probe.rs
+      - .github/workflows/sidecar-packaging.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: ${{ matrix.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            label: macOS arm64
+            pbs_target: aarch64-apple-darwin
+            exe: dist/delveops-agent/delveops-agent
+            pbs_python: pbs/python/bin/python3
+          - os: windows-2022
+            label: Windows x64
+            pbs_target: x86_64-pc-windows-msvc
+            exe: dist/delveops-agent/delveops-agent.exe
+            pbs_python: pbs/python/python.exe
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.97.1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Protocol unit tests
+        working-directory: agent-python
+        run: python -m unittest discover -s delveops_agent/protocol/tests -t . -v
+
+      - name: Build the probe
+        run: cargo build --manifest-path src-tauri/Cargo.toml --example sidecar_probe
+
+      - name: "Option A: freeze with PyInstaller (one folder)"
+        run: |
+          python -m pip install pyinstaller==6.22.3
+          python -m PyInstaller --noconfirm --clean --onedir --name delveops-agent \
+            --paths agent-python --exclude-module tkinter \
+            agent-python/delveops_agent/protocol/_frozen_entry.py
+          python - <<'EOF'
+          import os
+          total = sum(os.path.getsize(os.path.join(root, name))
+                      for root, _, names in os.walk("dist/delveops-agent") for name in names)
+          print(f"PyInstaller folder: {total / 1e6:.1f} MB")
+          open("size-pyinstaller.txt", "w").write(str(total))
+          EOF
+
+      - name: "Option A: probe the frozen agent"
+        run: |
+          ./src-tauri/target/debug/examples/sidecar_probe --frozen "${{ matrix.exe }}" | tee report-pyinstaller.json
+
+      - name: "Option A: probe again (warm file cache)"
+        run: |
+          ./src-tauri/target/debug/examples/sidecar_probe --frozen "${{ matrix.exe }}" | tee report-pyinstaller-warm.json
+
+      - name: "Option A: macOS signature check"
+        if: runner.os == 'macOS'
+        run: |
+          codesign --verify --strict --verbose=2 "${{ matrix.exe }}"
+          find dist/delveops-agent -type f \( -name '*.dylib' -o -name '*.so' \) | wc -l | xargs echo "native libraries to sign:"
+
+      - name: "Option B: embedded interpreter (python-build-standalone)"
+        id: pbs
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download -R astral-sh/python-build-standalone \
+            --pattern "cpython-3.12.*-${{ matrix.pbs_target }}-install_only_stripped.tar.gz" -O pbs.tar.gz
+          mkdir pbs && tar -xzf pbs.tar.gz -C pbs
+          python - <<'EOF'
+          import os
+          total = sum(os.path.getsize(os.path.join(root, name))
+                      for root, _, names in os.walk("pbs/python") for name in names)
+          print(f"Embedded interpreter folder: {total / 1e6:.1f} MB")
+          open("size-pbs.txt", "w").write(str(total))
+          EOF
+          ./src-tauri/target/debug/examples/sidecar_probe --python "$PWD/${{ matrix.pbs_python }}" \
+            --agent-dir agent-python | tee report-pbs.json
+
+      - name: Summary
+        if: always()
+        run: |
+          python - <<'EOF' | tee -a "$GITHUB_STEP_SUMMARY"
+          import json, os
+          print("## ${{ matrix.label }}")
+          for label, report, size in [
+              ("A: PyInstaller", "report-pyinstaller.json", "size-pyinstaller.txt"),
+              ("A: PyInstaller (2nd start)", "report-pyinstaller-warm.json", "size-pyinstaller.txt"),
+              ("B: embedded interpreter", "report-pbs.json", "size-pbs.txt"),
+          ]:
+              if not os.path.exists(report):
+                  print(f"\n**{label}**: no report\n")
+                  continue
+              try:
+                  data = json.load(open(report))
+              except ValueError:
+                  print(f"\n**{label}**: unreadable report\n")
+                  continue
+              mb = int(open(size).read()) / 1e6 if os.path.exists(size) else float("nan")
+              print(f"\n**{label}**, {mb:.1f} MB\n")
+              print("| check | ok | ms |\n| --- | --- | --- |")
+              for check in data["checks"]:
+                  print(f"| {check['check']} | {'yes' if check['ok'] else 'NO'} | {check['ms']} |")
+          EOF
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sidecar-probe-${{ matrix.os }}
+          path: |
+            report-*.json
+            size-*.txt
+          if-no-files-found: warn
