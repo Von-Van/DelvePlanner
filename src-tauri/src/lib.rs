@@ -3,6 +3,7 @@ pub mod calendar;
 pub mod capacity;
 pub mod db;
 pub mod error;
+pub mod evaluation;
 mod memory;
 pub mod model;
 pub mod recurrence;
@@ -1574,6 +1575,9 @@ pub fn run() {
             memory::forget_project_memory,
             memory::clear_memory,
             memory::export_memory_file,
+            evaluation::list_evaluation_runs,
+            evaluation::get_evaluation_run,
+            evaluation::get_evaluation_trace,
             list_agenda,
             list_week,
             database_status,

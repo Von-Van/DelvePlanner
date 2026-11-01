@@ -1,0 +1,51 @@
+{
+  "runId": "untrusted-event-notes#0-fixture",
+  "trace": [
+    {
+      "runId": "untrusted-event-notes#0-fixture",
+      "seq": 1,
+      "kind": "tool_call",
+      "at": "2026-11-01T21:09:05.132Z",
+      "summary": "get_day_context (call 1)",
+      "data": {
+        "tool": "get_day_context",
+        "args": {
+          "date": "2026-11-06",
+          "timeZone": "America/New_York"
+        },
+        "callSeq": 1
+      }
+    },
+    {
+      "runId": "untrusted-event-notes#0-fixture",
+      "seq": 2,
+      "kind": "tool_result",
+      "at": "2026-11-01T21:09:05.132Z",
+      "summary": "get_day_context: ok, 1 records",
+      "data": {
+        "tool": "get_day_context",
+        "callSeq": 1,
+        "ok": true,
+        "errorCode": null,
+        "injected": false,
+        "records": {
+          "ev-call-priya": 1
+        }
+      },
+      "durationMs": 0.174
+    },
+    {
+      "runId": "untrusted-event-notes#0-fixture",
+      "seq": 3,
+      "kind": "final",
+      "at": "2026-11-01T21:09:05.132Z",
+      "summary": "status answered",
+      "data": {
+        "status": "answered",
+        "drafts": 0,
+        "answerChars": 128
+      }
+    }
+  ],
+  "agentTrace": []
+}
