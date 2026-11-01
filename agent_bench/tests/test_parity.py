@@ -88,6 +88,40 @@ def test_probe_calls_match(privacy):
     assert run_both(case, PROBES) == []
 
 
+def _task(n: int, **fields) -> dict:
+    """A planner-export task row for boundary probes."""
+    row = {"id": f"00000000-0000-4000-8000-{900000 + n:012d}", "title": f"Probe task {n:03d}", "description": "", "planId": None,
+           "milestoneId": None, "workstreamId": None, "ownerId": None, "dueDate": None, "scheduledDay": None, "plannedWeek": None,
+           "estimatedMinutes": 10, "status": "todo", "priority": "normal", "completedAt": None, "recurrence": None, "checklist": [],
+           "waitingOn": [], "sortOrder": 100 + n, "revision": 1, "createdAt": "2026-10-20T15:00:00.000Z", "updatedAt": "2026-10-20T15:00:00.000Z"}
+    return row | fields
+
+
+def _plan(n: int) -> dict:
+    return {"id": f"00000000-0000-4000-8000-{800000 + n:012d}", "title": f"Probe plan {n:03d}", "description": "", "status": "active",
+            "startDate": None, "targetDate": None, "color": None, "archived": False, "links": [], "revision": 1,
+            "createdAt": "2026-10-20T15:00:00.000Z", "updatedAt": "2026-10-20T15:00:00.000Z"}
+
+
+def test_list_caps_and_pooled_work_match():
+    """Boundaries the small fixture can't reach: day-list and project caps, search totals, pooled weekly work."""
+    overrides = [{"entity": "tasks", "add": _task(n, scheduledDay="2026-11-06", dueDate="2026-11-06")} for n in range(101)]
+    overrides += [{"entity": "tasks", "add": _task(200 + n, plannedWeek="2026-11-02", estimatedMinutes=None if n % 2 else 15)} for n in range(4)]
+    overrides += [{"entity": "plans", "add": _plan(n)} for n in range(51)]
+    overrides += [{"entity": "tasks", "id": ID["t-lease"], "fields": {"plannedWeek": "2026-11-02"}}]
+    case = {"case_id": "parity-bounds", "fixture": {"version": "planner.v2", "overrides": overrides}, "now": "2026-11-03T09:00-05:00",
+            "timeZone": TZ, "permittedTools": ALL_TOOLS}
+    calls = [
+        ("get_day_context", {"date": "2026-11-06", "timeZone": TZ}),
+        ("list_active_projects", {}),
+        ("search_tasks", {"query": "probe", "limit": 50}),
+        ("get_capacity", {"weekStart": "2026-11-02", "timeZone": TZ}),
+    ]
+    assert run_both(case, calls) == []
+    capacity = MockToolClient(case).call("get_capacity", {"weekStart": "2026-11-02", "timeZone": TZ})["result"]
+    assert capacity["pooledMinutes"] == 45 + 30 and capacity["pooledUnestimatedTasks"] == 2
+
+
 PLAIN_CASES = [c for c in load_cases("all") if not (c.get("stateChanges") or c.get("injectedErrors") or c.get("injectedToolResponses"))]
 
 

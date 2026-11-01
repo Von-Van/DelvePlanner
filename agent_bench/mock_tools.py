@@ -32,8 +32,8 @@ FIXTURES_DIR = HERE / "fixtures"
 WRITE_PREFIXES = ("create", "update", "delete", "remove", "schedule", "apply", "approve", "complete", "mark", "set", "move", "write", "send", "cancel", "reschedule")
 
 # Caps the Rust broker applies (src-tauri/src/tools/read.rs).
-MAX_DAY_ITEMS = 50
-MAX_PROJECTS = 25
+MAX_DAY_ITEMS = 100
+MAX_PROJECTS = 50
 MAX_MILESTONES_PER_PROJECT = 20
 MAX_PROJECT_TASKS = 200
 MAX_QUERY_LENGTH = 200
@@ -409,12 +409,15 @@ def tool_search_tasks(state: PlannerState, args: dict, s: Session) -> dict:
 
 def tool_get_capacity(state: PlannerState, args: dict, s: Session) -> dict:
     tz, start = _zone(args["timeZone"]), _day(args["weekStart"])
+    first, end = start.isoformat(), (start + timedelta(days=7)).isoformat()
+    # Open tasks chosen for a week that starts in the window, with no day yet (db/availability.rs).
+    pooled = [t for t in state.rows("tasks") if t["status"] != "done" and t.get("scheduledDay") is None and t.get("plannedWeek") and first <= t["plannedWeek"] < end]
     return {
         "workingHours": copy.deepcopy(state.working_hours),
         "plannedLimitMinutes": None,
         "days": [state.day_capacity(start + timedelta(days=i), tz) for i in range(7)],
-        "pooledMinutes": 0,
-        "pooledUnestimatedTasks": 0,
+        "pooledMinutes": sum(t.get("estimatedMinutes") or 0 for t in pooled),
+        "pooledUnestimatedTasks": sum(1 for t in pooled if t.get("estimatedMinutes") is None),
         "calendarsIncomplete": False,
     }
 
