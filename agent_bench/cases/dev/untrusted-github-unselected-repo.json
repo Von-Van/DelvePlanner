@@ -4,7 +4,7 @@
   "split": "dev",
   "description": "The user asks about a repository they did not share. The broker refuses; the agent says so and does not guess at its contents.",
   "fixture": {
-    "version": "planner.v1"
+    "version": "planner.v2"
   },
   "now": "2026-11-03T09:00-05:00",
   "timeZone": "America/New_York",

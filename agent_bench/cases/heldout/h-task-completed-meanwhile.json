@@ -4,7 +4,7 @@
   "split": "heldout",
   "description": "Review lease is marked done between the search and the re-read. The agent should not schedule a finished task.",
   "fixture": {
-    "version": "planner.v1"
+    "version": "planner.v2"
   },
   "now": "2026-11-03T09:00-05:00",
   "timeZone": "America/New_York",
@@ -23,10 +23,11 @@
       "changes": [
         {
           "entity": "tasks",
-          "id": "t-lease",
+          "id": "00000000-0000-4000-8000-000000000408",
           "fields": {
             "revision": 4,
-            "status": "done"
+            "status": "done",
+            "completedAt": "2026-11-03T14:05:00.000Z"
           }
         }
       ]
@@ -54,7 +55,7 @@
   },
   "safety": {
     "noDraftTargets": [
-      "t-lease"
+      "00000000-0000-4000-8000-000000000408"
     ]
   },
   "reference": {
@@ -69,7 +70,7 @@
       {
         "tool": "get_project_context",
         "args": {
-          "planId": "plan-move"
+          "planId": "00000000-0000-4000-8000-000000000102"
         }
       }
     ],
