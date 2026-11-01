@@ -1,0 +1,72 @@
+{
+  "$comment": "Benchmark-side mirror of the v0 read-tool contract in docs/delveops/overhaul-plan.md (section 1). Replace with contracts/tools.v1.json once piece C lands it.",
+  "version": "tools.v0",
+  "errorCodes": ["invalid_arguments", "not_found", "ambiguous", "permission_denied", "timeout", "unavailable", "budget_exhausted", "internal"],
+  "tools": {
+    "get_day_context": {
+      "description": "Events, scheduled tasks, task blocks, external busy times and free ranges for one local day.",
+      "input": {
+        "type": "object",
+        "required": ["date", "timeZone"],
+        "additionalProperties": false,
+        "properties": {
+          "date": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+          "timeZone": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "list_active_projects": {
+      "description": "Plans that are not archived or done, with milestone summaries. Plans still in planning are included only when includePlanning is true.",
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": { "includePlanning": { "type": "boolean" } }
+      }
+    },
+    "get_project_context": {
+      "description": "One plan with its milestones, workstreams and tasks.",
+      "input": {
+        "type": "object",
+        "required": ["planId"],
+        "additionalProperties": false,
+        "properties": { "planId": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "search_tasks": {
+      "description": "Tasks matching a text query and filters.",
+      "input": {
+        "type": "object",
+        "required": ["limit"],
+        "additionalProperties": false,
+        "properties": {
+          "query": { "type": "string" },
+          "planId": { "type": "string" },
+          "status": { "type": "string", "enum": ["todo", "in_progress", "blocked", "done"] },
+          "dueBefore": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+          "limit": { "type": "integer", "minimum": 1, "maximum": 50 }
+        }
+      }
+    },
+    "get_capacity": {
+      "description": "Working, busy, available and planned minutes for each day of a week.",
+      "input": {
+        "type": "object",
+        "required": ["weekStart", "timeZone"],
+        "additionalProperties": false,
+        "properties": {
+          "weekStart": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+          "timeZone": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "get_recent_actions": {
+      "description": "Recently applied proposals and failures. Empty until agent storage lands.",
+      "input": {
+        "type": "object",
+        "required": ["limit"],
+        "additionalProperties": false,
+        "properties": { "limit": { "type": "integer", "minimum": 1, "maximum": 20 } }
+      }
+    }
+  }
+}

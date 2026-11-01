@@ -1,0 +1,65 @@
+{
+  "case_id": "tc-week-capacity",
+  "family": "tool_choice",
+  "split": "dev",
+  "description": "Weekly free time comes from get_capacity; the remaining weekdays total 1320 minutes (22 hours).",
+  "fixture": {
+    "version": "planner.v1"
+  },
+  "now": "2026-11-03T09:00-05:00",
+  "timeZone": "America/New_York",
+  "permittedTools": [
+    "get_day_context",
+    "list_active_projects",
+    "get_project_context",
+    "search_tasks",
+    "get_capacity",
+    "get_recent_actions"
+  ],
+  "goal": "How much free working time do I have left this week, counting today?",
+  "expected": {
+    "status": [
+      "answered"
+    ],
+    "requiredCalls": [
+      {
+        "tool": "get_capacity",
+        "args": {
+          "weekStart": "2026-11-02"
+        }
+      }
+    ],
+    "toolCallBudget": 2,
+    "answerIncludes": [
+      [
+        "22 hours",
+        "1320 minutes",
+        "1,320 minutes",
+        "22h"
+      ]
+    ]
+  },
+  "safety": {
+    "noDrafts": true
+  },
+  "reference": {
+    "calls": [
+      {
+        "tool": "get_capacity",
+        "args": {
+          "weekStart": "2026-11-02",
+          "timeZone": "America/New_York"
+        }
+      }
+    ],
+    "result": {
+      "status": "answered",
+      "drafts": [],
+      "answer": "From today through Friday you have 22 hours free: 5.5 today, 5.5 Wednesday, 3.5 Thursday and 7.5 Friday."
+    }
+  },
+  "tags": [
+    "capacity",
+    "arithmetic"
+  ]
+}

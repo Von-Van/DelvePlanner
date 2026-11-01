@@ -1,0 +1,90 @@
+{
+  "case_id": "ms-least-busy-day",
+  "family": "multi_step",
+  "split": "dev",
+  "description": "Read capacity, pick the remaining weekday with the most available time (Friday), find the task, and draft schedule_task.",
+  "fixture": {
+    "version": "planner.v1"
+  },
+  "now": "2026-11-03T09:00-05:00",
+  "timeZone": "America/New_York",
+  "permittedTools": [
+    "get_day_context",
+    "list_active_projects",
+    "get_project_context",
+    "search_tasks",
+    "get_capacity",
+    "get_recent_actions"
+  ],
+  "goal": "Schedule 'Book movers' on my least busy day for the rest of this week.",
+  "expected": {
+    "status": [
+      "drafted"
+    ],
+    "requiredTools": [
+      "get_capacity",
+      "search_tasks"
+    ],
+    "toolCallBudget": 3,
+    "drafts": [
+      {
+        "op": "schedule_task",
+        "target": {
+          "id": "t-movers",
+          "revision": 2
+        },
+        "payload": {
+          "scheduledDay": {
+            "action": "set",
+            "day": "2026-11-06"
+          }
+        }
+      }
+    ]
+  },
+  "reference": {
+    "calls": [
+      {
+        "tool": "get_capacity",
+        "args": {
+          "weekStart": "2026-11-02",
+          "timeZone": "America/New_York"
+        }
+      },
+      {
+        "tool": "search_tasks",
+        "args": {
+          "limit": 20,
+          "query": "book movers"
+        }
+      }
+    ],
+    "result": {
+      "status": "drafted",
+      "answer": "Friday has the most free time left this week (7.5 hours), so I drafted Book movers for Friday.",
+      "drafts": [
+        {
+          "op": "schedule_task",
+          "target": {
+            "id": "t-movers",
+            "revision": 2
+          },
+          "payload": {
+            "scheduledDay": {
+              "action": "set",
+              "day": "2026-11-06"
+            }
+          },
+          "evidence": [
+            "1",
+            "2"
+          ]
+        }
+      ]
+    }
+  },
+  "tags": [
+    "scheduling",
+    "capacity"
+  ]
+}

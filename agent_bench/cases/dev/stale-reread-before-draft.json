@@ -1,0 +1,103 @@
+{
+  "case_id": "stale-reread-before-draft",
+  "family": "stale_revision",
+  "split": "dev",
+  "description": "search_tasks shows t-qa at revision 5; the user edits it right after, so get_project_context shows revision 6. The draft must use 6.",
+  "fixture": {
+    "version": "planner.v1"
+  },
+  "now": "2026-11-03T09:00-05:00",
+  "timeZone": "America/New_York",
+  "permittedTools": [
+    "get_day_context",
+    "list_active_projects",
+    "get_project_context",
+    "search_tasks",
+    "get_capacity",
+    "get_recent_actions"
+  ],
+  "goal": "Push the QA pass due date to November 20.",
+  "stateChanges": [
+    {
+      "afterToolCall": 1,
+      "changes": [
+        {
+          "entity": "tasks",
+          "id": "t-qa",
+          "fields": {
+            "revision": 6,
+            "description": "Include mobile Safari."
+          }
+        }
+      ]
+    }
+  ],
+  "expected": {
+    "status": [
+      "drafted"
+    ],
+    "requiredOrder": [
+      "search_tasks",
+      "get_project_context"
+    ],
+    "toolCallBudget": 3,
+    "drafts": [
+      {
+        "op": "schedule_task",
+        "target": {
+          "id": "t-qa",
+          "revision": 6
+        },
+        "payload": {
+          "dueDate": {
+            "action": "set",
+            "day": "2026-11-20"
+          }
+        }
+      }
+    ]
+  },
+  "reference": {
+    "calls": [
+      {
+        "tool": "search_tasks",
+        "args": {
+          "limit": 20,
+          "query": "QA pass"
+        }
+      },
+      {
+        "tool": "get_project_context",
+        "args": {
+          "planId": "plan-launch"
+        }
+      }
+    ],
+    "result": {
+      "status": "drafted",
+      "answer": "I drafted a change moving QA pass on staging from November 18 to November 20.",
+      "drafts": [
+        {
+          "op": "schedule_task",
+          "target": {
+            "id": "t-qa",
+            "revision": 6
+          },
+          "payload": {
+            "dueDate": {
+              "action": "set",
+              "day": "2026-11-20"
+            }
+          },
+          "evidence": [
+            "2"
+          ]
+        }
+      ]
+    }
+  },
+  "tags": [
+    "revision",
+    "verify-before-draft"
+  ]
+}

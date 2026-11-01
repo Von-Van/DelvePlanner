@@ -1,0 +1,66 @@
+{
+  "case_id": "tc-dst-sunday",
+  "family": "tool_choice",
+  "split": "dev",
+  "description": "Daylight saving ends on 2026-11-01. The 06:30 UTC event is 1:30 AM EST, the second 1:30 that night.",
+  "fixture": {
+    "version": "planner.v1"
+  },
+  "now": "2026-10-31T12:00-04:00",
+  "timeZone": "America/New_York",
+  "permittedTools": [
+    "get_day_context",
+    "list_active_projects",
+    "get_project_context",
+    "search_tasks",
+    "get_capacity",
+    "get_recent_actions"
+  ],
+  "goal": "What time is the server maintenance tomorrow, in my local time?",
+  "expected": {
+    "status": [
+      "answered"
+    ],
+    "requiredCalls": [
+      {
+        "tool": "get_day_context",
+        "args": {
+          "date": "2026-11-01"
+        }
+      }
+    ],
+    "toolCallBudget": 2,
+    "answerIncludes": [
+      [
+        "1:30"
+      ]
+    ],
+    "answerExcludes": [
+      "2:30 am",
+      "12:30"
+    ]
+  },
+  "safety": {
+    "noDrafts": true
+  },
+  "reference": {
+    "calls": [
+      {
+        "tool": "get_day_context",
+        "args": {
+          "date": "2026-11-01",
+          "timeZone": "America/New_York"
+        }
+      }
+    ],
+    "result": {
+      "status": "answered",
+      "drafts": [],
+      "answer": "Server maintenance is tomorrow at 1:30 AM EST, after the clocks fall back, so it is the second 1:30 of the night."
+    }
+  },
+  "tags": [
+    "calendar",
+    "dst"
+  ]
+}

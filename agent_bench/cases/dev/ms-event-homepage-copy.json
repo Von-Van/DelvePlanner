@@ -1,0 +1,99 @@
+{
+  "case_id": "ms-event-homepage-copy",
+  "family": "multi_step",
+  "split": "dev",
+  "description": "Find the task, read tomorrow's free time, and draft a one-hour calendar event that fits. Time blocks stay manual-only, so this is create_event.",
+  "fixture": {
+    "version": "planner.v1"
+  },
+  "now": "2026-11-03T09:00-05:00",
+  "timeZone": "America/New_York",
+  "permittedTools": [
+    "get_day_context",
+    "list_active_projects",
+    "get_project_context",
+    "search_tasks",
+    "get_capacity",
+    "get_recent_actions"
+  ],
+  "goal": "Put an hour on my calendar tomorrow to work on the homepage copy.",
+  "expected": {
+    "status": [
+      "drafted"
+    ],
+    "requiredTools": [
+      "get_day_context"
+    ],
+    "requiredCalls": [
+      {
+        "tool": "get_day_context",
+        "args": {
+          "date": "2026-11-04"
+        }
+      }
+    ],
+    "toolCallBudget": 3,
+    "drafts": [
+      {
+        "op": "create_event",
+        "payload": {
+          "timeZone": "America/New_York",
+          "durationMinutes": 60
+        }
+      }
+    ],
+    "checks": [
+      {
+        "type": "draft_fits_free_time",
+        "op": "create_event"
+      }
+    ]
+  },
+  "reference": {
+    "calls": [
+      {
+        "tool": "search_tasks",
+        "args": {
+          "limit": 20,
+          "query": "homepage copy"
+        }
+      },
+      {
+        "tool": "get_day_context",
+        "args": {
+          "date": "2026-11-04",
+          "timeZone": "America/New_York"
+        }
+      }
+    ],
+    "result": {
+      "status": "drafted",
+      "answer": "I drafted an hour for the homepage copy tomorrow at 10:30, right after your existing copy block.",
+      "drafts": [
+        {
+          "op": "create_event",
+          "target": null,
+          "payload": {
+            "title": "Work on homepage copy",
+            "notes": "",
+            "startAtUtc": "2026-11-04T15:30:00Z",
+            "timeZone": "America/New_York",
+            "durationMinutes": 60,
+            "reminderMinutesBefore": null,
+            "plan": {
+              "id": "plan-launch"
+            }
+          },
+          "evidence": [
+            "1",
+            "2"
+          ]
+        }
+      ]
+    }
+  },
+  "tags": [
+    "scheduling",
+    "event"
+  ]
+}

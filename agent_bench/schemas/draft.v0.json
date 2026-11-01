@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "agent_bench/schemas/draft.v0.json",
+  "title": "Proposal draft v0",
+  "description": "What an agent may return instead of writing. `op` is exactly one variant of MutationOperation in src-tauri/src/model.rs (snake_case); see section 2 of docs/delveops/overhaul-plan.md. For operations on an existing record, `target` carries its id and revision (Rust's taskId/eventId/... and expectedRevision); `payload` holds the variant's remaining fields in camelCase. Rust re-validates target and revision before anything reaches review.",
+  "type": "object",
+  "required": [
+    "op",
+    "target",
+    "payload"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "op": {
+      "enum": [
+        "create_event",
+        "update_event",
+        "delete_event",
+        "reschedule_event",
+        "set_event_plan",
+        "create_plan",
+        "update_plan",
+        "create_milestone",
+        "update_milestone",
+        "delete_milestone",
+        "create_task",
+        "update_task",
+        "schedule_task",
+        "set_task_plan",
+        "delete_task",
+        "create_workstream",
+        "set_task_workstream"
+      ]
+    },
+    "target": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "required": [
+            "id",
+            "revision"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "revision": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      ]
+    },
+    "payload": {
+      "type": "object"
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}
