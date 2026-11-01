@@ -65,6 +65,15 @@ class Agent(Protocol):
     def run(self, task: AgentTask, tools: ToolClient, model: ModelClient | None, budget: Budget) -> Any: ...
 
 
+def _as_list(value: Any) -> list:
+    return list(value) if isinstance(value, (list, tuple)) else ([] if value is None else [value])
+
+
+def _as_dict(value: Any) -> dict:
+    """Malformed items are kept, wrapped, so scorers can fail them instead of the harness crashing."""
+    return dict(value) if isinstance(value, dict) else {"invalid": repr(value)}
+
+
 def coerce_result(raw: Any) -> AgentResult:
     """Turn whatever an agent returned (dataclass, object or dict) into an AgentResult."""
 
@@ -74,12 +83,14 @@ def coerce_result(raw: Any) -> AgentResult:
         return getattr(raw, name, default)
 
     usage_raw = get("usage", None) or {}
+    if not isinstance(usage_raw, dict) and not hasattr(usage_raw, "modelCalls"):
+        usage_raw = {}
     if not isinstance(usage_raw, dict):
         usage_raw = {k: getattr(usage_raw, k) for k in ("modelCalls", "toolCalls", "tokens", "latencyMs") if hasattr(usage_raw, k)}
     return AgentResult(
         status=str(get("status", "")),
         answer=str(get("answer", "") or ""),
-        drafts=[dict(d) for d in (get("drafts", None) or [])],
-        trace=[dict(e) for e in (get("trace", None) or [])],
+        drafts=[_as_dict(d) for d in _as_list(get("drafts", None))],
+        trace=[_as_dict(e) for e in _as_list(get("trace", None))],
         usage=Usage(**{k: usage_raw[k] for k in ("modelCalls", "toolCalls", "tokens", "latencyMs") if k in usage_raw}),
     )

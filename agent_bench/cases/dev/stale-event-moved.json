@@ -81,7 +81,10 @@
             "revision": 3
           },
           "payload": {
-            "title": "Lunch with Sam and Ana"
+            "title": "Lunch with Sam and Ana",
+            "reminderChange": {
+              "action": "unchanged"
+            }
           },
           "evidence": [
             "2"

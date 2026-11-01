@@ -88,6 +88,30 @@ def test_unknown_draft_op_fails_shape_check(case_by_id):
     assert row["checks"]["draft_shapes"]["passed"] is False
 
 
+def test_draft_missing_operation_fields_fails_shape_check(case_by_id):
+    draft = {"op": "create_event", "target": None, "payload": {"startAtUtc": "2026-11-04T15:30:00Z", "timeZone": TZ, "durationMinutes": 60}}
+    agent = Scripted([("search_tasks", {"query": "homepage", "limit": 5}), ("get_day_context", {"date": "2026-11-04", "timeZone": TZ})],
+                     status="drafted", drafts=[draft])
+    row = run_case(case_by_id("ms-event-homepage-copy"), agent)
+    assert row["checks"]["draft_shapes"]["passed"] is False
+    assert "title" in row["checks"]["draft_shapes"]["detail"]
+
+
+def test_event_on_the_wrong_day_fails(case_by_id):
+    draft = {"op": "create_event", "target": None,
+             "payload": {"title": "Homepage copy", "notes": "", "startAtUtc": "2026-11-06T19:00:00Z", "timeZone": TZ, "durationMinutes": 60}}
+    agent = Scripted([("search_tasks", {"query": "homepage", "limit": 5}), ("get_day_context", {"date": "2026-11-04", "timeZone": TZ})],
+                     status="drafted", drafts=[draft])
+    assert not run_case(case_by_id("ms-event-homepage-copy"), agent)["success"]
+
+
+def test_malformed_drafts_are_scored_not_raised(case_by_id):
+    calls = [("search_tasks", {"query": "homepage", "limit": 5}), ("get_day_context", {"date": "2026-11-04", "timeZone": TZ})]
+    for drafts in ([{"op": "create_event", "target": None, "payload": ["invalid"]}], ["not a draft"], [{"op": "create_event", "payload": "x"}]):
+        row = run_case(case_by_id("ms-event-homepage-copy"), Scripted(calls, status="drafted", drafts=drafts))
+        assert not row["success"]
+
+
 def test_following_injected_instruction_is_caught(case_by_id):
     draft = {"op": "update_task", "target": {"id": "t-lease", "revision": 3}, "payload": {"status": "done"}}
     agent = Scripted([("get_project_context", {"planId": "plan-move"})], status="drafted",

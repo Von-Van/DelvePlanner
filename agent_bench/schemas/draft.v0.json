@@ -66,5 +66,167 @@
         "type": "string"
       }
     }
+  },
+  "x-operations": {
+    "$comment": "Per-operation payload fields, from MutationOperation in src-tauri/src/model.rs (serde camelCase, deny_unknown_fields). `required` are non-Option fields without a serde default; `optional` may be omitted (Rust reads them as None). `targetless` operations create a record and take target null; all others need target {id, revision}, which become the variant's id field and expectedRevision.",
+    "targetless": [
+      "create_event",
+      "create_plan",
+      "create_milestone",
+      "create_task",
+      "create_workstream"
+    ],
+    "fields": {
+      "create_event": {
+        "required": [
+          "title",
+          "notes",
+          "startAtUtc",
+          "timeZone",
+          "durationMinutes"
+        ],
+        "optional": [
+          "reminderMinutesBefore",
+          "plan",
+          "fromInbox"
+        ]
+      },
+      "update_event": {
+        "required": [
+          "reminderChange"
+        ],
+        "optional": [
+          "title",
+          "notes",
+          "durationMinutes"
+        ]
+      },
+      "delete_event": {
+        "required": [],
+        "optional": []
+      },
+      "reschedule_event": {
+        "required": [
+          "startAtUtc",
+          "timeZone",
+          "reminderChange"
+        ],
+        "optional": [
+          "title",
+          "notes",
+          "durationMinutes"
+        ]
+      },
+      "set_event_plan": {
+        "required": [],
+        "optional": [
+          "plan"
+        ]
+      },
+      "create_plan": {
+        "required": [
+          "title",
+          "description",
+          "status"
+        ],
+        "optional": [
+          "startDate",
+          "targetDate",
+          "fromInbox"
+        ]
+      },
+      "update_plan": {
+        "required": [],
+        "optional": [
+          "title",
+          "description",
+          "status",
+          "startDate",
+          "targetDate"
+        ]
+      },
+      "create_milestone": {
+        "required": [
+          "plan",
+          "title",
+          "description"
+        ],
+        "optional": [
+          "targetDate"
+        ]
+      },
+      "update_milestone": {
+        "required": [],
+        "optional": [
+          "title",
+          "description",
+          "targetDate",
+          "status"
+        ]
+      },
+      "delete_milestone": {
+        "required": [],
+        "optional": []
+      },
+      "create_task": {
+        "required": [
+          "title",
+          "description",
+          "status",
+          "priority"
+        ],
+        "optional": [
+          "plan",
+          "milestone",
+          "scheduledDay",
+          "dueDate",
+          "workstream",
+          "fromInbox"
+        ]
+      },
+      "update_task": {
+        "required": [
+          "estimate"
+        ],
+        "optional": [
+          "title",
+          "description",
+          "status",
+          "priority"
+        ]
+      },
+      "schedule_task": {
+        "required": [
+          "scheduledDay",
+          "dueDate",
+          "plannedWeek"
+        ],
+        "optional": []
+      },
+      "set_task_plan": {
+        "required": [],
+        "optional": [
+          "plan",
+          "milestone"
+        ]
+      },
+      "delete_task": {
+        "required": [],
+        "optional": []
+      },
+      "create_workstream": {
+        "required": [
+          "plan",
+          "name"
+        ],
+        "optional": []
+      },
+      "set_task_workstream": {
+        "required": [],
+        "optional": [
+          "workstream"
+        ]
+      }
+    }
   }
 }

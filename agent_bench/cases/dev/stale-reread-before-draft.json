@@ -84,9 +84,15 @@
             "revision": 6
           },
           "payload": {
+            "scheduledDay": {
+              "action": "unchanged"
+            },
             "dueDate": {
               "action": "set",
               "day": "2026-11-20"
+            },
+            "plannedWeek": {
+              "action": "unchanged"
             }
           },
           "evidence": [

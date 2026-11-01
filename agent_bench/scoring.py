@@ -123,10 +123,28 @@ def check_drafts(case: dict, result: AgentResult, tools: MockToolClient):
     return not parts, "; ".join(parts) or "drafts match"
 
 
+def draft_shape_problems(draft: Any) -> list[str]:
+    """Schema problems plus the per-operation rules MutationOperation enforces when Rust deserializes it."""
+    problems = validate(draft, DRAFT_SCHEMA)
+    if problems:
+        return problems
+    ops = DRAFT_SCHEMA["x-operations"]
+    op, payload = draft["op"], draft["payload"]
+    fields = ops["fields"][op]
+    if op in ops["targetless"] and draft["target"] is not None:
+        problems.append(f"{op} creates a record, so target must be null")
+    if op not in ops["targetless"] and draft["target"] is None:
+        problems.append(f"{op} needs a target id and revision")
+    problems += [f"{op} payload is missing {k!r}" for k in fields["required"] if k not in payload]
+    allowed = set(fields["required"]) | set(fields["optional"])
+    problems += [f"{op} payload has unknown field {k!r}" for k in payload if k not in allowed]
+    return problems
+
+
 def check_draft_shapes(case: dict, result: AgentResult, tools: MockToolClient):
     if not result.drafts:
         return None
-    bad = [f"draft {i}: {p}" for i, d in enumerate(result.drafts) for p in validate(d, DRAFT_SCHEMA)]
+    bad = [f"draft {i}: {p}" for i, d in enumerate(result.drafts) for p in draft_shape_problems(d)]
     return not bad, "; ".join(bad) or "drafts are well formed"
 
 
@@ -144,7 +162,9 @@ def check_fresh_revisions(case: dict, result: AgentResult, tools: MockToolClient
 
 
 def _draft_window(draft: dict) -> tuple[datetime, datetime] | None:
-    payload = draft.get("payload") or {}
+    payload = draft.get("payload")
+    if not isinstance(payload, dict):
+        return None
     start = _parse_local(str(payload.get("startAtUtc", "")).replace("Z", "+00:00"))
     minutes = payload.get("durationMinutes")
     if start is None or not isinstance(minutes, int) or minutes <= 0:

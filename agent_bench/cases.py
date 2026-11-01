@@ -56,6 +56,10 @@ def case_problems(case: dict, path: Path | None = None) -> list[str]:
     for d in drafts:
         if d.get("op") not in ops:
             problems.append(f"draft op {d.get('op')!r} is not a MutationOperation variant")
+    from .scoring import draft_shape_problems  # local import: scoring imports this module's siblings
+
+    for i, d in enumerate(case.get("reference", {}).get("result", {}).get("drafts", [])):
+        problems += [f"reference draft {i}: {p}" for p in draft_shape_problems(d)]
     for name in named:
         if name not in case["permittedTools"]:
             problems.append(f"expected uses {name}, which the case does not permit")
