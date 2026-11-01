@@ -34,6 +34,37 @@ export function commandAriaShortcut(
   return `${platform === "mac" ? "Meta" : "Control"}+${key}`;
 }
 
+/** The places the number shortcuts (⌘1 to ⌘7, Ctrl elsewhere) open. */
+export type SectionShortcut =
+  | "assistant"
+  | "schedule"
+  | "projects"
+  | "people"
+  | "inbox"
+  | "calendars"
+  | "knowledge";
+
+/**
+ * ⌘1 to ⌘3 open the three main areas: Assistant, Schedule, and Projects. ⌘4 to ⌘7 keep the places
+ * they opened before the assistant-first layout, so habits and the docs still hold.
+ */
+export const sectionShortcuts: Readonly<Record<string, SectionShortcut>> = {
+  "1": "assistant",
+  "2": "schedule",
+  "3": "projects",
+  "4": "people",
+  "5": "inbox",
+  "6": "calendars",
+  "7": "knowledge",
+};
+
+/** The number key that opens a place, for its tooltip and `aria-keyshortcuts`. */
+export function sectionShortcutKey(section: SectionShortcut) {
+  return Object.keys(sectionShortcuts).find(
+    (key) => sectionShortcuts[key] === section,
+  );
+}
+
 /** Whether keys pressed in this element edit text, where arrows and letters belong to it. */
 export function isTextEntry(target: EventTarget | null) {
   if (!(target instanceof HTMLElement)) return false;

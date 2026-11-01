@@ -1,0 +1,1203 @@
+{
+  "$defs": {
+    "busyTime": {
+      "additionalProperties": false,
+      "properties": {
+        "allDay": {
+          "type": "boolean"
+        },
+        "endAtUtc": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/instant"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "endDate": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/localDate"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "startAtUtc": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/instant"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "startDate": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/localDate"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tentative": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "allDay",
+        "startAtUtc",
+        "endAtUtc",
+        "startDate",
+        "endDate",
+        "tentative"
+      ],
+      "type": "object"
+    },
+    "capacity": {
+      "additionalProperties": false,
+      "properties": {
+        "calendarsIncomplete": {
+          "type": "boolean"
+        },
+        "days": {
+          "items": {
+            "$ref": "#/$defs/dayCapacity"
+          },
+          "type": "array"
+        },
+        "plannedLimitMinutes": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "pooledMinutes": {
+          "type": "integer"
+        },
+        "pooledUnestimatedTasks": {
+          "type": "integer"
+        },
+        "workingHours": {
+          "$ref": "#/$defs/workingHours"
+        }
+      },
+      "required": [
+        "workingHours",
+        "plannedLimitMinutes",
+        "days",
+        "pooledMinutes",
+        "pooledUnestimatedTasks",
+        "calendarsIncomplete"
+      ],
+      "type": "object"
+    },
+    "dayCapacity": {
+      "additionalProperties": false,
+      "properties": {
+        "availableMinutes": {
+          "type": "integer"
+        },
+        "blockedMinutes": {
+          "type": "integer"
+        },
+        "busyMinutes": {
+          "type": "integer"
+        },
+        "day": {
+          "$ref": "#/$defs/localDate"
+        },
+        "free": {
+          "items": {
+            "$ref": "#/$defs/timeRange"
+          },
+          "type": "array"
+        },
+        "plannedMinutes": {
+          "type": "integer"
+        },
+        "unestimatedTasks": {
+          "type": "integer"
+        },
+        "workingMinutes": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "day",
+        "workingMinutes",
+        "busyMinutes",
+        "availableMinutes",
+        "plannedMinutes",
+        "unestimatedTasks",
+        "blockedMinutes",
+        "free"
+      ],
+      "type": "object"
+    },
+    "event": {
+      "additionalProperties": false,
+      "properties": {
+        "durationMinutes": {
+          "type": "integer"
+        },
+        "endAtUtc": {
+          "$ref": "#/$defs/instant"
+        },
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "location": {
+          "type": "string"
+        },
+        "notes": {
+          "description": "Present only when the run may read descriptions.",
+          "type": "string"
+        },
+        "planId": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "revision": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "startAtUtc": {
+          "$ref": "#/$defs/instant"
+        },
+        "timeZone": {
+          "$ref": "#/$defs/timeZone"
+        },
+        "title": {
+          "type": "string"
+        },
+        "workstreamId": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "title",
+        "startAtUtc",
+        "endAtUtc",
+        "timeZone",
+        "durationMinutes",
+        "planId",
+        "workstreamId",
+        "location"
+      ],
+      "type": "object"
+    },
+    "id": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "instant": {
+      "description": "A UTC instant.",
+      "format": "date-time",
+      "type": "string"
+    },
+    "localDate": {
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+      "type": "string"
+    },
+    "milestone": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "description": "Present only when the run may read descriptions.",
+          "type": "string"
+        },
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "planId": {
+          "$ref": "#/$defs/id"
+        },
+        "revision": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "status": {
+          "$ref": "#/$defs/milestoneStatus"
+        },
+        "targetDate": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/localDate"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "title": {
+          "type": "string"
+        },
+        "workstreamId": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "planId",
+        "title",
+        "status",
+        "targetDate",
+        "workstreamId"
+      ],
+      "type": "object"
+    },
+    "milestoneStatus": {
+      "enum": [
+        "pending",
+        "complete",
+        "skipped"
+      ]
+    },
+    "plan": {
+      "additionalProperties": false,
+      "properties": {
+        "archived": {
+          "type": "boolean"
+        },
+        "description": {
+          "description": "Present only when the run may read descriptions.",
+          "type": "string"
+        },
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "revision": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "startDate": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/localDate"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/planStatus"
+        },
+        "targetDate": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/localDate"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "title",
+        "status",
+        "startDate",
+        "targetDate",
+        "archived"
+      ],
+      "type": "object"
+    },
+    "planStatus": {
+      "enum": [
+        "planning",
+        "active",
+        "on_hold",
+        "complete",
+        "cancelled"
+      ]
+    },
+    "projectSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "milestones": {
+          "items": {
+            "$ref": "#/$defs/milestone"
+          },
+          "type": "array"
+        },
+        "milestonesTruncated": {
+          "type": "boolean"
+        },
+        "openTaskCount": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "overdueTaskCount": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "revision": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "startDate": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/localDate"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/planStatus"
+        },
+        "targetDate": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/localDate"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "taskCount": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "title",
+        "status",
+        "startDate",
+        "targetDate",
+        "taskCount",
+        "openTaskCount",
+        "overdueTaskCount",
+        "milestones",
+        "milestonesTruncated"
+      ],
+      "type": "object"
+    },
+    "task": {
+      "additionalProperties": false,
+      "properties": {
+        "completedAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "description": {
+          "description": "Present only when the run may read descriptions.",
+          "type": "string"
+        },
+        "dueDate": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/localDate"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "estimatedMinutes": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "milestoneId": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "planId": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "plannedWeek": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/localDate"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "priority": {
+          "$ref": "#/$defs/taskPriority"
+        },
+        "recurring": {
+          "type": "boolean"
+        },
+        "revision": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "scheduledDay": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/localDate"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/taskStatus"
+        },
+        "title": {
+          "type": "string"
+        },
+        "waitingOn": {
+          "items": {
+            "$ref": "#/$defs/id"
+          },
+          "type": "array"
+        },
+        "workstreamId": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "title",
+        "status",
+        "priority",
+        "planId",
+        "milestoneId",
+        "workstreamId",
+        "dueDate",
+        "scheduledDay",
+        "plannedWeek",
+        "estimatedMinutes",
+        "waitingOn",
+        "recurring",
+        "completedAt"
+      ],
+      "type": "object"
+    },
+    "taskBlock": {
+      "additionalProperties": false,
+      "properties": {
+        "durationMinutes": {
+          "type": "integer"
+        },
+        "endAtUtc": {
+          "$ref": "#/$defs/instant"
+        },
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "revision": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "startAtUtc": {
+          "$ref": "#/$defs/instant"
+        },
+        "taskId": {
+          "$ref": "#/$defs/id"
+        },
+        "taskTitle": {
+          "type": "string"
+        },
+        "timeZone": {
+          "$ref": "#/$defs/timeZone"
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "taskId",
+        "taskTitle",
+        "startAtUtc",
+        "endAtUtc",
+        "timeZone",
+        "durationMinutes"
+      ],
+      "type": "object"
+    },
+    "taskPriority": {
+      "enum": [
+        "low",
+        "normal",
+        "high",
+        "critical"
+      ]
+    },
+    "taskStatus": {
+      "enum": [
+        "todo",
+        "in_progress",
+        "blocked",
+        "done"
+      ]
+    },
+    "timeRange": {
+      "additionalProperties": false,
+      "properties": {
+        "endAtUtc": {
+          "$ref": "#/$defs/instant"
+        },
+        "startAtUtc": {
+          "$ref": "#/$defs/instant"
+        }
+      },
+      "required": [
+        "startAtUtc",
+        "endAtUtc"
+      ],
+      "type": "object"
+    },
+    "timeZone": {
+      "description": "An IANA time zone such as America/Chicago.",
+      "type": "string"
+    },
+    "toolCall": {
+      "additionalProperties": false,
+      "properties": {
+        "arguments": {
+          "type": "object"
+        },
+        "tool": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "tool"
+      ],
+      "type": "object"
+    },
+    "toolError": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "enum": [
+            "invalid_arguments",
+            "not_found",
+            "ambiguous",
+            "permission_denied",
+            "timeout",
+            "unavailable",
+            "budget_exhausted",
+            "internal"
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "retryable": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "retryable"
+      ],
+      "type": "object"
+    },
+    "toolResult": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "callId": {
+              "type": "string"
+            },
+            "callsRemaining": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "durationMs": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "ok": {
+              "const": true
+            },
+            "result": {
+              "type": "object"
+            },
+            "resultBytes": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "tool": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "callId",
+            "tool",
+            "ok",
+            "result",
+            "durationMs",
+            "resultBytes",
+            "callsRemaining"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "callId": {
+              "type": "string"
+            },
+            "callsRemaining": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "durationMs": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "error": {
+              "$ref": "#/$defs/toolError"
+            },
+            "ok": {
+              "const": false
+            },
+            "tool": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "callId",
+            "tool",
+            "ok",
+            "error",
+            "durationMs",
+            "callsRemaining"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "workingHours": {
+      "additionalProperties": false,
+      "properties": {
+        "days": {
+          "items": {
+            "maximum": 7,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "endMinute": {
+          "type": "integer"
+        },
+        "revision": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "startMinute": {
+          "type": "integer"
+        },
+        "updatedAt": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "days",
+        "startMinute",
+        "endMinute",
+        "revision",
+        "updatedAt"
+      ],
+      "type": "object"
+    },
+    "workstream": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "description": "Present only when the run may read descriptions.",
+          "type": "string"
+        },
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "name": {
+          "type": "string"
+        },
+        "revision": {
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "name"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://github.com/Von-Van/DelvePlanner/contracts/tools.v1.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "budgets": {
+    "ceiling": {
+      "maxCallMs": 10000,
+      "maxIdenticalFailures": 5,
+      "maxResultBytes": 262144,
+      "maxToolCalls": 200
+    },
+    "default": {
+      "maxCallMs": 2000,
+      "maxIdenticalFailures": 2,
+      "maxResultBytes": 65536,
+      "maxToolCalls": 24
+    }
+  },
+  "description": "DelveOps read tools served by the Rust tool broker. Every tool is read-only. Records carry id and, where stored, revision. Times are UTC instants or local YYYY-MM-DD days with the timeZone they were read in. Descriptions and notes are left out unless the run's privacy policy allows them; read-only calendar events are reduced to busy times with no titles.",
+  "errorCodes": [
+    {
+      "code": "invalid_arguments",
+      "retryable": false
+    },
+    {
+      "code": "not_found",
+      "retryable": false
+    },
+    {
+      "code": "ambiguous",
+      "retryable": false
+    },
+    {
+      "code": "permission_denied",
+      "retryable": false
+    },
+    {
+      "code": "timeout",
+      "retryable": true
+    },
+    {
+      "code": "unavailable",
+      "retryable": true
+    },
+    {
+      "code": "budget_exhausted",
+      "retryable": false
+    },
+    {
+      "code": "internal",
+      "retryable": true
+    }
+  ],
+  "tools": [
+    {
+      "description": "Everything on one local day: planner events, tasks scheduled or due that day, milestones due, time blocks, busy times from read-only calendars (no titles), working and available minutes, and free time ranges.",
+      "implemented": true,
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "date": {
+            "$ref": "#/$defs/localDate"
+          },
+          "timeZone": {
+            "$ref": "#/$defs/timeZone"
+          }
+        },
+        "required": [
+          "date",
+          "timeZone"
+        ],
+        "type": "object"
+      },
+      "name": "get_day_context",
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "availableMinutes": {
+            "type": "integer"
+          },
+          "calendarsIncomplete": {
+            "type": "boolean"
+          },
+          "date": {
+            "$ref": "#/$defs/localDate"
+          },
+          "dueTasks": {
+            "items": {
+              "$ref": "#/$defs/task"
+            },
+            "type": "array"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/$defs/event"
+            },
+            "type": "array"
+          },
+          "externalBusy": {
+            "items": {
+              "$ref": "#/$defs/busyTime"
+            },
+            "type": "array"
+          },
+          "free": {
+            "items": {
+              "$ref": "#/$defs/timeRange"
+            },
+            "type": "array"
+          },
+          "milestones": {
+            "items": {
+              "$ref": "#/$defs/milestone"
+            },
+            "type": "array"
+          },
+          "plannedMinutes": {
+            "type": "integer"
+          },
+          "scheduledTasks": {
+            "items": {
+              "$ref": "#/$defs/task"
+            },
+            "type": "array"
+          },
+          "taskBlocks": {
+            "items": {
+              "$ref": "#/$defs/taskBlock"
+            },
+            "type": "array"
+          },
+          "timeZone": {
+            "$ref": "#/$defs/timeZone"
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "workingMinutes": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "date",
+          "timeZone",
+          "events",
+          "scheduledTasks",
+          "dueTasks",
+          "milestones",
+          "taskBlocks",
+          "externalBusy",
+          "calendarsIncomplete",
+          "workingMinutes",
+          "availableMinutes",
+          "plannedMinutes",
+          "free",
+          "truncated"
+        ],
+        "type": "object"
+      },
+      "permissionScope": "planner.read+calendar.busy",
+      "privacyClass": "planner_and_calendar_busy"
+    },
+    {
+      "description": "Plans that are active (and optionally still being planned), with task counts, overdue counts, and their milestones. Use it to find a plan's id.",
+      "implemented": true,
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "includePlanning": {
+            "default": false,
+            "description": "Also list plans whose status is planning.",
+            "type": "boolean"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "name": "list_active_projects",
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "asOf": {
+            "$ref": "#/$defs/localDate"
+          },
+          "plans": {
+            "items": {
+              "$ref": "#/$defs/projectSummary"
+            },
+            "type": "array"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "asOf",
+          "plans",
+          "truncated"
+        ],
+        "type": "object"
+      },
+      "permissionScope": "planner.read",
+      "privacyClass": "planner"
+    },
+    {
+      "description": "One plan by id: its milestones, workstreams, and tasks with ids, revisions, statuses, dates, and what each task waits on.",
+      "implemented": true,
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "planId": {
+            "$ref": "#/$defs/id"
+          }
+        },
+        "required": [
+          "planId"
+        ],
+        "type": "object"
+      },
+      "name": "get_project_context",
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "milestones": {
+            "items": {
+              "$ref": "#/$defs/milestone"
+            },
+            "type": "array"
+          },
+          "plan": {
+            "$ref": "#/$defs/plan"
+          },
+          "tasks": {
+            "items": {
+              "$ref": "#/$defs/task"
+            },
+            "type": "array"
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "workstreams": {
+            "items": {
+              "$ref": "#/$defs/workstream"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "plan",
+          "milestones",
+          "workstreams",
+          "tasks",
+          "truncated"
+        ],
+        "type": "object"
+      },
+      "permissionScope": "planner.read",
+      "privacyClass": "planner"
+    },
+    {
+      "description": "Find tasks by words in the title, plan, status, or due date. Returns ids and revisions, open tasks first. Use it to pick the exact task a request means.",
+      "implemented": true,
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "dueBefore": {
+            "$ref": "#/$defs/localDate",
+            "description": "Only tasks due strictly before this day."
+          },
+          "limit": {
+            "default": 20,
+            "maximum": 50,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "planId": {
+            "$ref": "#/$defs/id"
+          },
+          "query": {
+            "description": "Words that must all appear in the task title, ignoring case.",
+            "maxLength": 200,
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/$defs/taskStatus"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "name": "search_tasks",
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "tasks": {
+            "items": {
+              "$ref": "#/$defs/task"
+            },
+            "type": "array"
+          },
+          "totalMatches": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "tasks",
+          "totalMatches",
+          "truncated"
+        ],
+        "type": "object"
+      },
+      "permissionScope": "planner.read",
+      "privacyClass": "planner"
+    },
+    {
+      "description": "Planned work against available time for the seven local days starting at weekStart, per day, with free ranges and the user's daily planning limit.",
+      "implemented": true,
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "timeZone": {
+            "$ref": "#/$defs/timeZone"
+          },
+          "weekStart": {
+            "$ref": "#/$defs/localDate"
+          }
+        },
+        "required": [
+          "weekStart",
+          "timeZone"
+        ],
+        "type": "object"
+      },
+      "name": "get_capacity",
+      "outputSchema": {
+        "$ref": "#/$defs/capacity"
+      },
+      "permissionScope": "planner.read+calendar.busy",
+      "privacyClass": "planner_and_calendar_busy"
+    },
+    {
+      "description": "Recently applied changes and failed attempts. historyAvailable is false until agent outcomes are recorded, so an empty list may mean not recorded yet.",
+      "implemented": true,
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "default": 10,
+            "maximum": 20,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "name": "get_recent_actions",
+      "outputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "actions": {
+            "maxItems": 0,
+            "type": "array"
+          },
+          "historyAvailable": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "actions",
+          "historyAvailable"
+        ],
+        "type": "object"
+      },
+      "permissionScope": "agent_history.read",
+      "privacyClass": "agent_history"
+    },
+    {
+      "description": "Reserved for memory experiments. Not available yet.",
+      "implemented": false,
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "name": "get_memory",
+      "outputSchema": {
+        "not": {}
+      },
+      "permissionScope": "memory.read",
+      "privacyClass": "memory"
+    }
+  ],
+  "version": "tools.v1"
+}
