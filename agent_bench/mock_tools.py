@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from . import github_tools
 from .jsonschema_lite import validate
 from .trace import TraceRecorder
 
@@ -436,6 +437,21 @@ TOOL_IMPLS = {
 }
 
 
+def _github_tool(fn):
+    """Adapts a GitHub mock tool (piece M) to this module's signature and errors."""
+
+    def run(state: PlannerState, args: dict, s: Session) -> dict:
+        try:
+            return fn(state.github, args)
+        except github_tools.GitHubToolError as err:
+            raise ToolError(err.code, err.message, err.retryable) from err
+
+    return run
+
+
+TOOL_IMPLS.update({name: _github_tool(fn) for name, fn in github_tools.TOOL_IMPLS.items()})
+
+
 def collect_records(value: Any, out: dict[str, int | None] | None = None) -> dict[str, int | None]:
     """Every ``{"id": ..., "revision": ...}`` found anywhere in a tool result."""
     out = {} if out is None else out
@@ -505,6 +521,7 @@ class MockToolClient:
         self.catalog = {t["name"]: t for t in self.contract["tools"]}
         self.retryable = {e["code"]: e["retryable"] for e in self.contract["errorCodes"]}
         self.state = PlannerState(load_fixture(case["fixture"]["version"]))
+        self.state.github = github_tools.state_entries(github_tools.load_github_fixture())
         for change in case["fixture"].get("overrides", []):
             self.state.apply(change)
         self.session = Session(now=datetime.fromisoformat(case["now"]), time_zone=case["timeZone"], privacy=dict(case.get("privacy", {})))
@@ -540,6 +557,8 @@ class MockToolClient:
             raise self._err("permission_denied", f"This run may not use {name}.")
         if not spec["implemented"]:
             raise self._err("unavailable", f"{name} is reserved and not available yet.")
+        if name in github_tools.TOOL_IMPLS and not github_tools.connected(self.state.github):
+            raise self._err("permission_denied", "GitHub context is off: the user has not selected any repositories.")
         if self.calls_made >= self.budget["maxToolCalls"]:
             raise self._err("budget_exhausted", f"This run has used all {self.budget['maxToolCalls']} of its tool calls.")
         failed = self._failures.get(fingerprint)
