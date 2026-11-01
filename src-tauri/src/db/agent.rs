@@ -485,13 +485,16 @@ pub struct AgentRunDetail {
     pub drafts: Vec<ActionDraft>,
 }
 
-/// Which runs to list. Newest first; `before` pages backwards by `startedAt`.
+/// Which runs to list, newest first (by `startedAt`, then `id`). To page backwards, pass the
+/// last run of the previous page as `before` (its `startedAt`) and `beforeId` (its `id`); runs
+/// that started in the same millisecond are then split by id instead of skipped.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentRunFilter {
     pub source: Option<RunSource>,
     pub experiment_run_id: Option<String>,
     pub before: Option<String>,
+    pub before_id: Option<String>,
     pub limit: Option<u32>,
 }
 
@@ -965,8 +968,9 @@ impl PlannerDatabase {
             "{RUN_SELECT}
              WHERE (?1 IS NULL OR r.source = ?1)
                AND (?2 IS NULL OR r.experiment_run_id = ?2)
-               AND (?3 IS NULL OR r.started_at < ?3)
-             ORDER BY r.started_at DESC, r.rowid DESC LIMIT ?4"
+               AND (?3 IS NULL OR r.started_at < ?3
+                    OR (r.started_at = ?3 AND ?5 IS NOT NULL AND r.id < ?5))
+             ORDER BY r.started_at DESC, r.id DESC LIMIT ?4"
         ))?;
         let runs = statement
             .query_map(
@@ -974,7 +978,8 @@ impl PlannerDatabase {
                     filter.source.map(RunSource::as_str),
                     filter.experiment_run_id,
                     filter.before.as_deref().map(timestamp).transpose()?,
-                    limit
+                    limit,
+                    filter.before_id,
                 ],
                 run_from_row,
             )?
@@ -1792,6 +1797,31 @@ mod tests {
             .unwrap();
         assert_eq!(page.len(), 1);
         assert_eq!(page[0].id, older.id);
+
+        // Runs that started in the same millisecond are all reachable, page by page.
+        database
+            .connection
+            .execute(
+                "UPDATE agent_run SET started_at = '2026-10-20T00:00:00.000Z'",
+                [],
+            )
+            .unwrap();
+        let mut seen = Vec::new();
+        let mut cursor: Option<(String, String)> = None;
+        loop {
+            let page = database
+                .list_agent_runs(AgentRunFilter {
+                    before: cursor.as_ref().map(|(at, _)| at.clone()),
+                    before_id: cursor.as_ref().map(|(_, id)| id.clone()),
+                    limit: Some(1),
+                    ..Default::default()
+                })
+                .unwrap();
+            let Some(last) = page.last() else { break };
+            cursor = Some((last.started_at.clone(), last.id.clone()));
+            seen.push(last.id.clone());
+        }
+        assert_eq!(seen.len(), 3);
         assert!(database
             .list_agent_runs(AgentRunFilter {
                 limit: Some(MAX_RUN_LIST + 1),
