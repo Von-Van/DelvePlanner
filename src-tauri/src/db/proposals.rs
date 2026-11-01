@@ -237,9 +237,9 @@ impl PlannerDatabase {
     }
 
     /// Applies every operation of an approved proposal or none of them. Plans are created first,
-    /// then milestones and workstreams, so later operations can refer to them by title; milestone
-    /// deletions run after the other edits so detaching their tasks cannot invalidate an earlier
-    /// edit in the same proposal, and time blocks come last of all.
+    /// then milestones and workstreams, so later operations can refer to them by title; time
+    /// blocks follow the other edits, and milestone deletions run last so detaching their tasks
+    /// cannot invalidate an earlier edit in the same proposal.
     pub fn apply_proposal(&mut self, proposal: &ModelResponse) -> AppResult<AppliedProposal> {
         let ModelResponse::Proposal { operations, .. } = proposal else {
             return Err(AppError::Validation(
@@ -285,15 +285,16 @@ impl PlannerDatabase {
                 writer.apply(operation)?;
             }
         }
+        // Time is reserved after every other schedule change, so it is checked against the
+        // schedule as the rest of the proposal leaves it. It comes before milestone deletions,
+        // which bump their tasks' revisions without changing anything a block depends on.
         for operation in operations {
-            if let MutationOperation::DeleteMilestone { .. } = operation {
+            if let MutationOperation::CreateTaskBlock { .. } = operation {
                 writer.apply(operation)?;
             }
         }
-        // Time is reserved last, so it is checked against the schedule as the rest of the
-        // proposal leaves it.
         for operation in operations {
-            if let MutationOperation::CreateTaskBlock { .. } = operation {
+            if let MutationOperation::DeleteMilestone { .. } = operation {
                 writer.apply(operation)?;
             }
         }
@@ -2000,6 +2001,41 @@ mod tests {
             review_now.revision, review.revision,
             "a block leaves its task alone"
         );
+    }
+
+    #[test]
+    fn deleting_a_tasks_milestone_in_the_same_proposal_keeps_its_block_fresh() {
+        let mut database = database();
+        let launch = plan(&mut database, "Launch");
+        let design = database
+            .create_milestone(crate::model::CreateMilestoneInput {
+                plan_id: launch.id.clone(),
+                title: "Design".into(),
+                description: String::new(),
+                target_date: None,
+                status: MilestoneStatus::Pending,
+                workstream_id: None,
+            })
+            .unwrap();
+        let notes = task(&mut database, "Draft notes", Some(&launch.id));
+        let notes = database
+            .update_task(UpdateTaskInput {
+                milestone_id: Some(design.id.clone()),
+                ..UpdateTaskInput::keeping(&notes)
+            })
+            .unwrap();
+        let proposal = ModelResponse::proposal(
+            "Drop the milestone and plan the notes",
+            vec![
+                MutationOperation::DeleteMilestone {
+                    milestone_id: design.id.clone(),
+                    expected_revision: design.revision,
+                },
+                block(&notes, "2030-11-12T20:00:00Z", 45),
+            ],
+        );
+        database.apply_proposal(&proposal).unwrap();
+        assert_eq!(blocks_of(&database, &notes).len(), 1);
     }
 
     #[test]
