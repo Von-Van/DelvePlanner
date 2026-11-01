@@ -127,7 +127,11 @@ def test_a_draft_cites_the_apps_call_ids_and_every_step_is_streamed() -> None:
                         {
                             "op": "schedule_task",
                             "target": {"id": "task-42", "revision": 3},
-                            "payload": {"scheduledDay": {"set": "2026-11-05"}},
+                            "payload": {
+                                "scheduledDay": {"action": "set", "day": "2026-11-05"},
+                                "dueDate": {"action": "unchanged"},
+                                "plannedWeek": {"action": "unchanged"},
+                            },
                             "evidence": ["tc-1"],
                         }
                     ],
