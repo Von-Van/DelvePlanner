@@ -149,13 +149,16 @@ def test_a_draft_cites_the_apps_call_ids_and_every_step_is_streamed() -> None:
     assert payload["drafts"][0]["evidence"] == ["call-1"]
     assert payload["drafts"][0]["target"] == {"id": "task-42", "revision": 3}
     assert "trace" not in payload
-    assert payload["usage"]["modelCalls"] == 2 and payload["usage"]["toolCalls"] == 1
-    assert payload["agentUsage"]["toolCalls"] == 1
+    # The self-check (M4) re-reads the target once before handing the draft over.
+    assert payload["usage"]["modelCalls"] == 2 and payload["usage"]["toolCalls"] == 2
+    assert payload["agentUsage"]["toolCalls"] == 2
     assert payload["model"] == {}  # describe() runs before the first call
-    assert [call["tool"] for call in tool_calls] == ["search_tasks"]
+    assert [call["tool"] for call in tool_calls] == ["search_tasks", "search_tasks"]
 
     kinds = [event["kind"] for event in traces]
-    assert kinds == ["plan", "model_call", "tool_call", "tool_result", "model_call", "draft", "final"]
+    reread = ["tool_call", "tool_result", "verify"]
+    first = ["plan", "model_call", "tool_call", "tool_result", "model_call"]
+    assert kinds == [*first, *reread, "verify", "draft", "final"]
     assert [event["seq"] for event in traces] == list(range(1, len(traces) + 1))
     assert all(event["runId"] == "run-1" for event in traces)
     assert traces[1]["data"]["model"] == "test-model"

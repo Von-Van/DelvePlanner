@@ -513,7 +513,8 @@ async fn the_python_agent_reads_drafts_and_its_change_applies_through_the_planne
     );
 
     assert_eq!(record.status, "drafted", "{record:?}");
-    assert_eq!(record.usage.tool_calls, 1);
+    // The agent's self-check (M4) re-reads the task once before handing the draft over.
+    assert_eq!(record.usage.tool_calls, 2);
     assert_eq!(record.usage.model_calls, 2);
     assert_eq!(record.usage.prompt_tokens, 240);
     let kinds: Vec<&str> = record
@@ -529,6 +530,10 @@ async fn the_python_agent_reads_drafts_and_its_change_applies_through_the_planne
             "tool_call",
             "tool_result",
             "model_call",
+            "tool_call",
+            "tool_result",
+            "verify",
+            "verify",
             "draft",
             "final"
         ]
