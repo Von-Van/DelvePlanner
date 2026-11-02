@@ -105,8 +105,8 @@ def normalize_payload(op: str, payload: dict[str, Any], time_zone: str) -> tuple
     `startAtUtc` + `durationMinutes`, as does `startAtUtc` + `endAtUtc` (the form the day tool reports);
     a time Rust would not read as UTC (an offset, no seconds) is respelled as UTC; a bare date where a
     day change is meant becomes "set the day"; a whole number where a reminder or estimate change is
-    meant becomes "set it"; a bare id where a record reference is meant becomes `{"id": ...}`; and left-out "no change" fields
-    are filled in.
+    meant becomes "set it"; a bare id where a record reference is meant becomes `{"id": ...}`; and
+    left-out "no change" fields are filled in.
     """
     out = dict(payload)
     notes: list[str] = []
