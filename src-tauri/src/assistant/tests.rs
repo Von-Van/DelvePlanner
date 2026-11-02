@@ -709,6 +709,39 @@ fn suggestions_are_capped_and_deduplicated() {
 }
 
 #[test]
+fn the_same_words_for_two_projects_are_two_suggestions() {
+    const TASK: &str = "00000000-0000-4000-8000-0000000000a1";
+    let record = suggested(vec![
+        remember("preference", "Mornings for calls.", "stated", Some(GRANT)),
+        remember("preference", "mornings for calls.", "stated", Some(TASK)),
+        remember("preference", "Mornings for calls.", "stated", Some(GRANT)),
+    ]);
+    assert_eq!(record.memory_suggestions.len(), 2);
+}
+
+#[test]
+fn a_suggestion_naming_a_record_that_isnt_a_project_is_left_out() {
+    // A task id passes "a tool returned it", so the planner decides what is a project.
+    const TASK: &str = "00000000-0000-4000-8000-0000000000a1";
+    let settings = crate::db::MemorySettings {
+        enabled: true,
+        conversation_turns: 6,
+        inferred_ttl_days: 14,
+        disabled_plan_ids: Vec::new(),
+    };
+    let mut record = suggested(vec![
+        remember("priority", "Budget first.", "stated", Some(TASK)),
+        remember("priority", "Sponsors first.", "stated", Some(GRANT)),
+    ]);
+    apply_memory_settings(&mut record, &settings, |id| id == GRANT);
+    assert_eq!(record.memory_suggestions.len(), 1);
+    assert_eq!(record.memory_suggestions[0].plan_id.as_deref(), Some(GRANT));
+    let check = record.draft_check.unwrap();
+    assert!(check.memory_problems[0].contains("isn't a project"));
+    assert!(check.problems.is_empty());
+}
+
+#[test]
 fn memory_settings_decide_which_suggestions_are_offered() {
     let mut settings = crate::db::MemorySettings {
         enabled: true,
@@ -721,7 +754,7 @@ fn memory_settings_decide_which_suggestions_are_offered() {
         remember("note", "Weekly sync on Thursdays.", "stated", None),
     ];
     let mut record = suggested(drafts.clone());
-    apply_memory_settings(&mut record, &settings);
+    apply_memory_settings(&mut record, &settings, |_| true);
     assert_eq!(record.memory_suggestions.len(), 1);
     assert_eq!(
         record.memory_suggestions[0].content,
@@ -730,7 +763,7 @@ fn memory_settings_decide_which_suggestions_are_offered() {
 
     settings.enabled = false;
     let mut record = suggested(drafts);
-    apply_memory_settings(&mut record, &settings);
+    apply_memory_settings(&mut record, &settings, |_| true);
     assert!(record.memory_suggestions.is_empty());
     assert!(record
         .draft_check

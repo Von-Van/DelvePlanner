@@ -146,10 +146,12 @@ pub fn check_suggestions(
     let mut problems = Vec::new();
     for draft in drafts {
         match memory_suggestion(draft, observed) {
+            // The same words for two projects are two memories, each with its own switch.
             Ok(suggestion)
-                if suggestions
-                    .iter()
-                    .any(|s| s.content.eq_ignore_ascii_case(&suggestion.content)) => {}
+                if suggestions.iter().any(|s| {
+                    s.plan_id == suggestion.plan_id
+                        && s.content.eq_ignore_ascii_case(&suggestion.content)
+                }) => {}
             Ok(suggestion) if suggestions.len() >= MAX_SUGGESTIONS => {
                 problems.push(format!(
                     "more than {MAX_SUGGESTIONS} memories suggested at once; dropped: {}",
@@ -163,9 +165,15 @@ pub fn check_suggestions(
     (suggestions, problems)
 }
 
-/// Leaves out suggestions the person's memory settings rule out: none at all while memory is
-/// paused, and none for a project whose memory is off.
-pub fn apply_memory_settings(record: &mut AgentRunRecord, settings: &MemorySettings) {
+/// Leaves out suggestions the app can't offer: none at all while memory is paused, none for a
+/// project whose memory is off, and none whose `planId` isn't a project. A tool result holds
+/// tasks, events and memories too, so an id the run saw isn't necessarily a project; `is_plan`
+/// asks the planner.
+pub fn apply_memory_settings(
+    record: &mut AgentRunRecord,
+    settings: &MemorySettings,
+    is_plan: impl Fn(&str) -> bool,
+) {
     let before = record.memory_suggestions.len();
     if !settings.enabled {
         record.memory_suggestions.clear();
@@ -177,13 +185,25 @@ pub fn apply_memory_settings(record: &mut AgentRunRecord, settings: &MemorySetti
                 .is_none_or(|plan| !settings.disabled_plan_ids.contains(plan))
         });
     }
-    let dropped = before - record.memory_suggestions.len();
-    if dropped > 0 {
-        if let Some(check) = record.draft_check.as_mut() {
-            check.memory_problems.push(format!(
-                "{dropped} memory suggestion(s) left out by the memory settings"
+    let by_settings = before - record.memory_suggestions.len();
+    let mut problems = Vec::new();
+    if by_settings > 0 {
+        problems.push(format!(
+            "{by_settings} memory suggestion(s) left out by the memory settings"
+        ));
+    }
+    record.memory_suggestions.retain(|suggestion| {
+        let keep = suggestion.plan_id.as_deref().is_none_or(&is_plan);
+        if !keep {
+            problems.push(format!(
+                "`remember` names a record that isn't a project: {}",
+                suggestion.plan_id.as_deref().unwrap_or_default()
             ));
         }
+        keep
+    });
+    if let Some(check) = record.draft_check.as_mut() {
+        check.memory_problems.extend(problems);
     }
 }
 

@@ -166,8 +166,24 @@ pub(crate) fn filter_suggestions(
     if record.memory_suggestions.is_empty() {
         return;
     }
-    match with_database(state, |database| database.memory_settings()) {
-        Ok(settings) => assistant::apply_memory_settings(record, &settings),
+    let checked = with_database(state, |database| {
+        let settings = database.memory_settings()?;
+        let mut plans = std::collections::HashSet::new();
+        for plan in record
+            .memory_suggestions
+            .iter()
+            .filter_map(|s| s.plan_id.as_deref())
+        {
+            if database.is_plan(plan)? {
+                plans.insert(plan.to_string());
+            }
+        }
+        Ok((settings, plans))
+    });
+    match checked {
+        Ok((settings, plans)) => {
+            assistant::apply_memory_settings(record, &settings, |id| plans.contains(id))
+        }
         Err(_) => record.memory_suggestions.clear(),
     }
 }
@@ -185,6 +201,13 @@ pub(crate) fn remember_suggestion(
         .claim_suggestion(&run_key, &suggestion_id)
         .map_err(CommandError::from)?;
     let saved = with_database(&state, |database| {
+        if let Some(plan) = suggestion.plan_id.as_deref() {
+            if !database.is_plan(plan)? {
+                return Err(AppError::Validation(
+                    "That project no longer exists.".into(),
+                ));
+            }
+        }
         database.add_memory(assistant::new_memory(&suggestion, run_id.as_deref()))
     });
     let next = match &saved {
