@@ -2,6 +2,7 @@ pub mod agent;
 pub mod assistant;
 pub mod calendar;
 pub mod capacity;
+mod conversations;
 pub mod db;
 pub mod error;
 pub mod evaluation;
@@ -1306,6 +1307,7 @@ async fn run_assistant(
     goal: String,
     time_zone: String,
     run_key: String,
+    thread_id: Option<String>,
 ) -> Result<assistant::AgentRunRecord, CommandError> {
     let goal = goal.trim().to_string();
     if goal.is_empty() || goal.chars().count() > assistant::MAX_GOAL_CHARS {
@@ -1323,6 +1325,28 @@ async fn run_assistant(
     // The run is active (and can be stopped) from here, including while the model starts.
     let cancel = state.assistant.begin()?;
     let _active = ActiveRun(&state.assistant);
+    // The request joins its conversation (a new one unless the screen names one). The agent
+    // gets the person's chosen number of recent turns and a digest of older ones, never the
+    // whole conversation, and never this request twice.
+    let (thread_id, context) = with_database(&state, |database| {
+        let thread_id = match thread_id {
+            Some(id) => id,
+            None => database.create_agent_thread(None)?.id,
+        };
+        let turns = usize::try_from(database.memory_settings()?.conversation_turns).unwrap_or(0);
+        let context = database.conversation_context(&thread_id, turns)?;
+        database.append_agent_message(
+            &thread_id,
+            db::NewAgentMessage {
+                role: db::MessageRole::User,
+                text: goal.clone(),
+                run_id: None,
+                run_status: None,
+                created_at: None,
+            },
+        )?;
+        Ok((thread_id, context))
+    })?;
     tokio::select! {
         started = state.ollama.ensure_started(&state.agent) => started?,
         // Stopped while the model was starting: the sidecar run below ends as cancelled at once.
@@ -1343,6 +1367,12 @@ async fn run_assistant(
         permitted_tools: assistant::permitted_tools(),
         architecture: Some(assistant::ARCHITECTURE.into()),
         budget: budget.clone(),
+        conversation: context
+            .turns
+            .iter()
+            .filter_map(|turn| serde_json::to_value(turn).ok())
+            .collect(),
+        conversation_summary: context.summary,
     };
     let config = tools::SessionConfig {
         budget: tools::ToolBudget {
@@ -1390,6 +1420,22 @@ async fn run_assistant(
     }) {
         // The answer still reaches the user; only its place in the run history is lost.
         tauri_plugin_log::log::warn!("assistant_run_not_stored code={}", error.code);
+    }
+    record.thread_id = Some(thread_id.clone());
+    let (reply, reply_status) = assistant::conversation_reply(&record);
+    if let Err(error) = with_database(&state, |database| {
+        database.append_agent_message(
+            &thread_id,
+            db::NewAgentMessage {
+                role: db::MessageRole::Assistant,
+                text: reply,
+                run_id: record.stored_run_id.clone(),
+                run_status: Some(reply_status),
+                created_at: None,
+            },
+        )
+    }) {
+        tauri_plugin_log::log::warn!("assistant_reply_not_stored code={}", error.code);
     }
     tauri_plugin_log::log::info!("assistant_run_finished status={}", record.status);
     Ok(state.assistant.record(record, response))
@@ -1892,6 +1938,10 @@ pub fn run() {
             run_assistant,
             cancel_assistant_run,
             list_assistant_runs,
+            conversations::list_assistant_threads,
+            conversations::get_assistant_thread,
+            conversations::rename_assistant_thread,
+            conversations::delete_assistant_thread,
             apply_assistant_changes,
             discard_assistant_changes,
         ])

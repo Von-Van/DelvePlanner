@@ -14,9 +14,9 @@
 //! single transaction as the planner's own proposals.
 
 use crate::db::{
-    ActionOutcome, AgentStep, DraftDecision, DraftTarget, ExecutionState, NewActionDraft,
-    NewAgentRun, PlannerDatabase, RunOutcome as StoredOutcome, RunSource, RunStatus,
-    RunUsage as StoredUsage,
+    ActionOutcome, AgentStep, DraftDecision, DraftTarget, ExecutionState, MessageRunStatus,
+    NewActionDraft, NewAgentRun, PlannerDatabase, RunOutcome as StoredOutcome, RunSource,
+    RunStatus, RunUsage as StoredUsage,
 };
 use crate::error::{AppError, AppResult};
 use crate::model::{
@@ -425,6 +425,8 @@ pub struct AgentRunRecord {
     pub trace: Vec<Value>,
     /// The run's id in the run history, once saved there.
     pub stored_run_id: Option<String>,
+    /// The conversation the request belongs to.
+    pub thread_id: Option<String>,
     /// The drafts behind `proposal`, as the agent sent them, for the run history.
     #[serde(skip)]
     pub checked_drafts: Vec<Value>,
@@ -587,6 +589,7 @@ pub fn finish_run(
         proposal: None,
         trace,
         stored_run_id: None,
+        thread_id: None,
         checked_drafts: Vec::new(),
         stored_drafts: Vec::new(),
     };
@@ -726,6 +729,54 @@ fn stored_status(record: &AgentRunRecord) -> RunStatus {
         "cannot_complete" => RunStatus::CannotComplete,
         _ => RunStatus::Failed,
     }
+}
+
+/// What a conversation keeps of a finished run: the reply as the person saw it, and how the run
+/// ended. A drafted run keeps the drafted change's summary; whether it was approved is read from
+/// the run history when the conversation is next used.
+pub fn conversation_reply(record: &AgentRunRecord) -> (String, MessageRunStatus) {
+    let status = if record.cancelled {
+        MessageRunStatus::Cancelled
+    } else {
+        match record.status.as_str() {
+            "answered" => MessageRunStatus::Answered,
+            "drafted" => MessageRunStatus::Drafted,
+            "needs_clarification" => MessageRunStatus::NeedsClarification,
+            "cannot_complete" => MessageRunStatus::CannotComplete,
+            _ => MessageRunStatus::Failed,
+        }
+    };
+    let summary = match &record.proposal {
+        Some(PlannerResponse::Proposal { summary, .. }) => Some(summary.clone()),
+        Some(PlannerResponse::Clarification { question }) => Some(question.clone()),
+        None => None,
+    };
+    let text = [record.answer.clone(), summary]
+        .into_iter()
+        .flatten()
+        .map(|text| text.trim().to_string())
+        .find(|text| !text.is_empty())
+        .unwrap_or_else(|| {
+            match status {
+                MessageRunStatus::Cancelled => "Stopped before finishing.",
+                MessageRunStatus::Drafted => "Drafted changes for review.",
+                MessageRunStatus::NeedsClarification => "Asked a question.",
+                MessageRunStatus::CannotComplete => "Couldn't complete this request.",
+                MessageRunStatus::Answered => "Answered.",
+                MessageRunStatus::Failed => "The assistant couldn't run this request.",
+            }
+            .to_string()
+        });
+    (clip_reply(&text), status)
+}
+
+fn clip_reply(text: &str) -> String {
+    const MAX_REPLY_CHARS: usize = 8_000;
+    if text.chars().count() <= MAX_REPLY_CHARS {
+        return text.to_string();
+    }
+    let cut: String = text.chars().take(MAX_REPLY_CHARS - 1).collect();
+    format!("{cut}…")
 }
 
 /// Saves a finished run in the run history: the run, every step, and the drafts it offers for
@@ -1003,6 +1054,29 @@ impl AssistantRuntime {
             }
         }
         record
+    }
+
+    /// Drops the runs kept from a deleted conversation, and any changes of theirs still
+    /// waiting for review, so nothing from it stays on screen.
+    pub fn forget_thread(&self, thread_id: &str) {
+        let mut forgotten = Vec::new();
+        if let Ok(mut runs) = self.runs.lock() {
+            runs.retain(|run| {
+                let keep = run.thread_id.as_deref() != Some(thread_id);
+                if !keep {
+                    forgotten.push(run.run_key.clone());
+                }
+                keep
+            });
+        }
+        if let Ok(mut slot) = self.pending.lock() {
+            if slot
+                .as_ref()
+                .is_some_and(|pending| forgotten.contains(&pending.run_key))
+            {
+                *slot = None;
+            }
+        }
     }
 
     /// Recent runs, newest first. Changes that expired since are shown as expired.

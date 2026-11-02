@@ -16,6 +16,7 @@ function run(overrides: Partial<AgentRun> = {}): AgentRun {
     runKey: "key-1",
     runId: "run-1",
     storedRunId: null,
+    threadId: null,
     architecture: "A1",
     goal: "What's due this week?",
     startedAt: "2026-11-02T15:00:00.000Z",
