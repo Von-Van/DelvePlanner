@@ -1,4 +1,11 @@
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import {
+  FormEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { AgentTrace, TraceEvent } from "./AgentTrace";
 import {
   AgentRun,
@@ -64,7 +71,14 @@ export function AssistantAgentPanel({
   );
   const [cancelling, setCancelling] = useState(false);
   // The open conversation: follow-ups join it, so the agent sees what came before.
-  const [threadId, setThreadId] = useState<string | null>(null);
+  const [threadId, setThreadIdState] = useState<string | null>(null);
+  // The same, readable after an await: a conversation that finishes loading after the person
+  // has moved on must not replace what is on screen.
+  const openThread = useRef<string | null>(null);
+  const setThreadId = (id: string | null) => {
+    openThread.current = id;
+    setThreadIdState(id);
+  };
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [history, setHistory] = useState<ConversationMessage[]>([]);
 
@@ -107,6 +121,19 @@ export function AssistantAgentPanel({
         (run.threadId === null || run.threadId === threadId),
     ) ?? null;
   const earlier = earlierMessages(history, selected?.storedRunId ?? null);
+  // Runs of the open conversation whose changes still wait for a decision, by stored run id,
+  // so a proposal stays reachable after a follow-up that proposed nothing.
+  const awaitingReview = new Map(
+    runs
+      .filter(
+        (run) =>
+          run.threadId === threadId &&
+          run.storedRunId !== null &&
+          run.review.state === "pending" &&
+          run.runKey !== selected?.runKey,
+      )
+      .map((run) => [run.storedRunId as string, run.runKey]),
+  );
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -156,8 +183,8 @@ export function AssistantAgentPanel({
         api.getConversation(id),
         api.listConversations(),
       ]);
-      setHistory(detail.messages);
       setConversations(list);
+      if (openThread.current === id) setHistory(detail.messages);
     } catch (cause) {
       onMessage(messageOf(cause));
     }
@@ -298,7 +325,11 @@ export function AssistantAgentPanel({
         </div>
       </form>
 
-      <ConversationHistory messages={earlier} />
+      <ConversationHistory
+        messages={earlier}
+        awaitingReview={awaitingReview}
+        onReview={setSelectedKey}
+      />
 
       <div aria-live="polite">
         {live && (

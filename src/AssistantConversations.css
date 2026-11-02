@@ -125,3 +125,6 @@
   color: var(--muted);
   font-size: 11px;
 }
+.conversation-review {
+  justify-self: start;
+}
