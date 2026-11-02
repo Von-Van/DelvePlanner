@@ -37,9 +37,10 @@ class ScriptedModel:
         self.steps = [{"action": "call_tool", "tool": c["tool"], "arguments": c["args"]} for c in ref["calls"]]
         result = ref["result"]
         tool_ids = [f"tc-{i + 1}" for i in range(len(ref["calls"]))]
-        if result["status"] == "drafted":
-            # Cite only the last read: A1 refuses evidence that points at a failed call.
-            drafts = [{**d, "evidence": tool_ids[-1:]} for d in result["drafts"]]
+        if result["status"] == "drafted" or result.get("drafts"):
+            # Cite only the last read: A1 refuses evidence that points at a failed call. An answer with
+            # drafts carries only "remember" suggestions, which A1 reports as answered.
+            drafts = [{**d, "evidence": tool_ids[-1:] if d.get("evidence") else []} for d in result["drafts"]]
             self.steps.append({"action": "draft", "summary": result.get("answer", ""), "drafts": drafts})
         elif result["status"] == "answered":
             self.steps.append({"action": "answer", "answer": result["answer"]})

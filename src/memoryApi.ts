@@ -59,6 +59,28 @@ export const memoryOverviewSchema = z.object({
 });
 export type MemoryOverview = z.infer<typeof memoryOverviewSchema>;
 
+/** One "Remember this?" suggestion from an assistant run. Nothing is stored until approved. */
+export const memorySuggestionSchema = z
+  .object({
+    id: z.string().min(1),
+    kind: z.enum(memoryKinds),
+    content: z.string(),
+    /** "stated": the person said it. "inferred": the assistant's guess. */
+    basis: z.enum(["stated", "inferred"]),
+    planId: z.string().nullable(),
+    planTitle: z.string().nullable(),
+    state: z.discriminatedUnion("state", [
+      z.object({ state: z.literal("pending") }).strict(),
+      z.object({ state: z.literal("saving") }).strict(),
+      z
+        .object({ state: z.literal("remembered"), memoryId: z.string() })
+        .strict(),
+      z.object({ state: z.literal("dismissed") }).strict(),
+    ]),
+  })
+  .strict();
+export type MemorySuggestion = z.infer<typeof memorySuggestionSchema>;
+
 const fileResultSchema = z.object({
   completed: z.boolean(),
   fileName: z.string().nullable(),
@@ -104,6 +126,17 @@ export const memoryApi = {
     call(z.number().int(), "forget_project_memory", { planId }),
   clear: () => call(z.number().int(), "clear_memory"),
   exportFile: () => call(fileResultSchema, "export_memory_file"),
+  /** Stores a suggestion from an assistant run, as the person's own words or as a guess. */
+  rememberSuggestion: (runKey: string, suggestionId: string) =>
+    call(memorySuggestionSchema, "remember_suggestion", {
+      runKey,
+      suggestionId,
+    }),
+  dismissSuggestion: (runKey: string, suggestionId: string) =>
+    call(memorySuggestionSchema, "dismiss_suggestion", {
+      runKey,
+      suggestionId,
+    }),
 };
 export type MemoryApi = typeof memoryApi;
 
@@ -149,6 +182,13 @@ export function provenance(
   if (record.planId) parts.push(planTitles.get(record.planId) ?? "A project");
   parts.push(shortDate(record.updatedAt));
   return parts.filter(Boolean).join(" · ");
+}
+
+/** How a suggestion's origin reads on its card, so a guess is never shown as the person's words. */
+export function suggestionBasisLabel(basis: MemorySuggestion["basis"]) {
+  return basis === "stated"
+    ? "You said this"
+    : "Assistant's guess · saved as unconfirmed, and expires unless you confirm it";
 }
 
 export function memoryStatusLine(settings: MemorySettings, current: number) {
