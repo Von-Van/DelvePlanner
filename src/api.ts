@@ -627,6 +627,16 @@ export const operationSchema = z.discriminatedUnion("type", [
       workstream: recordReferenceSchema.nullable(),
     })
     .strict(),
+  z
+    .object({
+      type: z.literal("create_task_block"),
+      taskId: z.guid(),
+      ...targetSchema,
+      startAtUtc: timestampSchema,
+      timeZone: z.string(),
+      durationMinutes: z.number().int().min(5).max(1440),
+    })
+    .strict(),
 ]);
 
 const proposalReferenceSchema = z
@@ -684,6 +694,7 @@ const appliedProposalSchema = z
     milestoneIds: z.array(z.guid()),
     taskIds: z.array(z.guid()),
     workstreamIds: z.array(z.guid()),
+    taskBlockIds: z.array(z.guid()),
   })
   .strict();
 

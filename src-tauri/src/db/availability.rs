@@ -82,23 +82,13 @@ impl PlannerDatabase {
                 "A finished task can't take a new time block.".into(),
             ));
         }
-        let id = Uuid::new_v4().to_string();
-        let timestamp = now();
-        self.connection.execute(
-            "INSERT INTO task_blocks
-             (id, task_id, start_at_utc, time_zone, duration_minutes, revision, created_at,
-              updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6, ?6)",
-            params![
-                id,
-                task.id,
-                start_at_utc,
-                time_zone,
-                input.duration_minutes,
-                timestamp
-            ],
+        let block = insert_block(
+            &self.connection,
+            &task.id,
+            &start_at_utc,
+            &time_zone,
+            input.duration_minutes,
         )?;
-        let block = block_by_id(&self.connection, &id)?.ok_or(AppError::NotFound)?;
         Ok(ScheduledBlock { block, task })
     }
 
@@ -374,6 +364,76 @@ fn working_hours_from_row(row: &Row<'_>) -> rusqlite::Result<WorkingHours> {
         revision: row.get(3)?,
         updated_at: row.get(4)?,
     })
+}
+
+/// Writes a new block for a task whose start, zone, and length were already checked.
+pub(super) fn insert_block(
+    connection: &Connection,
+    task_id: &str,
+    start_at_utc: &str,
+    time_zone: &str,
+    duration_minutes: i64,
+) -> AppResult<TaskBlock> {
+    let id = Uuid::new_v4().to_string();
+    let timestamp = now();
+    connection.execute(
+        "INSERT INTO task_blocks
+         (id, task_id, start_at_utc, time_zone, duration_minutes, revision, created_at,
+          updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6, ?6)",
+        params![
+            id,
+            task_id,
+            start_at_utc,
+            time_zone,
+            duration_minutes,
+            timestamp
+        ],
+    )?;
+    block_by_id(connection, &id)?.ok_or(AppError::NotFound)
+}
+
+/// What already holds part of a stretch of time: a planner event or another task's time block,
+/// described for the person ("“Standup”", "the time block for “Review lease”"). Read-only
+/// calendars are not stored, so they are checked before a block is drafted, not here.
+pub(super) fn block_conflict(
+    connection: &Connection,
+    start_at_utc: &str,
+    duration_minutes: i64,
+) -> AppResult<Option<String>> {
+    // ?1 is the new block's start and ?2 its length in minutes.
+    let overlaps = |table: &str| {
+        format!(
+            "julianday({table}.start_at_utc) < julianday(?1, printf('+%d minutes', ?2))
+             AND julianday({table}.start_at_utc, printf('+%d minutes', {table}.duration_minutes))
+                 > julianday(?1)"
+        )
+    };
+    let event = connection
+        .query_row(
+            &format!(
+                "SELECT title FROM schedule_events WHERE {} ORDER BY start_at_utc LIMIT 1",
+                overlaps("schedule_events")
+            ),
+            params![start_at_utc, duration_minutes],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    if let Some(title) = event {
+        return Ok(Some(format!("“{title}”")));
+    }
+    let block = connection
+        .query_row(
+            &format!(
+                "SELECT tasks.title FROM task_blocks JOIN tasks ON tasks.id = task_blocks.task_id
+                 WHERE {} ORDER BY task_blocks.start_at_utc LIMIT 1",
+                overlaps("task_blocks")
+            ),
+            params![start_at_utc, duration_minutes],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    Ok(block.map(|title| format!("the time block for “{title}”")))
 }
 
 pub(super) fn block_by_id(connection: &Connection, id: &str) -> AppResult<Option<TaskBlock>> {

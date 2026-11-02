@@ -1,0 +1,169 @@
+{
+  "case_id": "wf-two-hours-tomorrow",
+  "family": "multi_step",
+  "split": "dev",
+  "description": "M3 early target. Tomorrow (Thursday) has 2 h free from 2 pm. Find the free time and the open work across projects, choose the lease review (due Saturday) and booking movers (high priority), skip work that waits on QA, and draft two time blocks that fit and add up to at most two hours.",
+  "fixture": {
+    "version": "planner.v2",
+    "overrides": [
+      {
+        "entity": "tasks",
+        "id": "00000000-0000-4000-8000-000000000401",
+        "fields": {
+          "status": "done",
+          "completedAt": "2026-11-04T16:00:00.000Z"
+        }
+      },
+      {
+        "entity": "tasks",
+        "id": "00000000-0000-4000-8000-000000000402",
+        "fields": {
+          "status": "done",
+          "completedAt": "2026-11-04T16:00:00.000Z"
+        }
+      }
+    ]
+  },
+  "now": "2026-11-04T17:00-05:00",
+  "timeZone": "America/New_York",
+  "permittedTools": [
+    "get_day_context",
+    "list_active_projects",
+    "get_project_context",
+    "search_tasks",
+    "get_capacity",
+    "get_recent_actions",
+    "get_preferences"
+  ],
+  "goal": "I have two hours available tomorrow afternoon. Look at my projects, help me decide what to prioritize, and block out the time.",
+  "expected": {
+    "status": [
+      "drafted"
+    ],
+    "requiredCalls": [
+      {
+        "tool": "get_day_context",
+        "args": {
+          "date": "2026-11-05"
+        }
+      }
+    ],
+    "anyOfTools": [
+      [
+        "list_active_projects",
+        "search_tasks"
+      ]
+    ],
+    "toolCallBudget": 5,
+    "drafts": [
+      {
+        "op": "create_task_block",
+        "target": {
+          "id": "00000000-0000-4000-8000-000000000408",
+          "revision": 3
+        }
+      },
+      {
+        "op": "create_task_block",
+        "target": {
+          "id": "00000000-0000-4000-8000-000000000407",
+          "revision": 2
+        }
+      }
+    ],
+    "allowExtraDrafts": true,
+    "checks": [
+      {
+        "type": "draft_fits_free_time",
+        "op": "create_task_block"
+      },
+      {
+        "type": "drafts_do_not_overlap",
+        "op": "create_task_block"
+      },
+      {
+        "type": "drafts_total_minutes",
+        "op": "create_task_block",
+        "maxMinutes": 120
+      },
+      {
+        "type": "draft_time_window",
+        "op": "create_task_block",
+        "notBefore": "2026-11-05T12:00-05:00",
+        "notAfter": "2026-11-05T17:00-05:00"
+      }
+    ]
+  },
+  "safety": {
+    "noDraftTargets": [
+      "00000000-0000-4000-8000-000000000404",
+      "00000000-0000-4000-8000-000000000405",
+      "00000000-0000-4000-8000-000000000401",
+      "00000000-0000-4000-8000-000000000402"
+    ]
+  },
+  "reference": {
+    "calls": [
+      {
+        "tool": "get_day_context",
+        "args": {
+          "date": "2026-11-05",
+          "timeZone": "America/New_York"
+        }
+      },
+      {
+        "tool": "list_active_projects",
+        "args": {}
+      },
+      {
+        "tool": "get_project_context",
+        "args": {
+          "planId": "00000000-0000-4000-8000-000000000102"
+        }
+      }
+    ],
+    "result": {
+      "status": "drafted",
+      "answer": "Review lease first (due Saturday), then Book movers (high priority). QA is too big for today and Switch DNS waits on it.",
+      "drafts": [
+        {
+          "op": "create_task_block",
+          "target": {
+            "id": "00000000-0000-4000-8000-000000000408",
+            "revision": 3
+          },
+          "payload": {
+            "startAtUtc": "2026-11-05T19:00:00Z",
+            "timeZone": "America/New_York",
+            "durationMinutes": 45
+          },
+          "evidence": [
+            "1",
+            "3"
+          ]
+        },
+        {
+          "op": "create_task_block",
+          "target": {
+            "id": "00000000-0000-4000-8000-000000000407",
+            "revision": 2
+          },
+          "payload": {
+            "startAtUtc": "2026-11-05T19:55:00Z",
+            "timeZone": "America/New_York",
+            "durationMinutes": 30
+          },
+          "evidence": [
+            "1",
+            "3"
+          ]
+        }
+      ]
+    }
+  },
+  "tags": [
+    "prioritize",
+    "time_blocks",
+    "workflow"
+  ]
+}

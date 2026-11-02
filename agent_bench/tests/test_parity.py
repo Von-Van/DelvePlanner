@@ -46,6 +46,8 @@ PROBES = [
     ("get_capacity", {"weekStart": "2026-10-26", "timeZone": TZ}),
     ("get_recent_actions", {}),
     ("get_memory", {}),
+    ("get_preferences", {}),
+    ("get_preferences", {"extra": True}),
     ("update_task", {"taskId": ID["t-qa"]}),
     ("get_day_context", {"date": "2026-13-01", "timeZone": TZ}),
     ("get_day_context", {"date": "2026-13-01", "timeZone": TZ}),
@@ -129,6 +131,38 @@ PLAIN_CASES = [c for c in load_cases("all") if not (c.get("stateChanges") or c.g
 def test_reference_calls_match(case):
     calls = [(c["tool"], c["args"]) for c in case["reference"]["calls"]]
     assert run_both(case, calls) == []
+
+
+def _block(n: int, task: str, start: str, minutes: int, zone: str = TZ) -> dict:
+    return {"id": f"00000000-0000-4000-8000-{700000 + n:012d}", "taskId": task, "startAtUtc": start, "timeZone": zone,
+            "durationMinutes": minutes, "revision": 1, "createdAt": "2026-10-20T15:00:00.000Z", "updatedAt": "2026-10-20T15:00:00.000Z"}
+
+
+@pytest.mark.parametrize("muted", [[], ["usual_start", "typical_daily_load"]])
+def test_preferences_profile_and_observations_match(muted):
+    """A set profile (days off, daily limit, preferred hours) and observations computed from time blocks."""
+    # Six finished tasks with estimates and blocks on six days; one block late in the evening counts on
+    # its own local day, not the next day in UTC.
+    overrides = []
+    for n in range(6):
+        task = _task(300 + n, status="done", estimatedMinutes=30, completedAt="2026-10-28T20:00:00.000Z", dueDate="2026-10-30")
+        overrides.append({"entity": "tasks", "add": task})
+        start = f"2026-10-{20 + n:02d}T{13 + n % 3:02d}:15:00.000Z" if n < 5 else "2026-10-26T03:30:00.000Z"
+        overrides.append({"entity": "taskBlocks", "add": _block(n, task["id"], start, 45)})
+    profile = {"preferredStartMinute": 540, "preferredEndMinute": 900, "maxPlannedMinutes": 240, "focusMinutes": 45,
+               "breakMinutes": 10, "noWorkDays": [5, 3], "energy": "morning", "mutedObservations": muted}
+    case = {"case_id": "parity-preferences", "fixture": {"version": "planner.v2", "overrides": overrides}, "now": "2026-11-03T09:00-05:00",
+            "timeZone": TZ, "permittedTools": ALL_TOOLS, "planningProfile": profile}
+    calls = [
+        ("get_preferences", {}),
+        ("get_capacity", {"weekStart": "2026-11-02", "timeZone": TZ}),
+        ("get_day_context", {"date": "2026-11-04", "timeZone": TZ}),
+    ]
+    assert run_both(case, calls) == []
+    result = MockToolClient(case).call("get_preferences", {})["result"]
+    assert result["profile"]["noWorkDays"] == ["wednesday", "friday"]
+    kinds = [o["kind"] for o in result["observations"]]
+    assert kinds == (["estimate_accuracy"] if muted else ["estimate_accuracy", "usual_start", "typical_daily_load"])
 
 
 def test_memory_probes_match():

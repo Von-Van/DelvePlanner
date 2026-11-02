@@ -69,6 +69,10 @@ class LiveToolClient:
         bundle_path.write_text(json.dumps(bundle))
         # The mock always serves the GitHub fixture (piece M), so the real server does too.
         command = [str(binary), "--bundle", str(bundle_path), "--github", str(GITHUB_FIXTURE)]
+        if case.get("planningProfile"):
+            profile_path = Path(self._dir.name) / "profile.json"
+            profile_path.write_text(json.dumps(case["planningProfile"]))
+            command += ["--profile", str(profile_path)]
         if case.get("memory"):
             memory_path = Path(self._dir.name) / "memory.json"
             memory_path.write_text(json.dumps(memory_export(case["memory"])))

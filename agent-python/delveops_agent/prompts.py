@@ -6,18 +6,28 @@ Kept in one place, versioned, so a benchmark run can record exactly which prompt
 from __future__ import annotations
 
 from collections.abc import Sequence
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from .drafts import DRAFT_OPS, MEMORY_OP_SPECS, OP_SPECS, TYPE_HELP, payload_help
 from .tools import ToolSpec
 from .types import AgentTask
 
-PROMPT_VERSION = "a1-v4"
+PROMPT_VERSION = "a1-v4"  # a1-v3 plus "remember" suggestions
 
 # JSON Schema passed to Ollama's `format` so the model must reply with exactly one step object.
 STEP_SCHEMA = {
     "type": "object",
     "properties": {
-        "action": {"type": "string", "enum": ["call_tool", "answer", "draft", "clarify", "cannot_complete"]},
+        "action": {"type": "string", "enum": ["plan", "call_tool", "answer", "draft", "clarify", "cannot_complete"]},
+        "steps": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {"tool": {"type": "string"}, "why": {"type": "string"}},
+                "required": ["tool"],
+            },
+        },
         "tool": {"type": "string"},
         "arguments": {"type": "object"},
         "answer": {"type": "string"},
@@ -59,6 +69,9 @@ def system_prompt(tools: Sequence[ToolSpec]) -> str:
     return f"""You are the planning assistant. You help one person with their own planner.
 
 You work in steps. Each reply is exactly one JSON object choosing one action:
+- {{"action": "plan", "steps": [{{"tool": NAME, "why": TEXT}}, ...]}}: only when the request needs several \
+lookups (like planning free time across projects), first list the reads you will make, then make them one by one. \
+Skip the plan for simple requests.
 - {{"action": "call_tool", "tool": NAME, "arguments": {{...}}}}: read planner data with one tool.
 - {{"action": "answer", "answer": TEXT}}: answer the question from what the tools returned.
 - {{"action": "draft", "summary": TEXT, "drafts": [{{"op": OP, "target": {{"id": ID, "revision": N}} or null, \
@@ -86,8 +99,30 @@ keeping for later sessions, or asks you to remember something, add a "remember" 
 be empty). basis is "stated" only for what the person said in this request; "inferred" for your own conclusion. \
 Keep content to one sentence in plain words. Don't propose remembering planner records (tasks, events, dates) \
 or what memory already holds. If you only have something to remember, use "draft" with your whole reply to \
-the person as the summary. Nothing is remembered unless the person approves it."""
+the person as the summary. Nothing is remembered unless the person approves it.
+
+Planning free time ("I have two hours tomorrow, what should I do?"):
+- Read the day's free ranges with get_day_context, the person's preferences with get_preferences when that tool \
+is offered, and the open work (list_active_projects, then get_project_context or search_tasks).
+- Prefer work that is overdue or due soonest, then higher priority, then work that unblocks other tasks. Skip done \
+tasks and tasks whose waitingOn lists a task that is not done.
+- Respect preferences: preferred hours, focus and break lengths, and the most work per day.
+- Draft create_task_block blocks inside the free ranges, copying startAtUtc from a free range or counting forward \
+from it. Never plan more time than is free, and leave the preferred break between blocks.
+- The summary says what you chose and why in one or two sentences (under 280 characters)."""
+
+
+def _local_days(task: AgentTask) -> str:
+    """ "Today is Wednesday 2026-11-04; tomorrow is Thursday 2026-11-05." in the task's zone, or "" when
+    the time or zone can't be read. Small models get weekdays and "tomorrow" wrong without it."""
+    try:
+        now = datetime.fromisoformat(task.now.replace("Z", "+00:00"))
+        today = now.astimezone(ZoneInfo(task.time_zone)).date()
+    except (ValueError, KeyError, OSError):
+        return ""
+    tomorrow = today + timedelta(days=1)
+    return f" Today is {today:%A} {today.isoformat()}; tomorrow is {tomorrow:%A} {tomorrow.isoformat()}."
 
 
 def task_message(task: AgentTask) -> str:
-    return f"Current time: {task.now} (time zone {task.time_zone}).\nRequest: {task.goal}"
+    return f"Current time: {task.now} (time zone {task.time_zone}).{_local_days(task)}\nRequest: {task.goal}"

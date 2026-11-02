@@ -30,6 +30,7 @@
         "delete_task",
         "create_workstream",
         "set_task_workstream",
+        "create_task_block",
         "remember"
       ]
     },
@@ -228,6 +229,14 @@
         "optional": [
           "workstream"
         ]
+      },
+      "create_task_block": {
+        "required": [
+          "startAtUtc",
+          "timeZone",
+          "durationMinutes"
+        ],
+        "optional": []
       },
       "remember": {
         "required": [
