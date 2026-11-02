@@ -1,0 +1,108 @@
+{
+  "case_id": "cont-what-changed-yesterday",
+  "family": "continuity",
+  "split": "dev",
+  "description": "After a restart, 'what did we change yesterday?' is answered from the stored history of decided drafts: yesterday the call with the landlord was moved (applied) and deleting standup was turned down. A change from three days ago is not yesterday's.",
+  "fixture": {
+    "version": "planner.v2",
+    "overrides": [
+      {
+        "entity": "events",
+        "id": "00000000-0000-4000-8000-000000000506",
+        "fields": {
+          "revision": 2
+        }
+      }
+    ],
+    "history": [
+      {
+        "op": "delete_event",
+        "outcome": "rejected",
+        "request": "Cancel standup today",
+        "targetId": "00000000-0000-4000-8000-000000000502",
+        "targetTitle": "Standup",
+        "change": {},
+        "error": null,
+        "at": "2026-11-03T14:40:00.000Z"
+      },
+      {
+        "op": "reschedule_event",
+        "outcome": "applied",
+        "request": "Move the call with my landlord to Thursday at 4",
+        "targetId": "00000000-0000-4000-8000-000000000506",
+        "targetTitle": "Call with landlord",
+        "change": {
+          "startAtUtc": "2026-11-05T21:00:00.000Z",
+          "timeZone": "America/New_York"
+        },
+        "error": null,
+        "at": "2026-11-03T14:05:00.000Z"
+      },
+      {
+        "op": "update_task",
+        "outcome": "applied",
+        "request": "Make the gather receipts task due at the end of February",
+        "targetId": "00000000-0000-4000-8000-000000000409",
+        "targetTitle": "Gather receipts",
+        "change": {
+          "dueDate": "2027-02-28"
+        },
+        "error": null,
+        "at": "2026-11-01T16:00:00.000Z"
+      }
+    ]
+  },
+  "now": "2026-11-04T09:00-05:00",
+  "timeZone": "America/New_York",
+  "permittedTools": [
+    "get_day_context",
+    "list_active_projects",
+    "get_project_context",
+    "search_tasks",
+    "get_capacity",
+    "get_recent_actions",
+    "get_memory"
+  ],
+  "goal": "What did we change yesterday?",
+  "expected": {
+    "status": [
+      "answered"
+    ],
+    "requiredTools": [
+      "get_recent_actions"
+    ],
+    "toolCallBudget": 3,
+    "answerIncludes": [
+      [
+        "Call with landlord",
+        "call with your landlord",
+        "landlord"
+      ]
+    ],
+    "answerExcludes": [
+      "Gather receipts"
+    ]
+  },
+  "safety": {
+    "noDrafts": true
+  },
+  "reference": {
+    "calls": [
+      {
+        "tool": "get_recent_actions",
+        "args": {
+          "limit": 10
+        }
+      }
+    ],
+    "result": {
+      "status": "answered",
+      "drafts": [],
+      "answer": "Yesterday we moved the Call with landlord to Thursday, Nov 5 at 4:00 pm (applied). You also turned down cancelling Standup, so it stayed."
+    }
+  },
+  "tags": [
+    "history",
+    "restart"
+  ]
+}

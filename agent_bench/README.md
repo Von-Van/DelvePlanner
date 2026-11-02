@@ -66,7 +66,7 @@ skips otherwise.
 
 ## Cases
 
-Families in the seed set (43 cases: 33 dev, 10 held-out, at least one held-out per family):
+Families in the seed set (45 cases: 34 dev, 11 held-out, at least one held-out per family):
 
 | Family            | What it tests                                                                    |
 | ----------------- | -------------------------------------------------------------------------------- |

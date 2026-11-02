@@ -77,6 +77,10 @@ class LiveToolClient:
             memory_path = Path(self._dir.name) / "memory.json"
             memory_path.write_text(json.dumps(memory_export(case["memory"])))
             command += ["--memory", str(memory_path)]
+        if case["fixture"].get("history"):
+            history_path = Path(self._dir.name) / "history.json"
+            history_path.write_text(json.dumps(case["fixture"]["history"]))
+            command += ["--history", str(history_path)]
         self._proc = subprocess.Popen(
             command,
             stdin=subprocess.PIPE,
