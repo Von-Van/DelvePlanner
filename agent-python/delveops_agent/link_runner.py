@@ -5,6 +5,11 @@ module only adapts: the link's live tool and model clients are wrapped in the in
 already uses (``ToolClient`` and ``ModelClient``), and every trace event the agent records is also
 streamed to the app as it happens, so the Assistant can show the run step by step.
 
+A request that continues a conversation also carries the app's chosen recent turns
+(``conversation``) and a digest of older ones (``conversationSummary``). They are put in front of the
+request the same way the memory wrapper does it (``delveops_agent.memory``), marked as context rather
+than instructions.
+
 Nothing here can write planner data. Drafts leave as drafts; the app re-validates them and asks the
 person before anything is applied.
 """
@@ -12,10 +17,12 @@ person before anything is applied.
 from __future__ import annotations
 
 import time
+from dataclasses import replace
 from typing import Any
 
 from . import agent as agent_module
 from .agent import A1Agent
+from .memory import MEMORY_HINT, MEMORY_PROMPT_VERSION, Turn, compose_goal, conversation_block, recent_window
 from .model import ModelError, ModelRequest, ModelResponse
 from .protocol.link import (
     BudgetExhausted,
@@ -119,8 +126,25 @@ class StreamingTracer(Tracer):
         return event
 
 
+def with_conversation(task: dict[str, Any], agent_task: AgentTask) -> tuple[AgentTask, dict[str, Any]]:
+    """The task with its conversation context in front of the request, and what that context was."""
+    turns = [Turn.from_dict(turn) for turn in task.get("conversation") or []]
+    window = recent_window(turns, len(turns))
+    summary = str(task.get("conversationSummary") or "").strip()
+    offered = "get_memory" in agent_task.permitted_tools
+    blocks = [summary, conversation_block(window) if window else "", MEMORY_HINT if offered else ""]
+    notes = {
+        "promptVersion": MEMORY_PROMPT_VERSION,
+        "turnsShown": len(window),
+        "turnsAvailable": len(turns),
+        "summaryShown": bool(summary),
+        "getMemoryOffered": offered,
+    }
+    return replace(agent_task, goal=compose_goal(agent_task.goal, *blocks)), notes
+
+
 def run(task: dict[str, Any], ctx: RunContext) -> dict[str, Any]:
-    agent_task = AgentTask.from_dict(task)
+    agent_task, context_notes = with_conversation(task, AgentTask.from_dict(task))
     budget = Budget.from_dict(ctx.budget or task.get("budget") or {})
     tools = LinkTools(ctx)
     model = LinkModel(ctx)
@@ -128,6 +152,11 @@ def run(task: dict[str, Any], ctx: RunContext) -> dict[str, Any]:
     # The agent builds its own tracer; swapping it for a streaming one is the only change.
     active = agent_module._Run(agent, agent_task, tools, model, budget)
     active.tracer = StreamingTracer(active.run_id, ctx, debug=agent.debug_trace)
+    if context_notes["turnsAvailable"] or context_notes["summaryShown"]:
+        summary = f"conversation: {context_notes['turnsShown']} recent turns"
+        if context_notes["summaryShown"]:
+            summary += " + a digest of older ones"
+        active.tracer.emit("plan", summary, context_notes)
     result = active.execute()
 
     out = result.to_dict()

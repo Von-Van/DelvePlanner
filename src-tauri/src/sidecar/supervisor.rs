@@ -146,6 +146,13 @@ pub struct RunRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub architecture: Option<String>,
     pub budget: RunBudget,
+    /// Earlier turns of the same conversation, oldest first (`{role, text, at}`), not including
+    /// this request. Empty for a request on its own.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub conversation: Vec<Value>,
+    /// A short digest of turns older than `conversation`, built by the app without a model call.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversation_summary: Option<String>,
 }
 
 #[derive(Debug, Clone)]

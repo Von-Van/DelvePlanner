@@ -1,18 +1,31 @@
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import {
+  FormEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { AgentTrace, TraceEvent } from "./AgentTrace";
 import {
   AgentRun,
   AssistantStatus,
   api,
+  Conversation,
+  ConversationMessage,
   DelvePlannerError,
   Proposal,
 } from "./api";
+import {
+  AssistantConversations,
+  ConversationHistory,
+  earlierMessages,
+} from "./AssistantConversations";
 import {
   fallbackReason,
   newRunKey,
   runMeasures,
   runStatusLabels,
-  runSummaryLine,
   runTone,
   withRun,
   withStep,
@@ -57,6 +70,17 @@ export function AssistantAgentPanel({
     null,
   );
   const [cancelling, setCancelling] = useState(false);
+  // The open conversation: follow-ups join it, so the agent sees what came before.
+  const [threadId, setThreadIdState] = useState<string | null>(null);
+  // The same, readable after an await: a conversation that finishes loading after the person
+  // has moved on must not replace what is on screen.
+  const openThread = useRef<string | null>(null);
+  const setThreadId = (id: string | null) => {
+    openThread.current = id;
+    setThreadIdState(id);
+  };
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [history, setHistory] = useState<ConversationMessage[]>([]);
 
   useEffect(() => {
     api
@@ -69,6 +93,10 @@ export function AssistantAgentPanel({
         setRuns(list);
         setSelectedKey(list[0]?.runKey ?? null);
       })
+      .catch(() => undefined);
+    api
+      .listConversations()
+      .then(setConversations)
       .catch(() => undefined);
   }, []);
 
@@ -86,7 +114,26 @@ export function AssistantAgentPanel({
   }, []);
 
   const running = live !== null;
-  const selected = runs.find((run) => run.runKey === selectedKey) ?? null;
+  const selected =
+    runs.find(
+      (run) =>
+        run.runKey === selectedKey &&
+        (run.threadId === null || run.threadId === threadId),
+    ) ?? null;
+  const earlier = earlierMessages(history, selected?.storedRunId ?? null);
+  // Runs of the open conversation whose changes still wait for a decision, by stored run id,
+  // so a proposal stays reachable after a follow-up that proposed nothing.
+  const awaitingReview = new Map(
+    runs
+      .filter(
+        (run) =>
+          run.threadId === threadId &&
+          run.storedRunId !== null &&
+          run.review.state === "pending" &&
+          run.runKey !== selected?.runKey,
+      )
+      .map((run) => [run.storedRunId as string, run.runKey]),
+  );
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -103,19 +150,91 @@ export function AssistantAgentPanel({
     setLive({ key, steps: [] });
     setSelectedKey(key);
     try {
-      const run = await api.runAssistant(request, localTimeZone, key);
+      const run = await api.runAssistant(request, localTimeZone, key, threadId);
       setRuns((current) => withRun(current, run));
       setGoal("");
+      if (run.threadId) {
+        setThreadId(run.threadId);
+        await loadConversation(run.threadId);
+      }
       // The failed run stays in the list with its steps; the planner answers the request.
       const reason = fallbackReason(run);
       if (reason && onFallback) onFallback(request, reason);
     } catch (cause) {
       setSelectedKey(runs[0]?.runKey ?? null);
+      // The request may have been saved before the run failed; show where it went.
+      if (threadId) void loadConversation(threadId);
+      else
+        void api
+          .listConversations()
+          .then(setConversations)
+          .catch(() => undefined);
       if (onFallback) onFallback(request, messageOf(cause));
       else onMessage(messageOf(cause));
     } finally {
       setLive(null);
       setCancelling(false);
+    }
+  }
+
+  async function loadConversation(id: string) {
+    try {
+      const [detail, list] = await Promise.all([
+        api.getConversation(id),
+        api.listConversations(),
+      ]);
+      setConversations(list);
+      if (openThread.current === id) setHistory(detail.messages);
+    } catch (cause) {
+      onMessage(messageOf(cause));
+    }
+  }
+
+  async function openConversation(id: string) {
+    if (running || id === threadId) return;
+    setThreadId(id);
+    setHistory([]);
+    // The newest run of this conversation from this session, if any, shows in full.
+    setSelectedKey(runs.find((run) => run.threadId === id)?.runKey ?? null);
+    await loadConversation(id);
+  }
+
+  function newConversation() {
+    if (running) return;
+    setThreadId(null);
+    setHistory([]);
+    setSelectedKey(null);
+  }
+
+  async function renameConversation(id: string, title: string) {
+    try {
+      const renamed = await api.renameConversation(id, title);
+      setConversations((current) =>
+        current.map((item) => (item.id === id ? renamed : item)),
+      );
+    } catch (cause) {
+      onMessage(messageOf(cause));
+    }
+  }
+
+  async function deleteConversation(conversation: Conversation) {
+    if (
+      !window.confirm(
+        `Delete “${conversation.title}”? Its messages and the runs it started are removed from this computer.`,
+      )
+    )
+      return;
+    try {
+      await api.deleteConversation(conversation.id);
+      setConversations((current) =>
+        current.filter((item) => item.id !== conversation.id),
+      );
+      setRuns((current) =>
+        current.filter((run) => run.threadId !== conversation.id),
+      );
+      if (conversation.id === threadId) newConversation();
+    } catch (cause) {
+      onMessage(messageOf(cause));
     }
   }
 
@@ -206,6 +325,12 @@ export function AssistantAgentPanel({
         </div>
       </form>
 
+      <ConversationHistory
+        messages={earlier}
+        awaitingReview={awaitingReview}
+        onReview={setSelectedKey}
+      />
+
       <div aria-live="polite">
         {live && (
           <div className="agent-run">
@@ -235,13 +360,15 @@ export function AssistantAgentPanel({
         )}
       </div>
 
-      {runs.length > 0 && (
-        <RecentRuns
-          runs={runs}
-          selectedKey={live ? null : selectedKey}
-          onSelect={setSelectedKey}
-        />
-      )}
+      <AssistantConversations
+        conversations={conversations}
+        openId={threadId}
+        disabled={running}
+        onOpen={openConversation}
+        onNew={newConversation}
+        onRename={renameConversation}
+        onDelete={deleteConversation}
+      />
 
       <p className="planner-footnote">
         <span aria-hidden="true">◌</span> Runs on this computer only. Every run
@@ -491,40 +618,6 @@ const toneLabels: Record<OperationTone, string> = {
   move: "Move",
   delete: "Remove",
 };
-
-function RecentRuns({
-  runs,
-  selectedKey,
-  onSelect,
-}: {
-  runs: AgentRun[];
-  selectedKey: string | null;
-  onSelect: (key: string) => void;
-}) {
-  return (
-    <section className="agent-recent" aria-label="Recent runs">
-      <p className="side-kicker">RECENT RUNS · THIS SESSION</p>
-      <ul>
-        {runs.map((run) => (
-          <li key={run.runKey}>
-            <button
-              className={run.runKey === selectedKey ? "selected" : ""}
-              onClick={() => onSelect(run.runKey)}
-              aria-pressed={run.runKey === selectedKey}
-            >
-              <span className={`agent-status-dot ${runTone(run)}`} />
-              <span className="agent-recent-goal">{run.goal}</span>
-              <small>
-                {run.cancelled ? "Stopped" : runStatusLabels[run.status]} ·{" "}
-                {runSummaryLine(run)}
-              </small>
-            </button>
-          </li>
-        ))}
-      </ul>
-    </section>
-  );
-}
 
 function messageOf(cause: unknown) {
   if (cause instanceof DelvePlannerError) return cause.message;
