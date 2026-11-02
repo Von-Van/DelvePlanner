@@ -1,0 +1,144 @@
+/* The Assistant's saved conversations and the earlier turns of the open one. */
+
+.conversations {
+  margin: 0 18px 8px;
+  padding-top: 14px;
+  border-top: 1px solid var(--hairline);
+}
+.conversations-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.conversations-empty {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.conversations ul {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.conversation-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md, 6px);
+}
+.conversation-row.open,
+.conversation-row:hover {
+  border-color: var(--hairline);
+  background: var(--ground-soft);
+}
+.conversation-open {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.conversation-open:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.conversation-title {
+  overflow: hidden;
+  color: var(--strong);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.conversation-row.open .conversation-title {
+  font-weight: 600;
+}
+.conversation-open small {
+  color: var(--muted);
+  font-size: 11px;
+}
+.conversation-actions {
+  display: flex;
+  gap: 2px;
+  padding-right: 6px;
+  opacity: 0;
+}
+.conversation-row:hover .conversation-actions,
+.conversation-row.open .conversation-actions,
+.conversation-actions:focus-within {
+  opacity: 1;
+}
+.conversation-action {
+  padding: 2px 6px;
+  border: 0;
+  border-radius: var(--radius-md, 6px);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.conversation-action:hover:not(:disabled) {
+  color: var(--strong);
+  background: var(--hairline);
+}
+.conversation-action.danger:hover:not(:disabled) {
+  color: var(--danger);
+  background: var(--danger-wash);
+}
+.conversation-row.editing form {
+  display: flex;
+  grid-column: 1 / -1;
+  gap: 6px;
+  padding: 4px;
+}
+.conversation-row.editing input {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md, 6px);
+  font: inherit;
+  font-size: 12px;
+}
+
+.conversation-history {
+  display: grid;
+  gap: 8px;
+  margin: 0 18px 12px;
+  padding: 0;
+  list-style: none;
+}
+.conversation-turn {
+  max-width: 85%;
+  padding: 8px 12px;
+  border-radius: var(--radius-lg, 10px);
+}
+.conversation-turn p {
+  margin: 2px 0 0;
+  color: var(--strong);
+  font-size: 13px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.conversation-turn.from-user {
+  justify-self: end;
+  background: var(--ground-soft);
+}
+.conversation-turn.from-agent {
+  justify-self: start;
+  border: 1px solid var(--hairline);
+}
+.conversation-turn-who {
+  color: var(--muted);
+  font-size: 11px;
+}
