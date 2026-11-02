@@ -148,6 +148,82 @@
         }
       }
     },
+    "planningProfile": {
+      "description": "The person's planning profile for get_preferences and capacity, as Settings saves it (src-tauri UpdatePlanningProfileInput without revision). Export bundles don't carry it. Left out means nothing was set.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "preferredStartMinute": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1440
+        },
+        "preferredEndMinute": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1440
+        },
+        "maxPlannedMinutes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 1440
+        },
+        "focusMinutes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 1440
+        },
+        "breakMinutes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 1440
+        },
+        "noWorkDays": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 7
+          }
+        },
+        "energy": {
+          "enum": [
+            "morning",
+            "afternoon",
+            "evening",
+            null
+          ]
+        },
+        "mutedObservations": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "estimate_accuracy",
+              "usual_start",
+              "typical_daily_load",
+              "deferred_days",
+              "repeatedly_moved",
+              "slipping_plan"
+            ]
+          }
+        }
+      }
+    },
     "goal": {
       "type": "string",
       "minLength": 1
@@ -481,7 +557,9 @@
               "type": {
                 "enum": [
                   "draft_fits_free_time",
-                  "draft_time_window"
+                  "draft_time_window",
+                  "drafts_total_minutes",
+                  "drafts_do_not_overlap"
                 ]
               },
               "op": {
@@ -492,6 +570,11 @@
               },
               "notAfter": {
                 "type": "string"
+              },
+              "maxMinutes": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "drafts_total_minutes: the most minutes the op's drafts may add up to."
               }
             }
           }

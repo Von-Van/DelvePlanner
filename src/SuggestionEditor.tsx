@@ -11,6 +11,7 @@ export function canEditSuggestion(change: ProposalChange) {
   switch (change.type) {
     case "create_event":
     case "reschedule_event":
+    case "create_task_block":
     case "create_plan":
     case "create_milestone":
     case "create_task":
@@ -27,9 +28,11 @@ export function canEditSuggestion(change: ProposalChange) {
   }
 }
 
-/** The local day and time an event suggestion starts at, in its own time zone. */
+/** The local day and time an event or time block suggestion starts at, in its own time zone. */
 function startOf(change: ProposalChange) {
-  return change.type === "create_event" || change.type === "reschedule_event"
+  return change.type === "create_event" ||
+    change.type === "reschedule_event" ||
+    change.type === "create_task_block"
     ? dateTimeFields(change.startAtUtc, change.timeZone)
     : null;
 }
@@ -60,7 +63,9 @@ export function SuggestionEditor({
     if (
       start &&
       original &&
-      (next.type === "create_event" || next.type === "reschedule_event") &&
+      (next.type === "create_event" ||
+        next.type === "reschedule_event" ||
+        next.type === "create_task_block") &&
       (start.day !== original.day || start.time !== original.time)
     ) {
       setSaving(true);
@@ -214,6 +219,16 @@ export function SuggestionEditor({
             minutes("Length", draft.durationMinutes, 5, (value) =>
               update({ durationMinutes: value }),
             )}
+        </>
+      );
+      break;
+    case "create_task_block":
+      fields = (
+        <>
+          {startFields}
+          {minutes("Length", draft.durationMinutes, 5, (value) =>
+            update({ durationMinutes: value }),
+          )}
         </>
       );
       break;

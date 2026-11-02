@@ -274,6 +274,35 @@ describe("proposal previews", () => {
     ]);
   });
 
+  it("describes time blocks by task, start, and length", () => {
+    const previews = describeProposal(
+      {
+        references: [{ id: venueId, kind: "task", title: "Book venue" }],
+        operations: [
+          {
+            id: "op-0",
+            dependsOn: [],
+            reason: null,
+            suggested: false,
+            change: {
+              type: "create_task_block",
+              taskId: venueId,
+              expectedRevision: 2,
+              startAtUtc: "2026-11-05T19:00:00.000Z",
+              timeZone: "America/New_York",
+              durationMinutes: 45,
+            },
+          },
+        ],
+      },
+      "America/New_York",
+    );
+    expect(previews[0].title).toBe("Block time for “Book venue”");
+    expect(previews[0].tone).toBe("create");
+    expect(previews[0].details[1]).toBe("45 min");
+    expect(previews[0].details[0]).toBe("Thu 5 Nov, 14:00");
+  });
+
   it("applies edits and carries a renamed new plan to what goes in it", () => {
     const proposal: Pick<Proposal, "operations"> = {
       operations: [

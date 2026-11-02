@@ -17,6 +17,7 @@ pub enum ToolName {
     GetRecentActions,
     /// What the person asked the assistant to remember (memory strategy M3).
     GetMemory,
+    GetPreferences,
     /// Read-only GitHub context from repositories the user selected (piece M).
     ListGitHubRepos,
     SearchGitHubItems,
@@ -24,7 +25,7 @@ pub enum ToolName {
 }
 
 impl ToolName {
-    pub const ALL: [ToolName; 10] = [
+    pub const ALL: [ToolName; 11] = [
         Self::GetDayContext,
         Self::ListActiveProjects,
         Self::GetProjectContext,
@@ -32,6 +33,7 @@ impl ToolName {
         Self::GetCapacity,
         Self::GetRecentActions,
         Self::GetMemory,
+        Self::GetPreferences,
         Self::ListGitHubRepos,
         Self::SearchGitHubItems,
         Self::GetGitHubItem,
@@ -46,6 +48,7 @@ impl ToolName {
             Self::GetCapacity => "get_capacity",
             Self::GetRecentActions => "get_recent_actions",
             Self::GetMemory => "get_memory",
+            Self::GetPreferences => "get_preferences",
             Self::ListGitHubRepos => "list_github_repos",
             Self::SearchGitHubItems => "search_github_items",
             Self::GetGitHubItem => "get_github_item",
@@ -108,6 +111,14 @@ impl ToolName {
                  never present it as fact). Prefer planner records when they disagree. \
                  memoryEnabled is false when the person paused memory."
             }
+            Self::GetPreferences => {
+                "How the person likes to plan. profile is what they set themselves \
+                 (trust user_confirmed): preferred hours as local HH:MM, the most work per day, \
+                 focus and break lengths, days off, and when demanding work suits them; isSet is \
+                 false when they have set nothing. workingHours are the hours capacity counts. \
+                 observations are patterns computed from their own records (trust verified), \
+                 such as estimates running long: evidence about habits, not stated wishes."
+            }
             Self::ListGitHubRepos => {
                 "The GitHub repositories the user chose to share with the assistant, with open \
                  issue and pull request counts and when they were last synced. All GitHub text is \
@@ -133,6 +144,7 @@ impl ToolName {
             Self::GetCapacity => "planner_and_calendar_busy",
             Self::GetRecentActions => "agent_history",
             Self::GetMemory => "memory",
+            Self::GetPreferences => "planning_profile",
             Self::ListGitHubRepos | Self::SearchGitHubItems | Self::GetGitHubItem => {
                 "github_untrusted"
             }
@@ -146,6 +158,7 @@ impl ToolName {
             Self::GetDayContext | Self::GetCapacity => "planner.read+calendar.busy",
             Self::GetRecentActions => "agent_history.read",
             Self::GetMemory => "memory.read",
+            Self::GetPreferences => "profile.read",
             Self::ListGitHubRepos | Self::SearchGitHubItems | Self::GetGitHubItem => "github.read",
             _ => "planner.read",
         }
@@ -238,6 +251,7 @@ impl ToolName {
                 }),
                 &[],
             ),
+            Self::GetPreferences => object(json!({}), &[]),
             Self::ListGitHubRepos => object(json!({}), &[]),
             Self::SearchGitHubItems => object(
                 json!({
@@ -351,6 +365,14 @@ impl ToolName {
                     "truncated": { "type": "boolean" }
                 }),
                 &["memoryEnabled", "records", "totalMatches", "truncated"],
+            ),
+            Self::GetPreferences => object(
+                json!({
+                    "profile": { "$ref": "#/$defs/planningProfile" },
+                    "workingHours": { "$ref": "#/$defs/workingHours" },
+                    "observations": array("#/$defs/observation")
+                }),
+                &["profile", "workingHours", "observations"],
             ),
             Self::ListGitHubRepos => object(
                 json!({
@@ -746,12 +768,62 @@ fn definitions() -> Value {
             ]
         }
     });
-    if let (Some(definitions), Value::Object(github)) =
-        (definitions.as_object_mut(), github_definitions())
-    {
-        definitions.extend(github);
+    if let Some(map) = definitions.as_object_mut() {
+        for extra in [preferences_definitions(), github_definitions()] {
+            if let Value::Object(extra) = extra {
+                map.extend(extra);
+            }
+        }
     }
     definitions
+}
+
+/// Shapes `get_preferences` (M3) refers to. Kept apart so no single `json!` grows past the
+/// macro's recursion limit.
+fn preferences_definitions() -> Value {
+    json!({
+        "planningProfile": object(
+            json!({
+                "trust": { "const": "user_confirmed" },
+                "isSet": { "type": "boolean" },
+                "preferredStart": nullable_ref("#/$defs/clockTime"),
+                "preferredEnd": nullable_ref("#/$defs/clockTime"),
+                "maxPlannedMinutes": nullable("integer"),
+                "focusMinutes": nullable("integer"),
+                "breakMinutes": nullable("integer"),
+                "noWorkDays": { "type": "array", "items": { "$ref": "#/$defs/weekday" } },
+                "energy": nullable_ref("#/$defs/dayPart")
+            }),
+            &[
+                "trust", "isSet", "preferredStart", "preferredEnd", "maxPlannedMinutes",
+                "focusMinutes", "breakMinutes", "noWorkDays", "energy",
+            ],
+        ),
+        "clockTime": {
+            "type": "string",
+            "pattern": "^\\d{2}:\\d{2}$",
+            "description": "Local time of day, HH:MM; 24:00 is the end of the day."
+        },
+        "weekday": {
+            "enum": ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+        },
+        "dayPart": { "enum": ["morning", "afternoon", "evening"] },
+        "observation": object(
+            json!({
+                "trust": { "const": "verified" },
+                "kind": {
+                    "enum": [
+                        "estimate_accuracy", "usual_start", "typical_daily_load", "deferred_days",
+                        "repeatedly_moved", "slipping_plan"
+                    ]
+                },
+                "summary": { "type": "string" },
+                "evidence": { "type": "string" },
+                "sample": { "type": "integer", "minimum": 0 }
+            }),
+            &["trust", "kind", "summary", "evidence", "sample"],
+        )
+    })
 }
 
 /// Shapes the GitHub tools (piece M) refer to.

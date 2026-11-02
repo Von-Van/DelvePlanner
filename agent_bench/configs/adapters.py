@@ -174,6 +174,7 @@ TARGET_FIELDS = {
     "set_task_plan": "taskId",
     "delete_task": "taskId",
     "set_task_workstream": "taskId",
+    "create_task_block": "taskId",
 }
 
 _ENTITIES = ("events", "plans", "milestones", "tasks", "workstreams", "taskBlocks")

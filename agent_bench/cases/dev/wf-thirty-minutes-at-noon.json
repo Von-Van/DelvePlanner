@@ -1,0 +1,135 @@
+{
+  "case_id": "wf-thirty-minutes-at-noon",
+  "family": "multi_step",
+  "split": "dev",
+  "description": "Too little time: only 30 minutes at noon tomorrow. The lease review (45 min) doesn't fit, so the most important work that does is booking movers (high priority, 30 min). One block, 12:00 to 12:30.",
+  "fixture": {
+    "version": "planner.v2",
+    "overrides": [
+      {
+        "entity": "tasks",
+        "id": "00000000-0000-4000-8000-000000000401",
+        "fields": {
+          "status": "done",
+          "completedAt": "2026-11-04T16:00:00.000Z"
+        }
+      },
+      {
+        "entity": "tasks",
+        "id": "00000000-0000-4000-8000-000000000402",
+        "fields": {
+          "status": "done",
+          "completedAt": "2026-11-04T16:00:00.000Z"
+        }
+      }
+    ]
+  },
+  "now": "2026-11-04T17:00-05:00",
+  "timeZone": "America/New_York",
+  "permittedTools": [
+    "get_day_context",
+    "list_active_projects",
+    "get_project_context",
+    "search_tasks",
+    "get_capacity",
+    "get_recent_actions",
+    "get_preferences"
+  ],
+  "goal": "I've got 30 minutes free tomorrow at noon. What's the most important thing I can fit in? Put it on my calendar.",
+  "expected": {
+    "status": [
+      "drafted"
+    ],
+    "anyOfTools": [
+      [
+        "list_active_projects",
+        "search_tasks"
+      ]
+    ],
+    "toolCallBudget": 5,
+    "drafts": [
+      {
+        "op": "create_task_block",
+        "target": {
+          "id": "00000000-0000-4000-8000-000000000407",
+          "revision": 2
+        }
+      }
+    ],
+    "checks": [
+      {
+        "type": "draft_fits_free_time",
+        "op": "create_task_block"
+      },
+      {
+        "type": "drafts_do_not_overlap",
+        "op": "create_task_block"
+      },
+      {
+        "type": "drafts_total_minutes",
+        "op": "create_task_block",
+        "maxMinutes": 30
+      },
+      {
+        "type": "draft_time_window",
+        "op": "create_task_block",
+        "notBefore": "2026-11-05T12:00-05:00",
+        "notAfter": "2026-11-05T12:30-05:00"
+      }
+    ]
+  },
+  "safety": {
+    "noDraftTargets": [
+      "00000000-0000-4000-8000-000000000404",
+      "00000000-0000-4000-8000-000000000405"
+    ]
+  },
+  "reference": {
+    "calls": [
+      {
+        "tool": "get_day_context",
+        "args": {
+          "date": "2026-11-05",
+          "timeZone": "America/New_York"
+        }
+      },
+      {
+        "tool": "list_active_projects",
+        "args": {}
+      },
+      {
+        "tool": "get_project_context",
+        "args": {
+          "planId": "00000000-0000-4000-8000-000000000102"
+        }
+      }
+    ],
+    "result": {
+      "status": "drafted",
+      "answer": "Book movers fits the half hour and is high priority; the lease review needs 45 minutes.",
+      "drafts": [
+        {
+          "op": "create_task_block",
+          "target": {
+            "id": "00000000-0000-4000-8000-000000000407",
+            "revision": 2
+          },
+          "payload": {
+            "startAtUtc": "2026-11-05T17:00:00Z",
+            "timeZone": "America/New_York",
+            "durationMinutes": 30
+          },
+          "evidence": [
+            "1",
+            "3"
+          ]
+        }
+      ]
+    }
+  },
+  "tags": [
+    "prioritize",
+    "time_blocks",
+    "workflow"
+  ]
+}

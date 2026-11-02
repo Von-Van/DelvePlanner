@@ -29,7 +29,8 @@
         "set_task_plan",
         "delete_task",
         "create_workstream",
-        "set_task_workstream"
+        "set_task_workstream",
+        "create_task_block"
       ]
     },
     "target": {
@@ -226,6 +227,14 @@
         "optional": [
           "workstream"
         ]
+      },
+      "create_task_block": {
+        "required": [
+          "startAtUtc",
+          "timeZone",
+          "durationMinutes"
+        ],
+        "optional": []
       }
     }
   }

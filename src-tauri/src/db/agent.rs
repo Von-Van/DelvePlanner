@@ -38,7 +38,7 @@ const MAX_STEP_DATA_BYTES: usize = 16 * 1024;
 const MAX_JSON_BYTES: usize = 64 * 1024;
 
 /// The operations a draft may carry: the snake_case names of `MutationOperation`'s variants.
-pub const DRAFT_OPERATIONS: [&str; 17] = [
+pub const DRAFT_OPERATIONS: [&str; 18] = [
     "create_event",
     "update_event",
     "delete_event",
@@ -56,6 +56,7 @@ pub const DRAFT_OPERATIONS: [&str; 17] = [
     "delete_task",
     "create_workstream",
     "set_task_workstream",
+    "create_task_block",
 ];
 
 // ---------------------------------------------------------------------------------------------
