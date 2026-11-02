@@ -43,7 +43,11 @@ unfinished work and tasks due today are still shown by the Assistant home's exis
 
 - At most three shown at once, highest score first (a deadline today or a clash within three hours ranks
   highest; a quiet project lowest).
+- At most two clashes, and one each of free focus time, overloaded day, pushed back and quiet project, show at a
+  time. Dismissing or acting on one lets the next of that kind through.
 - At most six heads-ups newly brought up per local day. Anything over waits for a later check.
+- **Not now** holds even past the heads-up's own end: a deadline snoozed today stays hidden after midnight, when it
+  turns overdue, until the promised time.
 - Finished heads-ups (dismissed, acted on, cleared, expired) are forgotten after 60 days.
 
 ## Storage

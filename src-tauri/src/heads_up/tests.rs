@@ -324,8 +324,9 @@ fn an_overloaded_week_brings_up_the_worst_day() {
         .iter()
         .filter(|heads_up| heads_up.kind == HeadsUpKind::Overloaded)
         .collect();
-    assert_eq!(overloaded.len(), 1, "one heads-up for the week");
+    assert_eq!(overloaded.len(), 2, "both days, worst first");
     assert_eq!(overloaded[0].title, "Tomorrow is overbooked by 2 h");
+    assert_eq!(overloaded[1].title, "Monday is overbooked by 1 h");
     assert_eq!(overloaded[0].key, "overloaded:2026-11-06");
     assert!(overloaded[0]
         .evidence
@@ -663,4 +664,71 @@ fn schema_eleven_gains_heads_ups_with_defaults() {
         }
     );
     assert!(migrated.all_heads_ups().unwrap().is_empty());
+}
+
+#[test]
+fn dismissing_one_of_a_kind_lets_the_next_through() {
+    let (_dir, mut database) = database();
+    let mut facts = collect(&database, &NoCalendars, thursday(9, 0), zone()).unwrap();
+    facts.quiet_plans = ["Charity Week", "Garden", "Website"]
+        .iter()
+        .enumerate()
+        .map(|(index, title)| QuietPlan {
+            plan_id: format!("p{index}"),
+            title: (*title).into(),
+            open_tasks: 2,
+            last_activity: thursday(9, 0) - Duration::days(30 - index as i64),
+        })
+        .collect();
+    let found = detect(&facts);
+    assert_eq!(found.len(), 3, "every quiet project is found");
+
+    let now = thursday(9, 0);
+    let record = |database: &mut PlannerDatabase, now| {
+        database
+            .record_heads_ups(&found, now, day_start(now, zone()))
+            .unwrap();
+        database.active_heads_ups(now, MAX_SHOWN_HEADS_UPS).unwrap()
+    };
+    let shown = record(&mut database, now);
+    assert_eq!(shown.len(), 1, "one quiet project at a time");
+    assert_eq!(shown[0].title, "“Charity Week” has gone quiet");
+
+    database.dismiss_heads_up(&shown[0].id, now).unwrap();
+    let next = record(&mut database, thursday(9, 5));
+    assert_eq!(next.len(), 1);
+    assert_eq!(next[0].title, "“Garden” has gone quiet");
+    database
+        .act_on_heads_up(&next[0].id, thursday(9, 6))
+        .unwrap();
+    assert_eq!(
+        record(&mut database, thursday(9, 10))[0].title,
+        "“Website” has gone quiet"
+    );
+}
+
+#[test]
+fn a_snooze_lasts_past_midnight_when_a_deadline_turns_overdue() {
+    let (_dir, mut database) = database();
+    add_task(
+        &mut database,
+        NewTask {
+            title: "Venue deposit",
+            due: Some("2026-11-05"),
+            ..NewTask::default()
+        },
+    );
+    let shown = check(&mut database, thursday(15, 0));
+    assert_eq!(shown[0].title, "“Venue deposit” is due today");
+    database
+        .snooze_heads_up(&shown[0].id, at("2026-11-06", 9, 0), thursday(15, 5))
+        .unwrap();
+
+    // After midnight it is overdue, but the snooze still holds until 9 AM.
+    assert!(check(&mut database, at("2026-11-06", 0, 30)).is_empty());
+    assert!(check(&mut database, at("2026-11-06", 8, 55)).is_empty());
+    let back = check(&mut database, at("2026-11-06", 9, 5));
+    assert_eq!(back.len(), 1);
+    assert_eq!(back[0].id, shown[0].id);
+    assert_eq!(back[0].title, "“Venue deposit” was due yesterday");
 }

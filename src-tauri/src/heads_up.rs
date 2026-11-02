@@ -46,6 +46,8 @@ const DEADLINE_DAYS_AHEAD: i64 = 2;
 const OVERDUE_DAYS: i64 = 7;
 /// Overlaps shorter than this are rounding, not clashes.
 const MIN_CLASH_MINUTES: i64 = 5;
+/// At most this many clashes are passed on per check; storage shows two at a time.
+const MAX_CLASHES_CONSIDERED: usize = 10;
 /// Clashes are looked for from now through the end of tomorrow.
 const CLASH_DAYS: u64 = 2;
 /// A day counts as overloaded once planned work exceeds the time for it by this much.
@@ -304,7 +306,8 @@ struct Timed {
     target: Option<HeadsUpTarget>,
 }
 
-/// Overlapping commitments from now through the end of tomorrow, earliest first, at most two.
+/// Overlapping commitments from now through the end of tomorrow, earliest first. Storage shows
+/// at most two at a time.
 fn clashes(facts: &HeadsUpFacts) -> Vec<NewHeadsUp> {
     let until = crate::calendar::ics::local_midnight(
         facts.today + chrono::Days::new(CLASH_DAYS),
@@ -404,8 +407,9 @@ fn clashes(facts: &HeadsUpFacts) -> Vec<NewHeadsUp> {
     pairs.sort_by_key(|pair| pair.2);
     pairs
         .into_iter()
-        .take(2)
-        .map(|(first, second, overlap_start, overlap_end)| {
+        .take(MAX_CLASHES_CONSIDERED)
+        .enumerate()
+        .map(|(rank, (first, second, overlap_start, overlap_end))| {
             let day = local_day(overlap_start, facts.zone);
             let soon = overlap_start - facts.now <= Duration::hours(3);
             let mut keys = [first.key.as_str(), second.key.as_str()];
@@ -438,7 +442,7 @@ fn clashes(facts: &HeadsUpFacts) -> Vec<NewHeadsUp> {
                     second.title,
                     time_range(second.start, second.end, facts.zone),
                 ),
-                score: if soon { 97 } else { 85 },
+                score: if soon { 97 } else { 85 } - rank as i64,
                 urgent: day == facts.today,
                 expires_at: overlap_end,
             }
@@ -508,8 +512,9 @@ fn focus_window(facts: &HeadsUpFacts) -> Option<NewHeadsUp> {
     })
 }
 
-/// The worst coming day (tomorrow through six days out) with more planned work than time.
-fn overloaded(facts: &HeadsUpFacts) -> Option<NewHeadsUp> {
+/// Coming days (tomorrow through six days out) with more planned work than time, worst first.
+/// Storage shows one at a time, so dismissing one day lets the next come through.
+fn overloaded(facts: &HeadsUpFacts) -> Vec<NewHeadsUp> {
     let limit = facts.capacity.planned_limit_minutes;
     let over_days: Vec<(NaiveDate, i64, i64, i64)> = facts
         .capacity
@@ -528,10 +533,27 @@ fn overloaded(facts: &HeadsUpFacts) -> Option<NewHeadsUp> {
             (over >= MIN_OVERLOAD_MINUTES).then_some((date, over, day.planned_minutes, room))
         })
         .collect();
-    let (date, over, planned, room) = *over_days
-        .iter()
-        .max_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.cmp(&a.0)))?;
-    let others = over_days.len() - 1;
+    let mut worst_first = over_days.clone();
+    worst_first.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    let others = over_days.len().saturating_sub(1);
+    worst_first
+        .into_iter()
+        .enumerate()
+        .map(|(rank, (date, over, planned, room))| {
+            overloaded_day(facts, date, over, planned, room, others, rank)
+        })
+        .collect()
+}
+
+fn overloaded_day(
+    facts: &HeadsUpFacts,
+    date: NaiveDate,
+    over: i64,
+    planned: i64,
+    room: i64,
+    others: usize,
+    rank: usize,
+) -> NewHeadsUp {
     let day_name = day_phrase(date, facts.today);
     let mut evidence = if room == 0 {
         format!(
@@ -553,7 +575,7 @@ fn overloaded(facts: &HeadsUpFacts) -> Option<NewHeadsUp> {
             if others == 1 { "is" } else { "are" }
         ));
     }
-    Some(NewHeadsUp {
+    NewHeadsUp {
         kind: HeadsUpKind::Overloaded,
         key: format!("overloaded:{date}"),
         title: format!(
@@ -578,16 +600,24 @@ fn overloaded(facts: &HeadsUpFacts) -> Option<NewHeadsUp> {
             80
         } else {
             70
-        },
+        } - rank as i64,
         urgent: false,
         expires_at: crate::calendar::ics::local_midnight(date, facts.zone),
-    })
+    }
 }
 
-/// The open task carried off its day most often.
-fn pushed_back(facts: &HeadsUpFacts) -> Option<NewHeadsUp> {
-    let task = facts.pushed_back.first()?;
-    Some(NewHeadsUp {
+/// Open tasks carried off their day repeatedly, most moved first. Storage shows one at a time.
+fn pushed_back(facts: &HeadsUpFacts) -> Vec<NewHeadsUp> {
+    facts
+        .pushed_back
+        .iter()
+        .enumerate()
+        .map(|(rank, task)| pushed_back_task(facts, task, rank))
+        .collect()
+}
+
+fn pushed_back_task(facts: &HeadsUpFacts, task: &PushedTask, rank: usize) -> NewHeadsUp {
+    NewHeadsUp {
         kind: HeadsUpKind::PushedBack,
         key: format!("pushed_back:{}", task.task_id),
         title: format!("“{}” keeps getting pushed back", task.title),
@@ -602,22 +632,35 @@ fn pushed_back(facts: &HeadsUpFacts) -> Option<NewHeadsUp> {
              give it real time, or drop it, and draft the change.",
             task.title, task.moves
         ),
-        score: 40 + task.moves.min(10),
+        score: 40 + task.moves.min(10) - rank as i64,
         urgent: false,
         expires_at: facts.now + Duration::days(1),
-    })
+    }
 }
 
-/// The active project that has been quiet longest.
-fn quiet_project(facts: &HeadsUpFacts) -> Option<NewHeadsUp> {
+/// Active projects quiet for two weeks, quietest first. Storage shows one at a time.
+fn quiet_project(facts: &HeadsUpFacts) -> Vec<NewHeadsUp> {
     let cutoff = facts.now - Duration::days(QUIET_PROJECT_DAYS);
-    let plan = facts
+    let mut quiet: Vec<&QuietPlan> = facts
         .quiet_plans
         .iter()
         .filter(|plan| plan.last_activity < cutoff)
-        .min_by(|a, b| a.last_activity.cmp(&b.last_activity))?;
+        .collect();
+    quiet.sort_by(|a, b| {
+        a.last_activity
+            .cmp(&b.last_activity)
+            .then_with(|| a.plan_id.cmp(&b.plan_id))
+    });
+    quiet
+        .into_iter()
+        .enumerate()
+        .map(|(rank, plan)| quiet_plan(facts, plan, rank))
+        .collect()
+}
+
+fn quiet_plan(facts: &HeadsUpFacts, plan: &QuietPlan, rank: usize) -> NewHeadsUp {
     let days = (facts.now - plan.last_activity).num_days();
-    Some(NewHeadsUp {
+    NewHeadsUp {
         kind: HeadsUpKind::QuietProject,
         key: format!("quiet_project:{}", plan.plan_id),
         title: format!("“{}” has gone quiet", plan.title),
@@ -639,10 +682,10 @@ fn quiet_project(facts: &HeadsUpFacts) -> Option<NewHeadsUp> {
              What's the state of it, and what should happen next?",
             plan.title
         ),
-        score: 30,
+        score: 30 - (rank as i64).min(10),
         urgent: false,
         expires_at: facts.now + Duration::days(1),
-    })
+    }
 }
 
 // ---------------------------------------------------------------------------------------------

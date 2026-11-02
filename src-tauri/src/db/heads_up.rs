@@ -19,7 +19,7 @@ use crate::model::Task;
 use chrono::{DateTime, Duration, NaiveDate, Utc};
 use rusqlite::{params, Connection, OptionalExtension, Row, TransactionBehavior};
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 /// At most this many heads-ups are shown at once. Fewer is normal; there is no quota to fill.
@@ -101,6 +101,17 @@ pub enum HeadsUpKind {
 }
 
 impl HeadsUpKind {
+    /// How many of this kind may show (or be snoozed) at once. A rule may find more; the rest
+    /// wait, so dismissing one lets the next come through instead of hiding them all.
+    pub fn max_showing(self) -> usize {
+        match self {
+            // Each deadline is a different piece of work: only the screen's own cap applies.
+            Self::Deadline => usize::MAX,
+            Self::Clash => 2,
+            Self::FocusWindow | Self::Overloaded | Self::PushedBack | Self::QuietProject => 1,
+        }
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Deadline => "deadline",
@@ -528,6 +539,29 @@ impl PlannerDatabase {
             .filter(|heads_up| heads_up.expires_at > now)
             .collect();
         ordered.sort_by(|a, b| b.score.cmp(&a.score).then_with(|| a.key.cmp(&b.key)));
+        let found_keys: HashSet<&str> =
+            found.iter().map(|heads_up| heads_up.key.as_str()).collect();
+        // What already shows (or is snoozed) and is still true counts against each kind's cap.
+        let mut showing_by_kind: HashMap<HeadsUpKind, usize> = HashMap::new();
+        {
+            let mut statement = transaction.prepare(
+                "SELECT kind, dedupe_key FROM agent_suggestion
+                 WHERE status IN ('active', 'snoozed')",
+            )?;
+            let rows = statement
+                .query_map([], |row| {
+                    Ok((
+                        HeadsUpKind::parse(&row.get::<_, String>(0)?)?,
+                        row.get::<_, String>(1)?,
+                    ))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            for (kind, key) in rows {
+                if found_keys.contains(key.as_str()) {
+                    *showing_by_kind.entry(kind).or_default() += 1;
+                }
+            }
+        }
         let mut seen = HashSet::new();
         for heads_up in ordered {
             if !seen.insert(heads_up.key.as_str()) {
@@ -558,6 +592,11 @@ impl PlannerDatabase {
             };
             match existing {
                 None => {
+                    if showing_by_kind.get(&heads_up.kind).copied().unwrap_or(0)
+                        >= heads_up.kind.max_showing()
+                    {
+                        continue;
+                    }
                     if surfaced_today >= MAX_NEW_HEADS_UPS_PER_DAY {
                         outcome.held_back += 1;
                         continue;
@@ -586,6 +625,7 @@ impl PlannerDatabase {
                         ],
                     )?;
                     surfaced_today += 1;
+                    *showing_by_kind.entry(heads_up.kind).or_default() += 1;
                     outcome.surfaced += 1;
                     outcome.changed = true;
                 }
@@ -621,6 +661,11 @@ impl PlannerDatabase {
                         }
                     }
                     HeadsUpStatus::Cleared | HeadsUpStatus::Expired => {
+                        if showing_by_kind.get(&heads_up.kind).copied().unwrap_or(0)
+                            >= heads_up.kind.max_showing()
+                        {
+                            continue;
+                        }
                         if surfaced_today >= MAX_NEW_HEADS_UPS_PER_DAY {
                             outcome.held_back += 1;
                             continue;
@@ -649,6 +694,7 @@ impl PlannerDatabase {
                             ],
                         )?;
                         surfaced_today += 1;
+                        *showing_by_kind.entry(heads_up.kind).or_default() += 1;
                         outcome.surfaced += 1;
                         outcome.changed = true;
                     }
@@ -673,8 +719,6 @@ impl PlannerDatabase {
                 .collect::<rusqlite::Result<Vec<_>>>()?;
             rows
         };
-        let found_keys: HashSet<&str> =
-            found.iter().map(|heads_up| heads_up.key.as_str()).collect();
         for (id, key, status) in showing {
             if found_keys.contains(key.as_str()) {
                 continue;
@@ -813,7 +857,7 @@ impl PlannerDatabase {
     }
 }
 
-/// Wakes snoozed heads-ups whose time has come, expires those whose subject is over, and forgets
+/// Wakes snoozed heads-ups whose time has come, expires showing ones whose subject is over, and forgets
 /// long-finished ones. Returns whether anything on screen changed.
 fn tidy(connection: &Connection, now: DateTime<Utc>) -> AppResult<bool> {
     let now_text = utc_string(now);
@@ -822,10 +866,13 @@ fn tidy(connection: &Connection, now: DateTime<Utc>) -> AppResult<bool> {
          WHERE status = 'snoozed' AND snoozed_until <= ?1",
         params![now_text],
     )?;
+    // A snoozed heads-up keeps its snooze past its expiry: if the next check still finds it (a
+    // deadline due today that is overdue tomorrow), it stays hidden until the time promised.
+    // Once the snooze ends it wakes above, and expires here if what it was about is over.
     let expired = connection.execute(
         "UPDATE agent_suggestion
-         SET status = 'expired', snoozed_until = NULL, resolved_at = ?1
-         WHERE status IN ('active', 'snoozed') AND expires_at <= ?1",
+         SET status = 'expired', resolved_at = ?1
+         WHERE status = 'active' AND expires_at <= ?1",
         params![now_text],
     )?;
     connection.execute(
