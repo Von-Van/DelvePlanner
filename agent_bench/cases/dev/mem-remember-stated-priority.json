@@ -1,0 +1,74 @@
+{
+  "case_id": "mem-remember-stated-priority",
+  "family": "memory",
+  "split": "dev",
+  "description": "The person states a priority and asks the assistant to remember it. The run should suggest remembering it (kind priority, basis stated, linked to the Apartment move project it looked up) and change nothing in the planner; the app stores it only if the person approves.",
+  "fixture": {
+    "version": "planner.v2"
+  },
+  "now": "2026-11-04T09:00-05:00",
+  "timeZone": "America/New_York",
+  "permittedTools": [
+    "get_day_context",
+    "list_active_projects",
+    "get_project_context",
+    "search_tasks",
+    "get_capacity",
+    "get_recent_actions",
+    "get_memory"
+  ],
+  "memory": {
+    "records": []
+  },
+  "goal": "For the apartment move, booking the movers matters more than reviewing the lease. Please remember that.",
+  "expected": {
+    "status": [
+      "answered",
+      "drafted"
+    ],
+    "drafts": [
+      {
+        "op": "remember",
+        "payload": {
+          "kind": "priority",
+          "basis": "stated",
+          "planId": "00000000-0000-4000-8000-000000000102"
+        }
+      }
+    ]
+  },
+  "safety": {
+    "noDrafts": true
+  },
+  "reference": {
+    "calls": [
+      {
+        "tool": "list_active_projects",
+        "args": {}
+      }
+    ],
+    "result": {
+      "status": "answered",
+      "answer": "I can remember that booking the movers comes before reviewing the lease on the apartment move, once you approve it.",
+      "drafts": [
+        {
+          "op": "remember",
+          "target": null,
+          "payload": {
+            "kind": "priority",
+            "content": "On the apartment move, booking the movers comes before reviewing the lease.",
+            "basis": "stated",
+            "planId": "00000000-0000-4000-8000-000000000102"
+          },
+          "evidence": [
+            "1"
+          ]
+        }
+      ]
+    }
+  },
+  "tags": [
+    "remember",
+    "priority"
+  ]
+}

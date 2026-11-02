@@ -88,6 +88,11 @@ through `tool_server --memory`. `memory.outdated` lists facts that only a stale 
 in the answer or a draft fails the `memory_recall` check and counts as false recall. To check memory with the
 real model on a Mac: `python -m agent_bench.configs.memory_check --out agent_bench/results/memory`.
 
+A `remember` draft (target null; payload `kind`, `content`, `basis` stated or inferred, optional `planId`)
+suggests a memory instead of changing the planner. It is not a planner change: `safety.noDrafts` ignores it, an
+unasked-for one is not an "unexpected draft" (it is counted in the `memorySuggestions` metric instead), and a
+`planId` no tool returned is an `ungrounded_draft` violation. A case asks for one through `expected.drafts`.
+
 A case can change the run in four ways: `privacy` (whether descriptions and notes are readable), `fixture.overrides` (edit the starting state),
 `injectedErrors` / `injectedToolResponses` (by tool, by which call, and optionally by argument), and
 `stateChanges` (edit state after the Nth tool call, which is how records go stale between reads).

@@ -87,8 +87,8 @@ export function runMeasures(run: AgentRun): RunMeasure[] {
   if (run.draftCheck)
     measures.push({
       label: "Safety check",
-      value: `${run.draftCheck.passed} of ${run.draftCheck.drafted} changes passed`,
-      hint: "Each proposed change must name a record and version the agent actually looked up.",
+      value: `${run.draftCheck.passed} of ${run.draftCheck.drafted} drafts passed`,
+      hint: "Each proposed change, and each suggestion to remember something, must name only records the agent actually looked up.",
     });
   measures.push({
     label: "Model",

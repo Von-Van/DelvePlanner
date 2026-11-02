@@ -18,6 +18,7 @@ import {
   withStep,
 } from "./AssistantRuns";
 import { localTimeZone } from "./date";
+import { MemorySuggestions } from "./MemorySuggestions";
 import { Glyph, Mark, Spinner } from "./Geometry";
 import { acceptedOperations, describeProposal } from "./proposals";
 import {
@@ -288,6 +289,13 @@ function RunView({
           onRefresh={onRefresh}
         />
       )}
+      <MemorySuggestions
+        runKey={run.runKey}
+        suggestions={run.memorySuggestions}
+        problems={run.draftCheck?.memoryProblems ?? []}
+        onMessage={onMessage}
+        onRefresh={onRefresh}
+      />
       {run.review.state === "applied" && (
         <p className="agent-note good">
           Applied {run.review.changes} change

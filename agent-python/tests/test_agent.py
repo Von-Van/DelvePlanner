@@ -116,6 +116,37 @@ def test_create_draft_needs_no_target():
     assert tools.calls == []
 
 
+def test_remember_draft_rides_along_with_planner_changes():
+    remember = {
+        "op": "remember",
+        "target": None,
+        "payload": {"kind": "priority", "content": "The grant budget comes first this week.", "basis": "stated"},
+        "evidence": [],
+    }
+    draft = json.loads(json.dumps(SCHEDULE_DRAFT))
+    draft["drafts"].append(remember)
+    result, _, model = run([search(), draft])
+    assert result.status == "drafted"
+    assert [d.op for d in result.drafts] == ["schedule_task", "remember"]
+    system = model.requests[0].messages[0]["content"]
+    assert '"remember"' in system and "Nothing is remembered unless the person approves it" in system
+
+
+def test_only_remembering_is_an_answer_not_a_change():
+    remember = {
+        "op": "remember",
+        "target": None,
+        "payload": {"kind": "preference", "content": "Prefers calls in the afternoon.", "basis": "stated"},
+        "evidence": [],
+    }
+    step = {"action": "draft", "summary": "Got it: afternoons for calls.", "drafts": [remember]}
+    result, tools, _ = run([step])
+    assert (result.status, result.answer) == ("answered", "Got it: afternoons for calls.")
+    assert [d.op for d in result.drafts] == ["remember"] and tools.calls == []
+    result, _, _ = run([{**step, "summary": ""}])
+    assert result.status == "drafted"
+
+
 def test_result_serialises_to_contract_shape():
     result, _, _ = run([search(), SCHEDULE_DRAFT])
     data = json.loads(json.dumps(result.to_dict()))

@@ -14,7 +14,7 @@ import uuid
 from collections.abc import Callable
 from typing import Any, Protocol
 
-from .drafts import DraftError, observed_records, observed_references, parse_draft
+from .drafts import MEMORY_OP_SPECS, DraftError, observed_records, observed_references, parse_draft
 from .model import ModelClient, ModelError, ModelRequest
 from .prompts import PROMPT_VERSION, STEP_SCHEMA, system_prompt, task_message
 from .tools import ToolClient, ToolSpec, check_arguments, default_catalog
@@ -209,7 +209,11 @@ class _Run:
             if drafts is None:
                 return None, None, []
             self.repairs_in_a_row = 0
-            return "drafted", step.get("summary") or None, drafts
+            summary = step.get("summary") if isinstance(step.get("summary"), str) else ""
+            if drafts and summary.strip() and all(d.op in MEMORY_OP_SPECS for d in drafts):
+                # Only "remember this?" suggestions: the run answered and proposes no planner change.
+                return "answered", summary, drafts
+            return "drafted", summary or None, drafts
         if action == "clarify" and isinstance(step.get("question"), str) and step["question"].strip():
             raise _Stop("needs_clarification", "model_asked", step["question"])
         if action == "cannot_complete":

@@ -1384,6 +1384,7 @@ async fn run_assistant(
         chrono::Utc::now(),
     );
     let budget_json = serde_json::to_value(&budget).unwrap_or_default();
+    memory::filter_suggestions(&state, &mut record);
     if let Err(error) = with_database(&state, |database| {
         assistant::store_run(database, &mut record, &budget_json)
     }) {
@@ -1798,6 +1799,8 @@ pub fn run() {
             memory::forget_project_memory,
             memory::clear_memory,
             memory::export_memory_file,
+            memory::remember_suggestion,
+            memory::dismiss_suggestion,
             evaluation::list_evaluation_runs,
             evaluation::get_evaluation_run,
             evaluation::get_evaluation_trace,

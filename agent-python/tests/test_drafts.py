@@ -15,6 +15,9 @@ import pytest
 from delveops_agent.drafts import (
     ALLOWED_OPS,
     CREATE_OPS,
+    DRAFT_OPS,
+    MAX_MEMORY_CHARS,
+    MEMORY_OP_SPECS,
     OP_SPECS,
     TARGET_ID_FIELDS,
     TARGETED_OPS,
@@ -90,12 +93,14 @@ def test_op_table_matches_rust_mutation_operation_exactly():
 @pytest.mark.skipif(not BENCH_DRAFT_SCHEMA.is_file(), reason="needs agent_bench")
 def test_op_table_matches_benchmark_draft_schema():
     spec = json.loads(BENCH_DRAFT_SCHEMA.read_text(encoding="utf-8"))
-    assert set(spec["properties"]["op"]["enum"]) == ALLOWED_OPS
+    assert set(spec["properties"]["op"]["enum"]) == DRAFT_OPS
     operations = spec["x-operations"]
-    assert set(operations["targetless"]) == CREATE_OPS
+    assert set(operations["targetless"]) == CREATE_OPS | set(MEMORY_OP_SPECS)
+    specs = {**OP_SPECS, **MEMORY_OP_SPECS}
+    assert set(operations["fields"]) == DRAFT_OPS
     for op, fields in operations["fields"].items():
-        assert set(fields["required"]) == {n for n, (_, req) in OP_SPECS[op].items() if req}, op
-        assert set(fields["optional"]) == {n for n, (_, req) in OP_SPECS[op].items() if not req}, op
+        assert set(fields["required"]) == {n for n, (_, req) in specs[op].items() if req}, op
+        assert set(fields["optional"]) == {n for n, (_, req) in specs[op].items() if not req}, op
 
 
 # -- payload validation ---------------------------------------------------------------------------
@@ -219,3 +224,47 @@ def test_every_op_has_a_valid_minimal_draft_that_maps_to_rust_field_names():
         operation = mutation_operation(d)
         expected = {"type", *spec} | ({TARGET_ID_FIELDS[op], "expectedRevision"} if target else set())
         assert set(operation) == expected, op
+
+
+# -- "remember this?" -----------------------------------------------------------------------------
+
+
+def remember(payload, target=None, evidence=(), references=None):
+    raw = {"op": "remember", "target": target, "payload": payload, "evidence": list(evidence)}
+    return parse_draft(raw, {"tc-1"}, dict(RECORDS), references)
+
+
+def test_remember_is_a_targetless_suggestion_not_a_planner_change():
+    d = remember(
+        {"kind": "priority", "content": "Sponsors come before the venue.", "basis": "stated", "planId": "plan-7"}
+    )
+    assert d.target is None and d.payload["planId"] == "plan-7"
+    assert (
+        remember({"kind": "preference", "content": "Seems to prefer mornings.", "basis": "inferred"}).op == "remember"
+    )
+    with pytest.raises(DraftError, match="not a planner change"):
+        mutation_operation(d)
+
+
+@pytest.mark.parametrize(
+    ("payload", "target", "message"),
+    [
+        ({"kind": "note", "content": "x"}, None, "basis is required"),
+        ({"kind": "mood", "content": "x", "basis": "stated"}, None, "kind"),
+        ({"kind": "note", "content": "x", "basis": "maybe"}, None, "basis"),
+        ({"kind": "note", "content": "  ", "basis": "stated"}, None, "content"),
+        ({"kind": "note", "content": "x" * (MAX_MEMORY_CHARS + 1), "basis": "stated"}, None, "content"),
+        ({"kind": "note", "content": "x", "basis": "stated", "planId": "plan-unseen"}, None, "no tool result showed"),
+        ({"kind": "note", "content": "x", "basis": "stated", "extra": 1}, None, "unknown"),
+        ({"kind": "note", "content": "x", "basis": "stated"}, {"id": "task-1", "revision": 4}, "target must be null"),
+    ],
+)
+def test_bad_remember_drafts_are_refused(payload, target, message):
+    with pytest.raises(DraftError, match=message):
+        remember(payload, target)
+
+
+def test_remember_project_must_be_a_returned_record_not_just_a_foreign_key():
+    payload = {"kind": "note", "content": "x", "basis": "stated", "planId": "plan-fk"}
+    with pytest.raises(DraftError, match="no tool result showed"):
+        remember(payload, references={*RECORDS, "plan-fk"})
