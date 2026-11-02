@@ -5139,3 +5139,184 @@ kbd.off {
   letter-spacing: 0.1em;
   text-transform: uppercase;
 }
+
+/* Local agent (Assistant): switch, live steps, run measurements, recent runs. */
+.assistant-switch {
+  display: inline-flex;
+  gap: 2px;
+  margin-bottom: 12px;
+  padding: 2px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  background: var(--ground-soft);
+}
+.assistant-switch button {
+  padding: 5px 14px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--secondary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.assistant-switch button.selected {
+  background: var(--ground);
+  color: var(--strong);
+  box-shadow: var(--shadow-hairline);
+}
+.assistant-fallback {
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  background: var(--ground-soft);
+  color: var(--secondary);
+  font-size: 12px;
+}
+.agent-run {
+  display: grid;
+  gap: 10px;
+  margin: 0 18px 16px;
+}
+.agent-run .proposal {
+  margin: 0;
+}
+.agent-run-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+.agent-run-goal {
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-status {
+  flex: none;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--ground-muted);
+  color: var(--secondary);
+  font-size: 11px;
+  font-weight: 600;
+}
+.agent-status.good {
+  background: var(--success-wash);
+  color: var(--success);
+}
+.agent-status.attention {
+  background: var(--warning-wash);
+  color: var(--warning);
+}
+.agent-status.problem {
+  background: var(--danger-wash);
+  color: var(--danger);
+}
+.agent-answer {
+  margin: 0;
+  color: var(--strong);
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+.agent-note {
+  margin: 0;
+  color: var(--secondary);
+  font-size: 12px;
+}
+.agent-note.good {
+  color: var(--success);
+}
+.agent-note.problem {
+  color: var(--danger);
+}
+.agent-note ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+.agent-measures {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+.agent-measures div {
+  padding: 8px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  background: var(--ground-soft);
+  min-width: 0;
+}
+.agent-measures dt {
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+.agent-measures dd {
+  margin: 2px 0 0;
+  overflow-wrap: anywhere;
+  color: var(--strong);
+  font-size: 13px;
+  font-weight: 600;
+}
+.agent-recent {
+  margin: 0 18px 8px;
+  padding-top: 14px;
+  border-top: 1px solid var(--hairline);
+}
+.agent-recent ul {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.agent-recent button {
+  display: grid;
+  grid-template-columns: 10px 1fr;
+  gap: 2px 8px;
+  align-items: center;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.agent-recent button.selected,
+.agent-recent button:hover {
+  border-color: var(--hairline);
+  background: var(--ground-soft);
+}
+.agent-recent small {
+  grid-column: 2;
+  color: var(--muted);
+  font-size: 11px;
+}
+.agent-recent-goal {
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--silver);
+}
+.agent-status-dot.good {
+  background: var(--success-dot);
+}
+.agent-status-dot.attention {
+  background: var(--warning-dot);
+}
+.agent-status-dot.problem {
+  background: var(--danger-dot);
+}
