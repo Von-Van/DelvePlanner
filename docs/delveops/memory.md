@@ -27,21 +27,30 @@ facts, open problems and preferences) and you can see, correct and delete all of
   concluded itself is saved as a guess (unconfirmed, and it expires). At most three suggestions per run; none while
   memory is paused, and none for a project whose memory is off. A bad suggestion is dropped without holding back
   the run's planner changes.
+- **Learning from feedback (milestone M6).** Under each reply: **Was this helpful?** A "not helpful" can say why,
+  about the whole reply or one proposed change you turned down (**Say why…**). The reason comes back as a lesson
+  in your own words, which you can edit, with two choices. **Just this once** remembers nothing: the reason only
+  travels with that conversation, so "try again" there takes it into account and no later conversation sees it.
+  **Remember for next time** saves it as a confirmed note you stated ("From your feedback" in Settings).
+  `get_preferences` lists confirmed preference notes under `rememberedPreferences`, and the assistant is told
+  never to plan against one. Deleting the note also erases the reason on the feedback, and feedback is deleted
+  with its conversation.
 - The model cannot write memory. You add, confirm, correct and delete notes in **Settings → Memory & privacy**,
   where you can also pause memory, switch it off for one project, choose how much recent conversation the
   assistant sees, and export everything. Memory is left out of planner exports and imports.
 
 ## Where it lives
 
-| Part                       | File                                                                          |
-| -------------------------- | ----------------------------------------------------------------------------- |
-| Storage and rules          | `src-tauri/src/db/memory.rs` (`agent_memory`, `memory_settings` tables)       |
-| `get_memory` read tool     | `src-tauri/src/tools/memory.rs`, contract in `contracts/tools.v1.json`        |
-| Settings commands          | `src-tauri/src/memory.rs`                                                     |
-| "Remember this?" checks    | `src-tauri/src/assistant/suggestions.rs`, card in `src/MemorySuggestions.tsx` |
-| Settings panel             | `src/MemorySettings.tsx`, `src/memoryApi.ts`                                  |
-| Agent side                 | `agent-python/delveops_agent/memory/` (conversation window + `get_memory`)    |
-| Benchmark copy of the tool | `agent_bench/mock_tools.py` (`tool_get_memory`), kept identical by parity     |
+| Part                       | File                                                                                     |
+| -------------------------- | ---------------------------------------------------------------------------------------- |
+| Storage and rules          | `src-tauri/src/db/memory.rs` (`agent_memory`, `memory_settings` tables)                  |
+| `get_memory` read tool     | `src-tauri/src/tools/memory.rs`, contract in `contracts/tools.v1.json`                   |
+| Settings commands          | `src-tauri/src/memory.rs`                                                                |
+| "Remember this?" checks    | `src-tauri/src/assistant/suggestions.rs`, card in `src/MemorySuggestions.tsx`            |
+| Settings panel             | `src/MemorySettings.tsx`, `src/memoryApi.ts`                                             |
+| Agent side                 | `agent-python/delveops_agent/memory/` (conversation window + `get_memory`)               |
+| Benchmark copy of the tool | `agent_bench/mock_tools.py` (`tool_get_memory`), kept identical by parity                |
+| Feedback and lessons       | `src-tauri/src/db/feedback.rs`, `src-tauri/src/feedback.rs`, `src/AssistantFeedback.tsx` |
 
 ## How it is tested
 
@@ -55,9 +64,15 @@ facts, open problems and preferences) and you can see, correct and delete all of
   confirmed, never surface a switched-off project's memory, and let the planner win when memory disagrees.
   Using an outdated fact counts as **false recall**. `mem-remember-*` cases check that a stated priority or
   preference is suggested with the right kind and basis, and that no planner change is proposed.
+- **Feedback** (Rust, `db/feedback.rs`): a kept lesson shows up in `get_preferences` and is stored once; "just
+  this once" stores nothing and is carried only in its own conversation; deleting the lesson erases its words.
+  `agent_bench/cases/*/*fb-*`: a kept lesson keeps every block before 3 pm, a one-off correction steers the retry
+  in its conversation, and (held out) a lunch rule is kept while an unconfirmed guess is not treated as a rule.
 - **Real model on a Mac:** `python -m agent_bench.configs.memory_check --out agent_bench/results/memory` prints the
   success rate, the recall rate on memory cases and the false-recall rate (which should be zero).
 
 ## Not yet
 
-- Using the planning profile's confirmed preferences as memory records.
+- Using the planning profile's own settings as memory records (`get_preferences` returns both, side by side).
+- A lesson is general; it can't yet be tied to one project from the feedback card.
+- Feedback on a heads-up ("dismiss because…"): the table has room for it, nothing records it yet.

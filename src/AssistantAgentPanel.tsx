@@ -30,6 +30,7 @@ import {
   withRun,
   withStep,
 } from "./AssistantRuns";
+import { AssistantFeedback, FeedbackAbout } from "./AssistantFeedback";
 import { localTimeZone } from "./date";
 import { MemorySuggestions } from "./MemorySuggestions";
 import { Glyph, Mark, Spinner } from "./Geometry";
@@ -391,6 +392,7 @@ function RunView({
   onRefresh: () => Promise<void>;
 }) {
   const [showSteps, setShowSteps] = useState(false);
+  const [aboutChange, setAboutChange] = useState<FeedbackAbout | null>(null);
   const measures = useMemo(() => runMeasures(run), [run]);
   return (
     <div className="agent-run">
@@ -434,6 +436,15 @@ function RunView({
               onChanged={onChanged}
               onMessage={onMessage}
               onRefresh={onRefresh}
+              onSayWhy={
+                run.storedRunId
+                  ? (about) =>
+                      setAboutChange((current) => ({
+                        about,
+                        key: (current?.key ?? 0) + 1,
+                      }))
+                  : undefined
+              }
             />
           )}
           <MemorySuggestions
@@ -459,6 +470,13 @@ function RunView({
           )}
           {run.review.state === "failed" && (
             <p className="agent-note problem">{run.review.message}</p>
+          )}
+          {!run.cancelled && run.status !== "failed" && (
+            <AssistantFeedback
+              runId={run.storedRunId}
+              aboutChange={aboutChange}
+              onMessage={onMessage}
+            />
           )}
 
           <dl className="agent-measures" aria-label="Run measurements">
@@ -497,11 +515,14 @@ function ChangeReview({
   onChanged,
   onMessage,
   onRefresh,
+  onSayWhy,
 }: {
   proposal: Proposal;
   onChanged: () => Promise<void>;
   onMessage: (message: string) => void;
   onRefresh: () => Promise<void>;
+  /** Opens feedback about one turned-down change, so the assistant can learn why. */
+  onSayWhy?: (about: string) => void;
 }) {
   const previews = useMemo(() => describeProposal(proposal), [proposal]);
   const [rejected, setRejected] = useState<ReadonlySet<string>>(new Set());
@@ -570,6 +591,22 @@ function ChangeReview({
                 )}
                 {preview.reason && (
                   <small className="change-reason">{preview.reason}</small>
+                )}
+                {!isKept && onSayWhy && (
+                  <button
+                    type="button"
+                    className="text-button change-say-why"
+                    onClick={() =>
+                      onSayWhy(
+                        [preview.title, ...preview.details.slice(0, 2)].join(
+                          " · ",
+                        ),
+                      )
+                    }
+                    disabled={busy}
+                  >
+                    Say why…
+                  </button>
                 )}
               </div>
               <div

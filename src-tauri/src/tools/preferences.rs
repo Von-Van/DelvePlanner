@@ -1,12 +1,20 @@
-//! `get_preferences`: how the person likes to plan, for advice that fits them. Two kinds of
+//! `get_preferences`: how the person likes to plan, for advice that fits them. Three kinds of
 //! knowledge are kept apart: the planning profile the person set themselves (confirmed
-//! preferences), and observations Delve Planner computed from their own records (verified
-//! patterns, not wishes). Observations the person muted are neither computed nor returned.
+//! preferences), preferences they asked the assistant to remember, often from feedback ("I don't
+//! do deep work after 4"; confirmed by the person, milestone M6), and observations Delve Planner
+//! computed from their own records (verified patterns, not wishes). Observations the person muted
+//! are neither computed nor returned. The assistant's own unconfirmed guesses are never listed
+//! here; `get_memory` returns them, labelled as guesses.
 
 use super::error::ToolError;
 use super::ToolSources;
+use crate::db::{Confirmation, MemoryKind, MemoryRecord};
 use crate::model::{DayPreference, ObservationKind, WorkingHours};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+
+/// The most remembered preferences one answer lists, newest first.
+pub const MAX_REMEMBERED_PREFERENCES: usize = 20;
 
 const WEEKDAYS: [&str; 7] = [
     "monday",
@@ -27,7 +35,21 @@ pub struct PreferencesArgs {}
 pub struct Preferences {
     pub profile: ProfileView,
     pub working_hours: WorkingHours,
+    /// Preferences the person confirmed in memory, newest first. Empty while memory is paused.
+    pub remembered_preferences: Vec<RememberedPreference>,
     pub observations: Vec<ObservationView>,
+}
+
+/// One preference the person asked the assistant to remember (or confirmed after it guessed).
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RememberedPreference {
+    pub trust: &'static str,
+    pub id: String,
+    pub content: String,
+    /// The project it applies to; null means everywhere.
+    pub plan_id: Option<String>,
+    pub recorded_at: String,
 }
 
 /// The planning profile as the person set it. Every field is optional; `isSet` is false when the
@@ -59,8 +81,11 @@ pub struct ObservationView {
 
 pub fn get_preferences(
     sources: &ToolSources<'_>,
+    now: DateTime<Utc>,
     _args: PreferencesArgs,
 ) -> Result<Preferences, ToolError> {
+    let (_, memories) = sources.database.memory_candidates(now)?;
+    let remembered_preferences = remembered(memories);
     let profile = sources.database.planning_profile()?;
     let working_hours = sources.database.working_hours()?;
     let observations = sources
@@ -99,8 +124,32 @@ pub fn get_preferences(
             energy: profile.energy,
         },
         working_hours,
+        remembered_preferences,
         observations,
     })
+}
+
+/// The current, confirmed preference memories, newest first. Guesses stay out: only what the
+/// person said or confirmed may steer a plan.
+pub fn remembered(memories: Vec<MemoryRecord>) -> Vec<RememberedPreference> {
+    let mut preferences: Vec<RememberedPreference> = memories
+        .into_iter()
+        .filter(|m| m.kind == MemoryKind::Preference && m.confirmation == Confirmation::Confirmed)
+        .map(|m| RememberedPreference {
+            trust: "user_confirmed",
+            id: m.id,
+            content: m.content,
+            plan_id: m.plan_id,
+            recorded_at: m.updated_at,
+        })
+        .collect();
+    preferences.sort_by(|a, b| {
+        b.recorded_at
+            .cmp(&a.recorded_at)
+            .then_with(|| a.id.cmp(&b.id))
+    });
+    preferences.truncate(MAX_REMEMBERED_PREFERENCES);
+    preferences
 }
 
 /// Minutes after local midnight as "HH:MM"; the end of the day is "24:00".

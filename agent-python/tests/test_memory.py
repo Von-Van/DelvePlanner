@@ -150,6 +150,21 @@ def test_window_is_bounded_by_turns_and_size():
     assert sum(len(t.text) for t in window) <= MAX_WINDOW_CHARS
 
 
+def test_a_long_reply_keeps_the_person_s_feedback_note():
+    note = (
+        ' [The person said this reply was not helpful because: "I\'m out after 3 tomorrow".'
+        " This applies to this conversation only.]"
+    )
+    reply = Turn("assistant", "Drafted: " + "a long plan " * 100 + note)
+    (clipped,) = recent_window([reply], 1)
+    assert len(clipped.text) <= MAX_TURN_CHARS
+    assert clipped.text.endswith(note)
+    assert "…" in clipped.text
+    # A bracket that is mostly the reply itself is clipped like any other text.
+    (plain,) = recent_window([Turn("assistant", "[" + "x" * 5000 + "]")], 1)
+    assert len(plain.text) <= MAX_TURN_CHARS and plain.text.endswith("…")
+
+
 def test_compose_goal_and_turn_validation():
     assert compose_goal("Do it.") == "Do it."
     assert compose_goal("Do it.", "", "Context.") == "Context.\n\nCurrent request: Do it."

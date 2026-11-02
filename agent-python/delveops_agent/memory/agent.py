@@ -85,8 +85,17 @@ def recent_window(conversation: Sequence[Turn], turns: int = DEFAULT_WINDOW_TURN
 
 
 def _clip(text: str, limit: int) -> str:
+    """Shortens a turn to ``limit`` characters. A closing ``[…]`` note from the app (what came of a
+    drafted change, the person's feedback on the reply) is kept whole when it fits, and the reply
+    before it is shortened instead, so what the person said about a long reply is never cut off."""
     text = " ".join(text.split())
-    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+    if len(text) <= limit:
+        return text
+    start = text.rfind(" [")
+    if text.endswith("]") and start > 0 and len(text) - start <= limit // 2:
+        note = text[start:]
+        return text[: limit - len(note) - 1].rstrip() + "…" + note
+    return text[: limit - 1].rstrip() + "…"
 
 
 def conversation_block(window: Sequence[Turn]) -> str:

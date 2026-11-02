@@ -116,6 +116,9 @@ impl ToolName {
                  (trust user_confirmed): preferred hours as local HH:MM, the most work per day, \
                  focus and break lengths, days off, and when demanding work suits them; isSet is \
                  false when they have set nothing. workingHours are the hours capacity counts. \
+                 rememberedPreferences are preferences the person asked you to remember, often \
+                 after correcting a plan (trust user_confirmed): follow them like the profile, \
+                 and never plan against one; planId null means they apply everywhere. \
                  observations are patterns computed from their own records (trust verified), \
                  such as estimates running long: evidence about habits, not stated wishes."
             }
@@ -370,9 +373,15 @@ impl ToolName {
                 json!({
                     "profile": { "$ref": "#/$defs/planningProfile" },
                     "workingHours": { "$ref": "#/$defs/workingHours" },
+                    "rememberedPreferences": array("#/$defs/rememberedPreference"),
                     "observations": array("#/$defs/observation")
                 }),
-                &["profile", "workingHours", "observations"],
+                &[
+                    "profile",
+                    "workingHours",
+                    "rememberedPreferences",
+                    "observations",
+                ],
             ),
             Self::ListGitHubRepos => object(
                 json!({
@@ -808,6 +817,16 @@ fn preferences_definitions() -> Value {
             "enum": ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
         },
         "dayPart": { "enum": ["morning", "afternoon", "evening"] },
+        "rememberedPreference": object(
+            json!({
+                "trust": { "const": "user_confirmed" },
+                "id": { "type": "string" },
+                "content": { "type": "string" },
+                "planId": nullable("string"),
+                "recordedAt": { "$ref": "#/$defs/instant" }
+            }),
+            &["trust", "id", "content", "planId", "recordedAt"],
+        ),
         "observation": object(
             json!({
                 "trust": { "const": "verified" },

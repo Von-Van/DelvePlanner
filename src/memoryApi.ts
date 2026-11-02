@@ -159,6 +159,18 @@ export const sourceLabels: Record<MemorySource, string> = {
   assistant_inferred: "Assistant's guess",
 };
 
+/** Where a record came from. A lesson the person kept from feedback on a reply says so. */
+export function sourceLabel(
+  record: Pick<MemoryRecord, "source" | "sourceRef">,
+) {
+  if (
+    record.source === "user_stated" &&
+    record.sourceRef?.startsWith("feedback ")
+  )
+    return "From your feedback";
+  return sourceLabels[record.source];
+}
+
 /** Current memories (what the assistant may use) and history (replaced by a correction). */
 export function groupRecords(records: MemoryRecord[]) {
   const current = records.filter((r) => !r.supersededBy && !r.supersededAt);
@@ -178,7 +190,7 @@ export function provenance(
   record: MemoryRecord,
   planTitles: Map<string, string>,
 ) {
-  const parts = [kindLabels[record.kind], sourceLabels[record.source]];
+  const parts = [kindLabels[record.kind], sourceLabel(record)];
   if (record.planId) parts.push(planTitles.get(record.planId) ?? "A project");
   parts.push(shortDate(record.updatedAt));
   return parts.filter(Boolean).join(" · ");

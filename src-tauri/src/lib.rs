@@ -6,6 +6,7 @@ mod conversations;
 pub mod db;
 pub mod error;
 pub mod evaluation;
+mod feedback;
 mod memory;
 pub mod model;
 pub mod recurrence;
@@ -1847,6 +1848,10 @@ pub fn run() {
             memory::export_memory_file,
             memory::remember_suggestion,
             memory::dismiss_suggestion,
+            feedback::record_assistant_feedback,
+            feedback::list_assistant_feedback,
+            feedback::learn_from_feedback,
+            feedback::keep_feedback_one_off,
             evaluation::list_evaluation_runs,
             evaluation::get_evaluation_run,
             evaluation::get_evaluation_trace,
