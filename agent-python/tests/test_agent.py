@@ -346,7 +346,22 @@ def test_trace_shape_and_order():
     ]
     assert [e["seq"] for e in result.trace] == list(range(1, len(kinds) + 1))
     for event in result.trace:
-        assert set(event) == {"runId", "seq", "kind", "at", "durationMs", "summary", "data"}
+        assert (
+            {"runId", "seq", "kind", "at", "summary", "data"}
+            <= set(event)
+            <= {
+                "runId",
+                "seq",
+                "kind",
+                "at",
+                "durationMs",
+                "summary",
+                "data",
+            }
+        )
+        # The shared trace schema (agent_bench/schemas/trace.v1.json) has no null duration.
+        if "durationMs" in event:
+            assert isinstance(event["durationMs"], int) and event["durationMs"] >= 0
         assert event["runId"] == result.run_id
         assert event["kind"] in TRACE_KINDS
     assert result.trace[1]["data"]["digest"] == "sha256:test"
