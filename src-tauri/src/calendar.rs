@@ -77,7 +77,7 @@ pub fn parse_zone(time_zone: &str) -> AppResult<Tz> {
 }
 
 /// The device's zone, which floating times and all-day dates in calendars are read in.
-fn system_zone() -> Tz {
+pub(crate) fn system_zone() -> Tz {
     iana_time_zone::get_timezone()
         .ok()
         .and_then(|name| name.parse().ok())

@@ -7,6 +7,7 @@ import {
 } from "./calendars";
 import { dayLabel } from "./date";
 import { Glyph, LoadingLine, Mark } from "./Geometry";
+import { HeadsUp } from "./headsUpApi";
 import { plural } from "./planning";
 
 /** Where a "Worth attention" item sends the user to deal with it. */
@@ -18,10 +19,16 @@ export type AttentionItem = {
   title: string;
   /** The facts behind the item, so it is never a suggestion without a reason. */
   evidence: string;
-  action: { label: string; target: AttentionTarget };
+  action: { label: string; target: AttentionTarget | "assistant" };
+  /** Set for a heads-up the assistant brought up, which can be acted on, snoozed or dismissed. */
+  headsUpId?: string;
 };
 
+export type HeadsUpChoice = "act" | "snooze" | "dismiss";
+
 export type AttentionInput = {
+  /** Heads-ups from the assistant's fixed rules, most worth saying first. */
+  headsUps: HeadsUp[];
   /** Names of calendars that can't refresh. */
   brokenCalendars: string[];
   /** Minutes of planned work beyond the time available today; 0 when it fits. */
@@ -39,8 +46,8 @@ export type AttentionInput = {
 export const maxAttentionItems = 3;
 
 /**
- * Up to three things worth a look today, each built from facts the planner already holds. A quiet
- * day gives an empty list: there is no quota to fill.
+ * Up to three things worth a look today, each built from facts the planner already holds,
+ * including the assistant's heads-ups. A quiet day gives an empty list: there is no quota to fill.
  */
 export function worthAttention(input: AttentionInput): AttentionItem[] {
   const items: AttentionItem[] = [];
@@ -53,6 +60,16 @@ export function worthAttention(input: AttentionInput): AttentionItem[] {
           : `${input.brokenCalendars.length} calendars can't refresh`,
       evidence: "Busy time from them may be out of date.",
       action: { label: "Open Calendars", target: "calendars" },
+    });
+  // A broken calendar comes first, since busy time everything else rests on may be wrong. The
+  // assistant's own heads-ups come next: each is specific and can be acted on.
+  for (const headsUp of input.headsUps)
+    items.push({
+      id: `heads-up-${headsUp.id}`,
+      title: headsUp.title,
+      evidence: headsUp.evidence,
+      action: { label: headsUp.actionLabel, target: "assistant" },
+      headsUpId: headsUp.id,
     });
   if (input.overCapacityBy > 0)
     items.push({
@@ -144,6 +161,7 @@ export function AssistantView({
   pendingReview,
   inboxCount,
   onAttention,
+  onHeadsUp,
   onOpenSchedule,
   onOpenProjects,
   onOpenInbox,
@@ -165,6 +183,8 @@ export function AssistantView({
   pendingReview: { summary: string; changes: number } | null;
   inboxCount: number;
   onAttention: (target: AttentionTarget) => void;
+  /** The person's choice on a heads-up: hand it to the assistant, not now, or don't show again. */
+  onHeadsUp?: (id: string, choice: HeadsUpChoice) => void;
   onOpenSchedule: () => void;
   onOpenProjects: () => void;
   onOpenInbox: () => void;
@@ -240,21 +260,55 @@ export function AssistantView({
             <section className="assistant-card" aria-label="Worth attention">
               <p className="side-kicker">WORTH ATTENTION</p>
               <ul className="worth-attention">
-                {attention.map((item) => (
-                  <li key={item.id}>
-                    <Mark size={7} color="var(--blue)" />
-                    <div>
-                      <strong>{item.title}</strong>
-                      <small>{item.evidence}</small>
-                    </div>
+                {attention.map((item) => {
+                  const headsUpId = item.headsUpId;
+                  const target = item.action.target;
+                  const action = (
                     <button
                       className="text-button"
-                      onClick={() => onAttention(item.action.target)}
+                      onClick={() =>
+                        headsUpId
+                          ? onHeadsUp?.(headsUpId, "act")
+                          : target !== "assistant" && onAttention(target)
+                      }
                     >
                       {item.action.label} <Glyph>→</Glyph>
                     </button>
-                  </li>
-                ))}
+                  );
+                  return (
+                    <li
+                      key={item.id}
+                      className={headsUpId ? "heads-up" : undefined}
+                    >
+                      <Mark size={7} color="var(--blue)" />
+                      <div>
+                        <strong>{item.title}</strong>
+                        <small>{item.evidence}</small>
+                      </div>
+                      {headsUpId ? (
+                        <span className="heads-up-choices">
+                          {action}
+                          <button
+                            className="text-button quiet"
+                            onClick={() => onHeadsUp?.(headsUpId, "snooze")}
+                            aria-label={`Not now: ${item.title}`}
+                          >
+                            Not now
+                          </button>
+                          <button
+                            className="text-button quiet"
+                            onClick={() => onHeadsUp?.(headsUpId, "dismiss")}
+                            aria-label={`Don't show again: ${item.title}`}
+                          >
+                            Dismiss
+                          </button>
+                        </span>
+                      ) : (
+                        action
+                      )}
+                    </li>
+                  );
+                })}
               </ul>
             </section>
           )}

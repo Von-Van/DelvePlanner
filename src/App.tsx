@@ -62,10 +62,12 @@ import {
 import {
   AssistantView,
   AttentionTarget,
+  HeadsUpChoice,
   DayContext,
   worthAttention,
 } from "./AssistantView";
 import { AssistantAgentPanel } from "./AssistantAgentPanel";
+import { HeadsUp, headsUpApi } from "./headsUpApi";
 import { EventEditor } from "./EventEditor";
 import { ensureNotificationPermission, reminderShortLabel } from "./events";
 import { Glyph, LoadingLine, Mark, MarkShape } from "./Geometry";
@@ -241,6 +243,12 @@ export default function App() {
   const [weekBoard, setWeekBoard] = useState<PlanningBoard | null>(null);
   const [board, setBoard] = useState<PlanningBoard | null>(null);
   const [inbox, setInbox] = useState<InboxItem[]>([]);
+  const [headsUps, setHeadsUps] = useState<HeadsUp[]>([]);
+  // A heads-up handed to the assistant: the agent panel runs it as a new conversation.
+  const [assistantAsk, setAssistantAsk] = useState<{
+    request: string;
+    key: number;
+  } | null>(null);
   const [openTaskList, setOpenTaskList] = useState<TaskReference[]>([]);
   const [dataVersion, setDataVersion] = useState(0);
   const [converting, setConverting] = useState<{
@@ -376,6 +384,15 @@ export default function App() {
     }
   }, []);
 
+  // Heads-ups are a nice-to-have on the Assistant home: a failure to read them stays quiet.
+  const refreshHeadsUps = useCallback(async (check: boolean) => {
+    try {
+      setHeadsUps(await headsUpApi.list(check));
+    } catch {
+      setHeadsUps([]);
+    }
+  }, []);
+
   const refreshPlans = useCallback(async () => {
     try {
       setSummaries(await api.listPlans(todayDay()));
@@ -421,13 +438,32 @@ export default function App() {
     void refreshInbox();
     void refreshReleasable();
     void refreshOpenTasks();
+    void refreshHeadsUps(true);
   }, [
     refreshPlans,
     refreshPeople,
     refreshInbox,
     refreshReleasable,
     refreshOpenTasks,
+    refreshHeadsUps,
   ]);
+
+  // The background check announces new heads-ups and ones that cleared.
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let active = true;
+    headsUpApi
+      .onChanged(() => void refreshHeadsUps(false))
+      .then((stop) => {
+        if (active) unlisten = stop;
+        else stop();
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+      unlisten?.();
+    };
+  }, [refreshHeadsUps]);
 
   // Background calendar refreshes announce themselves; reload whatever shows calendar time.
   const viewKind = view.kind;
@@ -623,6 +659,7 @@ export default function App() {
       refreshBoard(),
       refreshReleasable(),
       refreshOpenTasks(),
+      refreshHeadsUps(true),
       view.kind === "week" ? refreshWeek() : Promise.resolve(),
     ]);
     setDataVersion((version) => version + 1);
@@ -884,14 +921,40 @@ export default function App() {
   };
   // Day-specific items only make sense for today; a broken calendar matters on any day.
   const assistantAttention = worthAttention({
+    headsUps,
     brokenCalendars: attention.map((calendar) => calendar.name),
     overCapacityBy: day === today ? (dayCapacityLine?.overBy ?? 0) : 0,
     unfinished:
       day === today && board ? unfinishedTasks(board.tasks, today).length : 0,
-    dueOpen: day === today ? openDue.length : 0,
+    // A task a heads-up already names isn't counted a second time.
+    dueOpen:
+      day === today
+        ? openDue.filter(
+            (task) =>
+              !headsUps.some(
+                (headsUp) =>
+                  headsUp.target?.kind === "task" &&
+                  headsUp.target.id === task.id,
+              ),
+          ).length
+        : 0,
     releasable: day === today ? offeredRelease.length : 0,
     planningPrompt: day === today ? prompt : null,
   });
+  async function chooseHeadsUp(id: string, choice: HeadsUpChoice) {
+    try {
+      if (choice === "act") {
+        const acted = await headsUpApi.act(id);
+        setAssistantSurface("agent");
+        setAssistantAsk({ request: acted.actionRequest, key: Date.now() });
+      } else if (choice === "snooze") await headsUpApi.snooze(id);
+      else await headsUpApi.dismiss(id);
+    } catch (cause) {
+      setError(messageFor(cause));
+    }
+    await refreshHeadsUps(false);
+  }
+
   function followAttention(target: AttentionTarget) {
     if (target === "calendars") {
       navigate({ kind: "calendars" });
@@ -1186,6 +1249,8 @@ export default function App() {
               })}
               agent={
                 <AssistantAgentPanel
+                  ask={assistantAsk}
+                  onAskTaken={() => setAssistantAsk(null)}
                   onChanged={dataChanged}
                   onMessage={setError}
                   onFallback={fallBackToPlanner}
@@ -1198,6 +1263,7 @@ export default function App() {
               pendingReview={pendingReview}
               inboxCount={inbox.length}
               onAttention={followAttention}
+              onHeadsUp={(id, choice) => void chooseHeadsUp(id, choice)}
               onOpenSchedule={() => navigate({ kind: scheduleView })}
               onOpenProjects={() =>
                 navigate({ kind: "plans", archived: false })

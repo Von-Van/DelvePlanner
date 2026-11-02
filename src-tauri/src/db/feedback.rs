@@ -799,7 +799,7 @@ mod tests {
     }
 
     #[test]
-    fn schema_eleven_gains_feedback() {
+    fn schema_twelve_gains_feedback() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("dayplan.sqlite3");
         drop(PlannerDatabase::open(&path).unwrap());
@@ -807,7 +807,7 @@ mod tests {
         connection
             .execute_batch(
                 "DROP TRIGGER agent_feedback_forget_lesson; DROP TABLE agent_feedback;
-                 PRAGMA user_version = 11;",
+                 PRAGMA user_version = 12;",
             )
             .unwrap();
         drop(connection);
