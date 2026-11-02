@@ -157,7 +157,7 @@ def _reread_call(case: dict, record_id: str) -> dict | None:
     found = None
     for call in case.get("reference", {}).get("calls", []):
         reply = tools.call(call["tool"], copy.deepcopy(call["args"]))
-        if reply.get("ok") and record_id in collect_records(reply.get("data")):
+        if reply.get("ok") and record_id in collect_records(reply.get("result", reply.get("data"))):
             found = call
     return found
 

@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -34,6 +35,7 @@ _HINTS = {
     "expectedRevision": "the revision goes in target, not payload",
 }
 _POSITIVE = frozenset({"durationMinutes"})
+_RFC3339_UTC = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$")
 
 
 def _zone_ok(value: Any) -> bool:
@@ -101,9 +103,9 @@ def normalize_payload(op: str, payload: dict[str, Any], time_zone: str) -> tuple
 
     Only rewrites that need no judgement are made: a `start`/`end` pair with explicit offsets becomes
     `startAtUtc` + `durationMinutes`, as does `startAtUtc` + `endAtUtc` (the form the day tool reports);
-    any other spelling of a UTC time becomes the canonical one; a bare date where a day change is meant
-    becomes "set the day"; a whole number where a reminder or estimate change is meant becomes "set it";
-    a bare id where a record reference is meant becomes `{"id": ...}`; and left-out "no change" fields
+    a time Rust would not read as UTC (an offset, no seconds) is respelled as UTC; a bare date where a
+    day change is meant becomes "set the day"; a whole number where a reminder or estimate change is
+    meant becomes "set it"; a bare id where a record reference is meant becomes `{"id": ...}`; and left-out "no change" fields
     are filled in.
     """
     out = dict(payload)
@@ -135,10 +137,12 @@ def normalize_payload(op: str, payload: dict[str, Any], time_zone: str) -> tuple
     for name, (kind, _) in spec.items():
         value = out.get(name)
         if kind == "utc" and isinstance(value, str):
+            # Respell only what Rust's RFC 3339 parser would refuse or read as another zone; a full UTC
+            # time ("...:00Z" or "...:00.000Z") is left exactly as written.
             moment = _moment(value)
-            if moment is not None and canonical_utc(moment) != value:
+            if moment is not None and not _RFC3339_UTC.match(value):
                 out[name] = canonical_utc(moment)
-                notes.append(f"{name} spelled as UTC")
+                notes.append(f"{name} converted to UTC")
         elif kind == "day_change" and isinstance(value, str) and _CHECKS["date"](value):
             out[name] = {"action": "set", "day": value}
             notes.append(f"{name} date -> day change")

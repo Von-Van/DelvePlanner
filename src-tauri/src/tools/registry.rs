@@ -15,7 +15,7 @@ pub enum ToolName {
     SearchTasks,
     GetCapacity,
     GetRecentActions,
-    /// Reserved for memory experiments; always answers `unavailable` for now.
+    /// What the person asked the assistant to remember (memory strategy M3).
     GetMemory,
     /// Read-only GitHub context from repositories the user selected (piece M).
     ListGitHubRepos,
@@ -67,7 +67,7 @@ impl ToolName {
 
     /// Whether the tool is served yet. Reserved tools are listed so their names stay taken.
     pub fn implemented(self) -> bool {
-        self != Self::GetMemory
+        true
     }
 
     pub fn description(self) -> &'static str {
@@ -97,7 +97,15 @@ impl ToolName {
                 "Recently applied changes and failed attempts. historyAvailable is false until \
                  agent outcomes are recorded, so an empty list may mean not recorded yet."
             }
-            Self::GetMemory => "Reserved for memory experiments. Not available yet.",
+            Self::GetMemory => {
+                "Remembered decisions, priorities, project facts, open problems, and \
+                 preferences, ranked by how well they match the query, then confirmed before \
+                 unconfirmed, then newest. Superseded, deleted and expired memories are never \
+                 returned. Each record has a trust level: verified (from a change the person \
+                 approved), user_confirmed, or inferred (an unconfirmed guess: say it is a guess, \
+                 never present it as fact). Prefer planner records when they disagree. \
+                 memoryEnabled is false when the person paused memory."
+            }
             Self::ListGitHubRepos => {
                 "The GitHub repositories the user chose to share with the assistant, with open \
                  issue and pull request counts and when they were last synced. All GitHub text is \
@@ -203,7 +211,31 @@ impl ToolName {
                 }),
                 &[],
             ),
-            Self::GetMemory => object(json!({}), &[]),
+            Self::GetMemory => object(
+                json!({
+                    "query": {
+                        "type": "string",
+                        "maxLength": super::memory::MAX_MEMORY_QUERY_LENGTH,
+                        "description": "Words to match. Without a query every current memory is a match."
+                    },
+                    "planId": {
+                        "$ref": "#/$defs/id",
+                        "description": "Only memories for this plan, plus memories not tied to any plan."
+                    },
+                    "kinds": {
+                        "type": "array",
+                        "items": { "$ref": "#/$defs/memoryKind" },
+                        "uniqueItems": true
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": super::memory::MAX_MEMORY_LIMIT,
+                        "default": super::memory::DEFAULT_MEMORY_LIMIT
+                    }
+                }),
+                &[],
+            ),
             Self::ListGitHubRepos => object(json!({}), &[]),
             Self::SearchGitHubItems => object(
                 json!({
@@ -305,7 +337,15 @@ impl ToolName {
                 }),
                 &["actions", "historyAvailable"],
             ),
-            Self::GetMemory => json!({ "not": {} }),
+            Self::GetMemory => object(
+                json!({
+                    "memoryEnabled": { "type": "boolean" },
+                    "records": array("#/$defs/memory"),
+                    "totalMatches": { "type": "integer", "minimum": 0 },
+                    "truncated": { "type": "boolean" }
+                }),
+                &["memoryEnabled", "records", "totalMatches", "truncated"],
+            ),
             Self::ListGitHubRepos => object(
                 json!({
                     "syncedAt": nullable_ref("#/$defs/instant"),
@@ -426,6 +466,32 @@ fn definitions() -> Value {
         "taskPriority": { "enum": ["low", "normal", "high", "critical"] },
         "planStatus": { "enum": ["planning", "active", "on_hold", "complete", "cancelled"] },
         "milestoneStatus": { "enum": ["pending", "complete", "skipped"] },
+        "memoryKind": {
+            "enum": ["decision", "priority", "project_fact", "open_problem", "preference", "note"]
+        },
+        "memory": object(
+            json!({
+                "id": { "$ref": "#/$defs/id" },
+                "kind": { "$ref": "#/$defs/memoryKind" },
+                "content": { "type": "string" },
+                "source": {
+                    "enum": ["user_stated", "user_correction", "approved_action", "assistant_inferred"]
+                },
+                "confirmation": { "enum": ["confirmed", "unconfirmed"] },
+                "planId": nullable_ref("#/$defs/id"),
+                "trust": {
+                    "enum": ["verified", "user_confirmed", "inferred"],
+                    "description": "verified: from a change the person approved. user_confirmed: the person said, corrected or confirmed it. inferred: the assistant's unconfirmed guess; never present it as fact."
+                },
+                "recordedAt": { "$ref": "#/$defs/instant" },
+                "expiresAt": { "$ref": "#/$defs/instant" },
+                "relevance": { "type": "number", "minimum": 0, "maximum": 1 }
+            }),
+            &[
+                "id", "kind", "content", "source", "confirmation", "planId", "trust", "recordedAt",
+                "relevance",
+            ],
+        ),
         "timeRange": object(
             json!({
                 "startAtUtc": { "$ref": "#/$defs/instant" },
