@@ -33,6 +33,24 @@ def find_tool_server() -> Path | None:
     return None
 
 
+def memory_export(memory: dict) -> dict:
+    """A case's memory store as the app's ``delve.memory.v1`` export, for ``tool_server --memory``."""
+    recorded = {r["id"]: r["recordedAt"] for r in memory.get("records", [])}
+    records = []
+    for r in memory.get("records", []):
+        confirmed = r["confirmation"] == "confirmed"
+        newer = r.get("supersededBy")
+        records.append({
+            "id": r["id"], "kind": r["kind"], "content": r["content"], "source": r["source"], "sourceRef": None,
+            "planId": r.get("planId"), "confirmation": r["confirmation"], "createdAt": r["recordedAt"],
+            "updatedAt": r["recordedAt"], "confirmedAt": r["recordedAt"] if confirmed else None,
+            "expiresAt": r.get("expiresAt"), "supersededBy": newer, "supersededAt": recorded.get(newer) if newer else None,
+        })
+    settings = {"enabled": memory.get("enabled", True), "conversationTurns": 6, "inferredTtlDays": 14,
+                "disabledPlanIds": list(memory.get("disabledPlanIds", []))}
+    return {"format": "delve.memory.v1", "settings": settings, "records": records}
+
+
 class LiveToolClient:
     def __init__(self, case: dict, binary: Path | None = None, budget: dict | None = None):
         binary = binary or find_tool_server()
@@ -49,9 +67,14 @@ class LiveToolClient:
         self._dir = tempfile.TemporaryDirectory(prefix="agent_bench_")
         bundle_path = Path(self._dir.name) / "bundle.json"
         bundle_path.write_text(json.dumps(bundle))
+        # The mock always serves the GitHub fixture (piece M), so the real server does too.
+        command = [str(binary), "--bundle", str(bundle_path), "--github", str(GITHUB_FIXTURE)]
+        if case.get("memory"):
+            memory_path = Path(self._dir.name) / "memory.json"
+            memory_path.write_text(json.dumps(memory_export(case["memory"])))
+            command += ["--memory", str(memory_path)]
         self._proc = subprocess.Popen(
-            # The mock always serves the GitHub fixture (piece M), so the real server does too.
-            [str(binary), "--bundle", str(bundle_path), "--github", str(GITHUB_FIXTURE)],
+            command,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,

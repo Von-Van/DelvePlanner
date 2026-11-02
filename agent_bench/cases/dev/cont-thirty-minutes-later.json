@@ -1,0 +1,124 @@
+{
+  "case_id": "cont-thirty-minutes-later",
+  "family": "continuity",
+  "split": "dev",
+  "description": "Follow-up after an approved move: the design review was moved to 3 pm (now revision 2). 'Move it 30 minutes later' means 3:30 pm, not 30 minutes after the old 2 pm time. The recent conversation and the approved-change memory both say 3 pm.",
+  "fixture": {
+    "version": "planner.v2",
+    "overrides": [
+      {
+        "entity": "events",
+        "id": "00000000-0000-4000-8000-000000000504",
+        "fields": {
+          "revision": 2,
+          "startAtUtc": "2026-11-04T20:00:00.000Z"
+        }
+      }
+    ]
+  },
+  "now": "2026-11-03T16:10-05:00",
+  "timeZone": "America/New_York",
+  "permittedTools": [
+    "get_day_context",
+    "list_active_projects",
+    "get_project_context",
+    "search_tasks",
+    "get_capacity",
+    "get_recent_actions",
+    "get_memory"
+  ],
+  "conversation": [
+    {
+      "role": "user",
+      "text": "Move the design review on Wednesday to 3 pm.",
+      "at": "2026-11-03T16:02-05:00"
+    },
+    {
+      "role": "assistant",
+      "text": "Drafted: move Design review to Wednesday, Nov 4 at 3:00 pm. You approved it.",
+      "at": "2026-11-03T16:03-05:00"
+    }
+  ],
+  "memory": {
+    "records": [
+      {
+        "id": "mem-dr-move",
+        "kind": "decision",
+        "content": "Design review on Wednesday Nov 4 moved from 2:00 pm to 3:00 pm (approved change).",
+        "source": "approved_action",
+        "confirmation": "confirmed",
+        "planId": null,
+        "recordedAt": "2026-11-03T21:03:00.000Z"
+      }
+    ],
+    "outdated": [
+      "2026-11-04T19:30:00",
+      "2:30 pm",
+      "2:30pm",
+      "14:30"
+    ]
+  },
+  "goal": "Move it 30 minutes later.",
+  "expected": {
+    "status": [
+      "drafted"
+    ],
+    "anyOfTools": [
+      [
+        "get_day_context",
+        "get_memory"
+      ]
+    ],
+    "drafts": [
+      {
+        "op": "reschedule_event",
+        "target": {
+          "id": "00000000-0000-4000-8000-000000000504",
+          "revision": 2
+        },
+        "payload": {
+          "startAtUtc": "2026-11-04T20:30:00.000Z"
+        }
+      }
+    ]
+  },
+  "reference": {
+    "calls": [
+      {
+        "tool": "get_day_context",
+        "args": {
+          "date": "2026-11-04",
+          "timeZone": "America/New_York"
+        }
+      }
+    ],
+    "result": {
+      "status": "drafted",
+      "answer": "Drafted: move Design review to 3:30 pm on Wednesday.",
+      "drafts": [
+        {
+          "op": "reschedule_event",
+          "target": {
+            "id": "00000000-0000-4000-8000-000000000504",
+            "revision": 2
+          },
+          "payload": {
+            "startAtUtc": "2026-11-04T20:30:00.000Z",
+            "timeZone": "America/New_York",
+            "reminderChange": {
+              "action": "unchanged"
+            }
+          },
+          "evidence": [
+            "1"
+          ]
+        }
+      ]
+    }
+  },
+  "tags": [
+    "follow_up",
+    "relative_time",
+    "regression_weak_spot"
+  ]
+}
