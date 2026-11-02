@@ -28,6 +28,9 @@
   --blue-wash: #eaf2fc;
   --blue-wash-deep: #dde9f8;
   --blue-glow: rgba(47, 100, 166, 0.14);
+  /* Older gradient stops, kept so screens not yet refreshed still read. New work: --primary-fill. */
+  --blue-top: var(--blue);
+  --blue-bottom: var(--blue-deep);
   --primary-fill: #b9d3f2;
   --primary-fill-hover: #a7c7ee;
   --primary-ink: #173f6e;
