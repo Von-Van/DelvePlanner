@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { z } from "zod";
 import { traceEventSchema } from "./AgentTrace";
+import { memorySuggestionSchema } from "./memoryApi";
 
 export const planStatuses = [
   "planning",
@@ -727,6 +728,7 @@ const draftCheckSchema = z
     drafted: count,
     passed: count,
     problems: z.array(z.string()),
+    memoryProblems: z.array(z.string()),
   })
   .strict();
 
@@ -767,6 +769,7 @@ export const agentRunSchema = z
     draftCheck: draftCheckSchema.nullable(),
     review: reviewStateSchema,
     proposal: plannerResponseSchema.options[0].nullable(),
+    memorySuggestions: z.array(memorySuggestionSchema),
     trace: z.array(traceEventSchema),
   })
   .strict();

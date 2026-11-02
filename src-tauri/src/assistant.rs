@@ -59,6 +59,12 @@ pub const MAX_GOAL_CHARS: usize = 2_000;
 /// A sidecar left unused this long is stopped; the next request starts a fresh one.
 pub const SIDECAR_IDLE: Duration = Duration::from_secs(10 * 60);
 
+mod suggestions;
+pub use suggestions::{
+    apply_memory_settings, check_suggestions, is_remember, memory_suggestion, new_memory,
+    MemorySuggestion, SuggestionBasis, SuggestionState, MAX_SUGGESTIONS, REMEMBER_OP,
+};
+
 /// Where the agent comes from in this build: a packaged executable, or Python source in
 /// development.
 pub fn locate_agent(resource_dir: &Path) -> Option<(SidecarCommand, &'static str)> {
@@ -314,9 +320,13 @@ fn references(operations: &[MutationOperation], observed: &Observed) -> Vec<Prop
 #[derive(Debug, Clone, Default, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct DraftCheck {
+    /// Every draft, planner changes and "remember this?" suggestions alike.
     pub drafted: usize,
     pub passed: usize,
+    /// Why planner changes were refused; any one means none are offered.
     pub problems: Vec<String>,
+    /// Why memory suggestions were left out. They never hold back planner changes.
+    pub memory_problems: Vec<String>,
 }
 
 /// Checks every draft. Changes are offered only when all of them pass: a set of changes the
@@ -407,6 +417,9 @@ pub struct AgentRunRecord {
     pub usage: RunUsage,
     pub draft_check: Option<DraftCheck>,
     pub review: ReviewState,
+    /// Memories the agent suggested ("remember this?"), each waiting for the person's yes or no.
+    /// Kept apart from `proposal`: approving planner changes never stores a memory.
+    pub memory_suggestions: Vec<MemorySuggestion>,
     /// Validated changes, in the planner's own review shape, while they can still be applied.
     pub proposal: Option<PlannerResponse>,
     pub trace: Vec<Value>,
@@ -572,6 +585,7 @@ pub fn finish_run(
         },
         draft_check: None,
         review: ReviewState::None,
+        memory_suggestions: Vec::new(),
         proposal: None,
         trace,
         stored_run_id: None,
@@ -617,15 +631,31 @@ pub fn finish_run(
     record.usage.completion_tokens = usage("completionTokens").unwrap_or(0);
     record.usage.duration_ms = u64::try_from(outcome.duration.as_millis()).unwrap_or(duration_ms);
 
-    if record.status != "drafted" {
+    if !matches!(record.status.as_str(), "drafted" | "answered") {
         return (record, None);
     }
-    let drafts = result
+    let (memory_drafts, drafts): (Vec<Value>, Vec<Value>) = result
         .get("drafts")
         .and_then(Value::as_array)
         .cloned()
-        .unwrap_or_default();
-    let (check, operations) = check_drafts(&drafts, observed);
+        .unwrap_or_default()
+        .into_iter()
+        .partition(is_remember);
+    if record.status == "answered" && memory_drafts.is_empty() {
+        return (record, None);
+    }
+    // An answer may carry "Remember this?" suggestions but never planner changes.
+    let (mut check, operations) = if record.status == "drafted" {
+        check_drafts(&drafts, observed)
+    } else {
+        (DraftCheck::default(), Vec::new())
+    };
+    // "Remember this?" drafts are checked and offered on their own.
+    let (suggestions, problems) = check_suggestions(&memory_drafts, observed);
+    check.drafted += memory_drafts.len();
+    check.passed += memory_drafts.len() - problems.len();
+    check.memory_problems = problems;
+    record.memory_suggestions = suggestions;
     record.draft_check = Some(check);
     if operations.is_empty() {
         return (record, None);

@@ -1252,6 +1252,18 @@ mod tests {
         database.create_plan(plan_input(title)).unwrap()
     }
 
+    #[test]
+    fn is_plan_tells_projects_from_other_records() {
+        let directory = tempdir().unwrap();
+        let mut database = PlannerDatabase::open(&directory.path().join("plans.sqlite3")).unwrap();
+        let project = plan(&mut database, "Grant");
+        assert!(database.is_plan(&project.id).unwrap());
+        assert!(!database
+            .is_plan("00000000-0000-4000-8000-0000000000a1")
+            .unwrap());
+        assert!(!database.is_plan("not an id").unwrap());
+    }
+
     fn archive(database: &mut PlannerDatabase, plan: &Plan) -> Plan {
         database
             .update_plan(UpdatePlanInput {

@@ -5514,3 +5514,27 @@ kbd.off {
   font-size: 13px;
   font-weight: 600;
 }
+
+/* "Remember this?" suggestions on an assistant run (milestone M2). */
+.memory-suggestions {
+  display: grid;
+  gap: 8px;
+}
+.memory-suggestion {
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  border: 1px solid var(--control);
+  background: var(--ground);
+}
+.memory-suggestion.inferred {
+  border-style: dashed;
+}
+.memory-suggestion > strong {
+  color: var(--ink);
+  font: 400 14px/1.35 var(--font-display);
+}
+.memory-suggestion > small {
+  color: var(--secondary);
+  font-size: 11px;
+}

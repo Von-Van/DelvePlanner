@@ -2,7 +2,7 @@
 //! delete, export, pause it, and switch it off per project. The assistant itself never calls
 //! these; it only reads memory through the `get_memory` tool.
 
-use super::{with_database, AppState, FileActionResult};
+use super::{assistant, with_database, AppState, FileActionResult};
 use crate::db::{
     MemoryExport, MemoryFilter, MemoryKind, MemoryRecord, MemorySettings, MemorySource, NewMemory,
     UpdateMemorySettings,
@@ -152,4 +152,87 @@ pub(crate) async fn export_memory_file(
         completed: true,
         file_name: path.file_name().map(|name| name.to_string_lossy().into()),
     })
+}
+
+// -------------------------------------------------------------------------------------------------
+// "Remember this?" suggestions from the assistant
+
+/// Leaves out a finished run's memory suggestions that the memory settings rule out. If the
+/// settings can't be read, no suggestion is offered.
+pub(crate) fn filter_suggestions(
+    state: &State<'_, AppState>,
+    record: &mut assistant::AgentRunRecord,
+) {
+    if record.memory_suggestions.is_empty() {
+        return;
+    }
+    let checked = with_database(state, |database| {
+        let settings = database.memory_settings()?;
+        let mut plans = std::collections::HashSet::new();
+        for plan in record
+            .memory_suggestions
+            .iter()
+            .filter_map(|s| s.plan_id.as_deref())
+        {
+            if database.is_plan(plan)? {
+                plans.insert(plan.to_string());
+            }
+        }
+        Ok((settings, plans))
+    });
+    match checked {
+        Ok((settings, plans)) => {
+            assistant::apply_memory_settings(record, &settings, |id| plans.contains(id))
+        }
+        Err(_) => record.memory_suggestions.clear(),
+    }
+}
+
+/// The person approves a memory the assistant suggested. It is stored with an honest source:
+/// something they said, or the assistant's guess (unconfirmed, and it expires).
+#[tauri::command]
+pub(crate) fn remember_suggestion(
+    state: State<'_, AppState>,
+    run_key: String,
+    suggestion_id: String,
+) -> Result<assistant::MemorySuggestion, CommandError> {
+    let (suggestion, run_id) = state
+        .assistant
+        .claim_suggestion(&run_key, &suggestion_id)
+        .map_err(CommandError::from)?;
+    let saved = with_database(&state, |database| {
+        if let Some(plan) = suggestion.plan_id.as_deref() {
+            if !database.is_plan(plan)? {
+                return Err(AppError::Validation(
+                    "That project no longer exists.".into(),
+                ));
+            }
+        }
+        database.add_memory(assistant::new_memory(&suggestion, run_id.as_deref()))
+    });
+    let next = match &saved {
+        Ok(memory) => assistant::SuggestionState::Remembered {
+            memory_id: memory.id.clone(),
+        },
+        // Not saved (for example, memory was paused meanwhile): the person can try again.
+        Err(_) => assistant::SuggestionState::Pending,
+    };
+    let settled = state
+        .assistant
+        .settle_suggestion(&run_key, &suggestion_id, next)
+        .map_err(CommandError::from)?;
+    saved.map(|_| settled)
+}
+
+/// The person declines a suggested memory. Nothing is stored.
+#[tauri::command]
+pub(crate) fn dismiss_suggestion(
+    state: State<'_, AppState>,
+    run_key: String,
+    suggestion_id: String,
+) -> Result<assistant::MemorySuggestion, CommandError> {
+    state
+        .assistant
+        .dismiss_suggestion(&run_key, &suggestion_id)
+        .map_err(CommandError::from)
 }

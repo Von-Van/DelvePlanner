@@ -138,13 +138,32 @@ TARGET_ID_FIELDS: dict[str, str] = {
 }
 TARGETED_OPS = frozenset(TARGET_ID_FIELDS)
 CREATE_OPS = frozenset(OP_SPECS) - TARGETED_OPS
+# The planner's own operations (each a `MutationOperation` variant).
 ALLOWED_OPS = frozenset(OP_SPECS)
+
+# "Remember this?": a memory the person is asked to approve (milestone M2). It is not a planner
+# change: Rust offers it on its own and stores it in memory only if the person says yes. `basis`
+# says who it comes from: "stated" when the person said it, "inferred" when it is the agent's own
+# conclusion (stored as an unconfirmed guess that expires).
+MEMORY_OP_SPECS: dict[str, dict[str, tuple[str, bool]]] = {
+    "remember": {
+        "kind": ("memory_kind", True),
+        "content": ("memory_text", True),
+        "basis": ("memory_basis", True),
+        "planId": ("plan_id", False),
+    },
+}
+MAX_MEMORY_CHARS = 500
+# Every op a draft may use.
+DRAFT_OPS = ALLOWED_OPS | frozenset(MEMORY_OP_SPECS)
 
 ENUMS: dict[str, tuple[str, ...]] = {
     "plan_status": ("planning", "active", "on_hold", "complete", "cancelled"),
     "milestone_status": ("pending", "complete", "skipped"),
     "task_status": ("todo", "in_progress", "blocked", "done"),
     "task_priority": ("low", "normal", "high", "critical"),
+    "memory_kind": ("decision", "priority", "project_fact", "open_problem", "preference", "note"),
+    "memory_basis": ("stated", "inferred"),
 }
 
 # How each value type is written, for the prompt and for error messages.
@@ -159,6 +178,8 @@ TYPE_HELP: dict[str, str] = {
     "reminder_change": '{"action": "unchanged"} | {"action": "clear"} | {"action": "set", "minutesBefore": N}',
     "day_change": '{"action": "unchanged"} | {"action": "clear"} | {"action": "set", "day": "YYYY-MM-DD"}',
     "estimate_change": '{"action": "unchanged"} | {"action": "clear"} | {"action": "set", "minutes": N}',
+    "memory_text": f"one short sentence, at most {MAX_MEMORY_CHARS} characters",
+    "plan_id": "a plan id from a tool result",
     **{name: " | ".join(f'"{v}"' for v in values) for name, values in ENUMS.items()},
 }
 
@@ -217,13 +238,19 @@ _CHECKS: dict[str, Callable[[Any], bool]] = {
     "reminder_change": lambda v: _tagged(v, {"minutesBefore": _is_int}),
     "day_change": lambda v: _tagged(v, {"day": lambda d: isinstance(d, str) and bool(_DATE.match(d))}),
     "estimate_change": lambda v: _tagged(v, {"minutes": _is_int}),
+    "memory_text": lambda v: _nonempty_str(v) and len(v.strip()) <= MAX_MEMORY_CHARS,
+    "plan_id": _nonempty_str,
     **{name: _one_of(allowed) for name, allowed in ENUMS.items()},
 }
 
 
+def _spec(op: str) -> dict[str, tuple[str, bool]]:
+    return OP_SPECS[op] if op in OP_SPECS else MEMORY_OP_SPECS[op]
+
+
 def payload_help(op: str) -> str:
     """One line describing an op's payload, for the prompt."""
-    spec = OP_SPECS[op]
+    spec = _spec(op)
     target = f" target {TARGET_ID_FIELDS[op][:-2]}" if op in TARGETED_OPS else " target null"
     if not spec:
         return f"- {op} ({target.strip()}): payload {{}}"
@@ -291,7 +318,7 @@ def observed_references(tool_data: Iterable[Any]) -> set[str]:
 
 
 def _check_payload(op: str, payload: dict[str, Any], references: set[str]) -> None:
-    spec = OP_SPECS[op]
+    spec = _spec(op)
     unknown = sorted(set(payload) - set(spec))
     if unknown:
         hint = " (the record id and revision go in target)" if {"expectedRevision", "id"} & set(unknown) else ""
@@ -310,6 +337,8 @@ def _check_payload(op: str, payload: dict[str, Any], references: set[str]) -> No
             raise DraftError(f"{op}: payload.{name} must be {TYPE_HELP[kind]}")
         if kind == "record_ref" and "id" in value and value["id"] not in references:
             raise DraftError(f"{op}: payload.{name} refers to {value['id']}, which no tool result showed")
+        if kind == "plan_id" and value not in references:
+            raise DraftError(f"{op}: payload.{name} refers to {value}, which no tool result showed")
 
 
 def parse_draft(
@@ -320,8 +349,8 @@ def parse_draft(
     if not isinstance(raw, dict):
         raise DraftError("each draft must be an object")
     op = raw.get("op")
-    if op not in ALLOWED_OPS:
-        raise DraftError(f"unsupported op {op!r}; allowed: {', '.join(sorted(ALLOWED_OPS))}")
+    if op not in DRAFT_OPS:
+        raise DraftError(f"unsupported op {op!r}; allowed: {', '.join(sorted(DRAFT_OPS))}")
     payload = raw.get("payload")
     if payload is None:
         payload = {}
@@ -356,12 +385,16 @@ def parse_draft(
         target = None
 
     payload = dict(payload)
-    _check_payload(op, payload, set(records) if references is None else references)
+    # A memory's project must be a record a tool returned (as Rust checks), not just a foreign key.
+    known = set(records) if references is None or op in MEMORY_OP_SPECS else references
+    _check_payload(op, payload, known)
     return Draft(op=op, target=target, payload=payload, evidence=tuple(evidence))
 
 
 def mutation_operation(draft: Draft) -> dict[str, Any]:
     """The exact JSON for Rust's `MutationOperation` (`tag = "type"`, camelCase fields)."""
+    if draft.op not in ALLOWED_OPS:
+        raise DraftError(f"{draft.op} is not a planner change")
     operation: dict[str, Any] = {"type": draft.op}
     if draft.op in TARGETED_OPS:
         assert draft.target is not None
