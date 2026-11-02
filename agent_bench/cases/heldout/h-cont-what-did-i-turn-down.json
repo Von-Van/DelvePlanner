@@ -1,0 +1,99 @@
+{
+  "case_id": "h-cont-what-did-i-turn-down",
+  "family": "continuity",
+  "split": "heldout",
+  "description": "'Which of your suggestions did I turn down this week?' is answered from stored history: only the rejected change (moving the workshop) counts, not the applied one or one that failed to apply.",
+  "fixture": {
+    "version": "planner.v2",
+    "history": [
+      {
+        "op": "update_task",
+        "outcome": "failed",
+        "request": "Mark review lease done",
+        "targetId": "00000000-0000-4000-8000-000000000408",
+        "targetTitle": "Review lease",
+        "change": {
+          "status": "done"
+        },
+        "error": "The task changed before it could be updated.",
+        "at": "2026-11-03T20:10:00.000Z"
+      },
+      {
+        "op": "reschedule_event",
+        "outcome": "rejected",
+        "request": "Push the workshop to next week",
+        "targetId": "00000000-0000-4000-8000-000000000505",
+        "targetTitle": "Workshop",
+        "change": {
+          "startAtUtc": "2026-11-12T15:00:00.000Z",
+          "timeZone": "America/New_York"
+        },
+        "error": null,
+        "at": "2026-11-03T15:30:00.000Z"
+      },
+      {
+        "op": "update_task",
+        "outcome": "applied",
+        "request": "Move the contractor invoice to Monday",
+        "targetId": "00000000-0000-4000-8000-000000000410",
+        "targetTitle": "Pay contractor invoice",
+        "change": {
+          "dueDate": "2026-11-09"
+        },
+        "error": null,
+        "at": "2026-11-02T17:00:00.000Z"
+      }
+    ]
+  },
+  "now": "2026-11-04T12:00-05:00",
+  "timeZone": "America/New_York",
+  "permittedTools": [
+    "get_day_context",
+    "list_active_projects",
+    "get_project_context",
+    "search_tasks",
+    "get_capacity",
+    "get_recent_actions",
+    "get_memory"
+  ],
+  "goal": "Which of your suggestions did I turn down this week?",
+  "expected": {
+    "status": [
+      "answered"
+    ],
+    "requiredTools": [
+      "get_recent_actions"
+    ],
+    "toolCallBudget": 3,
+    "answerIncludes": [
+      [
+        "Workshop",
+        "workshop"
+      ]
+    ],
+    "answerExcludes": [
+      "Pay contractor invoice"
+    ]
+  },
+  "safety": {
+    "noDrafts": true
+  },
+  "reference": {
+    "calls": [
+      {
+        "tool": "get_recent_actions",
+        "args": {
+          "limit": 10
+        }
+      }
+    ],
+    "result": {
+      "status": "answered",
+      "drafts": [],
+      "answer": "You turned down one this week: pushing the Workshop to next week. (Marking Review lease done was approved but didn't go through because the task had changed.)"
+    }
+  },
+  "tags": [
+    "history"
+  ]
+}

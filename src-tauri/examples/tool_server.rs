@@ -4,7 +4,8 @@
 //!
 //! ```text
 //! cargo run --example tool_server -- [--bundle export.json | --db planner.sqlite3]
-//!     [--memory memory-export.json] [--now 2026-11-02T15:00:00Z] [--time-zone America/Chicago]
+//!     [--memory memory-export.json] [--history decided-actions.json]
+//!     [--now 2026-11-02T15:00:00Z] [--time-zone America/Chicago]
 //!     [--allow-descriptions] [--github agent_bench/fixtures/github.v1.json]
 //! cargo run --example tool_server -- --print-contract
 //! ```
@@ -12,6 +13,8 @@
 //! With neither `--bundle` nor `--db`, the built-in sample fixture is served. `--db` copies the
 //! database into a temporary folder first (a consistent SQLite snapshot, read-only on the source).
 //! `--memory` replaces the copy's memory with a `delve.memory.v1` export, for `get_memory`.
+//! `--history` adds already-decided assistant changes (a JSON array in `get_recent_actions`'
+//! `recentAction` shape) to the copy, for `get_recent_actions`.
 //! `--github` serves the GitHub tools from a saved GitHub context snapshot; without it they answer
 //! `permission_denied`, as they do in the app until the user selects repositories.
 //!
@@ -24,7 +27,7 @@
 
 use chrono::{DateTime, Utc};
 use chrono_tz::Tz;
-use delve_planner_desktop::db::{MemoryImport, PlannerDatabase};
+use delve_planner_desktop::db::{DecidedActionSeed, MemoryImport, PlannerDatabase};
 use delve_planner_desktop::tools::github::GitHubContext;
 use delve_planner_desktop::tools::registry::{contract, ToolName, CONTRACT_VERSION};
 use delve_planner_desktop::tools::{
@@ -48,6 +51,7 @@ const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
 struct Options {
     source: Source,
     memory: Option<PathBuf>,
+    history: Option<PathBuf>,
     now: DateTime<Utc>,
     time_zone: Tz,
     privacy: PrivacyPolicy,
@@ -82,6 +86,19 @@ fn run() -> Result<(), String> {
         let import: MemoryImport = serde_json::from_str(&text)
             .map_err(|error| format!("{} isn't a memory export: {error}", path.display()))?;
         database.import_memory(&import).map_err(|e| e.to_string())?;
+    }
+    if let Some(path) = &options.history {
+        let text = fs::read_to_string(path)
+            .map_err(|error| format!("can't read {}: {error}", path.display()))?;
+        let actions: Vec<DecidedActionSeed> = serde_json::from_str(&text).map_err(|error| {
+            format!(
+                "{} isn't a list of decided actions: {error}",
+                path.display()
+            )
+        })?;
+        database
+            .seed_decided_actions(&actions)
+            .map_err(|error| error.to_string())?;
     }
     eprintln!("tool_server: serving {CONTRACT_VERSION} from a fixture copy");
     let defaults = SessionConfig {
@@ -176,6 +193,7 @@ fn parse_options() -> Result<Option<Options>, String> {
     let mut options = Options {
         source: Source::Sample,
         memory: None,
+        history: None,
         now: Utc::now(),
         time_zone: Tz::UTC,
         privacy: PrivacyPolicy::default(),
@@ -188,6 +206,7 @@ fn parse_options() -> Result<Option<Options>, String> {
             "--bundle" => options.source = Source::Bundle(value()?.into()),
             "--db" => options.source = Source::Database(value()?.into()),
             "--memory" => options.memory = Some(value()?.into()),
+            "--history" => options.history = Some(value()?.into()),
             "--now" => options.now = parse_now(&value()?)?,
             "--time-zone" => options.time_zone = parse_zone(&value()?)?,
             "--allow-descriptions" => options.privacy.include_descriptions = true,
@@ -206,7 +225,8 @@ fn parse_options() -> Result<Option<Options>, String> {
             }
             "--help" | "-h" => {
                 eprintln!(
-                    "usage: tool_server [--bundle FILE | --db FILE] [--memory FILE] [--now ISO] \
+                    "usage: tool_server [--bundle FILE | --db FILE] [--memory FILE] [--history FILE] \
+                     [--now ISO] \
                      [--time-zone ZONE] [--allow-descriptions] [--github FILE] \
                      [--print-contract]"
                 );
