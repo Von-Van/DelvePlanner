@@ -301,6 +301,17 @@ describe("planner response boundary", () => {
           },
           2,
         ),
+        review(
+          {
+            type: "create_task_block",
+            taskId: "f67fcad6-2827-4668-829f-1950f441d054",
+            expectedRevision: 2,
+            startAtUtc: "2026-09-16T14:00:00.000Z",
+            timeZone: "America/Chicago",
+            durationMinutes: 45,
+          },
+          5,
+        ),
       ],
     });
     expect(parsed.kind).toBe("proposal");
@@ -341,6 +352,14 @@ describe("planner response boundary", () => {
         type: "delete_plan",
         planId: "f67fcad6-2827-4668-829f-1950f441d054",
         expectedRevision: 1,
+      },
+      {
+        type: "create_task_block",
+        taskId: "f67fcad6-2827-4668-829f-1950f441d054",
+        expectedRevision: 1,
+        startAtUtc: "2026-09-16T14:00:00.000Z",
+        timeZone: "America/Chicago",
+        durationMinutes: 2,
       },
     ]) {
       expect(() => plannerResponseSchema.parse(proposal(operation))).toThrow();

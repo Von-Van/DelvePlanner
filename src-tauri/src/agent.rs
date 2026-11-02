@@ -682,7 +682,8 @@ fn operation_record_ids(operation: &MutationOperation) -> Vec<String> {
             .collect(),
         MutationOperation::UpdateTask { task_id, .. }
         | MutationOperation::ScheduleTask { task_id, .. }
-        | MutationOperation::DeleteTask { task_id, .. } => vec![task_id.clone()],
+        | MutationOperation::DeleteTask { task_id, .. }
+        | MutationOperation::CreateTaskBlock { task_id, .. } => vec![task_id.clone()],
         MutationOperation::SetTaskPlan {
             task_id,
             plan,

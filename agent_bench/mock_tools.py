@@ -94,6 +94,9 @@ class PlannerState:
         self.bundle = copy.deepcopy(fixture["bundle"])
         self.external_busy = copy.deepcopy(fixture.get("externalBusy", []))
         self.working_hours = copy.deepcopy(fixture.get("workingHours", DEFAULT_WORKING_HOURS))
+        # The planning profile (src-tauri/src/db/profile.rs). Export bundles don't carry it, so a case
+        # sets it with ``planningProfile``; empty means nothing was set.
+        self.profile: dict = {}
         # Decided assistant drafts for get_recent_actions, newest first. Cases add them as fixture.history.
         self.history: list[dict] = []
 
@@ -134,7 +137,7 @@ class PlannerState:
 
     def working_window(self, day: date, tz: ZoneInfo) -> tuple[datetime, datetime] | None:
         hours = self.working_hours
-        if day.isoweekday() not in hours["days"]:
+        if day.isoweekday() not in hours["days"] or day.isoweekday() in self.profile.get("noWorkDays", []):
             return None
         midnight = datetime.combine(day, datetime.min.time(), tz)
         return (
@@ -419,7 +422,7 @@ def tool_get_capacity(state: PlannerState, args: dict, s: Session) -> dict:
     pooled = [t for t in state.rows("tasks") if t["status"] != "done" and t.get("scheduledDay") is None and t.get("plannedWeek") and first <= t["plannedWeek"] < end]
     return {
         "workingHours": copy.deepcopy(state.working_hours),
-        "plannedLimitMinutes": None,
+        "plannedLimitMinutes": state.profile.get("maxPlannedMinutes"),
         "days": [state.day_capacity(start + timedelta(days=i), tz) for i in range(7)],
         "pooledMinutes": sum(t.get("estimatedMinutes") or 0 for t in pooled),
         "pooledUnestimatedTasks": sum(1 for t in pooled if t.get("estimatedMinutes") is None),
@@ -440,6 +443,86 @@ def tool_get_recent_actions(state: PlannerState, args: dict, s: Session) -> dict
                 action.get("change", {}).pop(key, None)
         actions.append(action)
     return {"actions": actions, "historyAvailable": True}
+
+
+# get_preferences mirrors src-tauri/src/tools/preferences.rs and the observations in db/profile.rs.
+WEEKDAY_NAMES = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+MIN_SAMPLE = 5
+PROFILE_FIELDS = ("preferredStartMinute", "preferredEndMinute", "maxPlannedMinutes", "focusMinutes", "breakMinutes")
+
+
+def _clock(minute: int) -> str:
+    return f"{minute // 60:02d}:{minute % 60:02d}"
+
+
+def _hours(minutes: int) -> str:
+    whole, rest = divmod(minutes, 60)
+    return f"{rest} m" if whole == 0 else f"{whole} h" if rest == 0 else f"{whole} h {rest} m"
+
+
+def _plural(count: int, word: str) -> str:
+    return word if count == 1 else f"{word}s"
+
+
+def _local_block_start(block: dict) -> datetime:
+    return parse_utc(block["startAtUtc"]).astimezone(ZoneInfo(block["timeZone"]))
+
+
+def _observations(state: PlannerState) -> list[dict]:
+    """The block-based observations. The others need move history, which fixtures don't carry."""
+    muted = set(state.profile.get("mutedObservations", []))
+    blocks = state.rows("taskBlocks")
+    found = []
+    if "estimate_accuracy" not in muted:
+        blocked: dict[str, int] = {}
+        for b in blocks:
+            blocked[b["taskId"]] = blocked.get(b["taskId"], 0) + b["durationMinutes"]
+        done = [t for t in state.rows("tasks") if t["status"] == "done" and t.get("estimatedMinutes") is not None and t["id"] in blocked]
+        estimated, spent = sum(t["estimatedMinutes"] for t in done), sum(blocked[t["id"]] for t in done)
+        if len(done) >= MIN_SAMPLE and estimated:
+            percent = int((spent - estimated) * 100 / estimated)  # Rust integer division truncates
+            summary = (
+                f"Work takes about {percent}% longer than you estimate." if percent >= 15
+                else f"Work takes about {abs(percent)}% less than you estimate." if percent <= -15
+                else "Your estimates are close to the time you block for the work."
+            )
+            found.append({"kind": "estimate_accuracy", "summary": summary,
+                          "evidence": f"{len(done)} finished {_plural(len(done), 'task')} with both an estimate and blocked time.", "sample": len(done)})
+    if "usual_start" not in muted:
+        recent = sorted(blocks, key=lambda b: b["startAtUtc"], reverse=True)[:200]
+        minutes = [(lambda local: local.hour * 60 + local.minute)(_local_block_start(b)) for b in recent]
+        if len(minutes) >= MIN_SAMPLE:
+            found.append({"kind": "usual_start", "summary": f"You usually start blocked work around {_clock(sum(minutes) // len(minutes))}.",
+                          "evidence": f"{len(minutes)} recent time {_plural(len(minutes), 'block')}.", "sample": len(minutes)})
+    if "typical_daily_load" not in muted:
+        by_day: dict[date, int] = {}
+        for b in blocks:
+            day = _local_block_start(b).date()
+            by_day[day] = by_day.get(day, 0) + b["durationMinutes"]
+        if len(by_day) >= MIN_SAMPLE:
+            found.append({"kind": "typical_daily_load", "summary": f"A day you block work on usually holds about {_hours(sum(by_day.values()) // len(by_day))}.",
+                          "evidence": f"{len(by_day)} {_plural(len(by_day), 'day')} with blocked time.", "sample": len(by_day)})
+    return [{"trust": "verified", **o} for o in found]
+
+
+def tool_get_preferences(state: PlannerState, args: dict, s: Session) -> dict:
+    p = state.profile
+    days = sorted(set(p.get("noWorkDays", [])))
+    return {
+        "profile": {
+            "trust": "user_confirmed",
+            "isSet": any(p.get(k) is not None for k in PROFILE_FIELDS) or bool(days) or p.get("energy") is not None,
+            "preferredStart": None if p.get("preferredStartMinute") is None else _clock(p["preferredStartMinute"]),
+            "preferredEnd": None if p.get("preferredEndMinute") is None else _clock(p["preferredEndMinute"]),
+            "maxPlannedMinutes": p.get("maxPlannedMinutes"),
+            "focusMinutes": p.get("focusMinutes"),
+            "breakMinutes": p.get("breakMinutes"),
+            "noWorkDays": [WEEKDAY_NAMES[d - 1] for d in days],
+            "energy": p.get("energy"),
+        },
+        "workingHours": copy.deepcopy(state.working_hours),
+        "observations": _observations(state),
+    }
 
 
 # get_memory mirrors src-tauri/src/tools/memory.rs: same filters, same ranking, same word rules.
@@ -527,6 +610,7 @@ TOOL_IMPLS = {
     "get_capacity": tool_get_capacity,
     "get_recent_actions": tool_get_recent_actions,
     "get_memory": tool_get_memory,
+    "get_preferences": tool_get_preferences,
 }
 
 
@@ -617,6 +701,7 @@ class MockToolClient:
         self.state.github = github_tools.state_entries(github_tools.load_github_fixture())
         for change in case["fixture"].get("overrides", []):
             self.state.apply(change)
+        self.state.profile = copy.deepcopy(case.get("planningProfile", {}))
         self.state.memory = copy.deepcopy(case.get("memory"))
         self.state.history = copy.deepcopy(case["fixture"].get("history", []))
         self.session = Session(now=datetime.fromisoformat(case["now"]), time_zone=case["timeZone"], privacy=dict(case.get("privacy", {})))

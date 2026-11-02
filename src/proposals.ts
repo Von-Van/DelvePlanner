@@ -290,6 +290,15 @@ export function describeOperation(
         title: `Add workstream “${operation.name}”`,
         details: [`In ${planName(operation.plan)}`],
       };
+    case "create_task_block":
+      return {
+        tone: "create",
+        title: `Block time for ${named(operation.taskId, "the selected task")}`,
+        details: [
+          when(operation.startAtUtc),
+          `${operation.durationMinutes} min`,
+        ],
+      };
     case "set_task_workstream":
       return {
         tone: "move",

@@ -14,7 +14,7 @@ import uuid
 from collections.abc import Callable
 from typing import Any, Protocol
 
-from .drafts import DraftError, observed_records, observed_references, parse_draft
+from .drafts import DraftError, check_time_blocks, observed_records, observed_references, parse_draft
 from .model import ModelClient, ModelError, ModelRequest
 from .prompts import PROMPT_VERSION, STEP_SCHEMA, system_prompt, task_message
 from .tools import ToolClient, ToolSpec, check_arguments, default_catalog
@@ -51,6 +51,10 @@ STOP_REASONS = frozenset(
 MAX_CONSECUTIVE_REPAIRS = 2
 # The same tool + arguments failing with the same error this many times ends the run.
 MAX_IDENTICAL_ERRORS = 2
+# An optional plan of the reads a request needs: at most this many per run (a first plan and one
+# revision), each with at most MAX_PLAN_STEPS steps.
+MAX_PLANS = 2
+MAX_PLAN_STEPS = 8
 
 
 def estimate_tokens(messages: list[dict[str, str]]) -> int:
@@ -106,6 +110,7 @@ class _Run:
         self.tool_results: dict[str, Any] = {}  # tool call id -> data, successful calls only
         self.error_counts: dict[str, int] = {}
         self.repairs_in_a_row = 0
+        self.plans = 0
         self.model_info: dict[str, Any] = {}
 
     # -- run ------------------------------------------------------------------------------------
@@ -198,6 +203,9 @@ class _Run:
             return None, None, []
 
         action = step.get("action")
+        if action == "plan":
+            self.record_plan(step.get("steps"))
+            return None, None, []
         if action == "call_tool":
             self.call_tool(step.get("tool"), step.get("arguments", {}))
             return None, None, []
@@ -216,6 +224,36 @@ class _Run:
             raise _Stop("cannot_complete", "model_declined", step.get("reason") or None)
         self.repair("invalid_model_output", f"Unknown or incomplete action {action!r}.")
         return None, None, []
+
+    def record_plan(self, steps: Any) -> None:
+        """Note the reads the model intends to make. The plan is not executed by code: the model still
+        takes each step itself, and the trace shows the plan next to what actually happened."""
+        if self.plans >= MAX_PLANS:
+            self.repair("invalid_model_output", "You already have a plan. Take its next step now.")
+            return
+        if not isinstance(steps, list) or not steps or len(steps) > MAX_PLAN_STEPS:
+            self.repair("invalid_model_output", f'A plan needs a "steps" list of 1 to {MAX_PLAN_STEPS} reads.')
+            return
+        tools = [step.get("tool") if isinstance(step, dict) else None for step in steps]
+        unknown = [str(tool) for tool in tools if tool not in self.offered_names]
+        if unknown:
+            allowed = ", ".join(sorted(self.offered_names)) or "none"
+            self.repair(
+                "invalid_model_output", f"The plan names tools you can't use ({', '.join(unknown)}); use: {allowed}."
+            )
+            return
+        self.plans += 1
+        self.repairs_in_a_row = 0
+        self.tracer.emit(
+            "plan",
+            f"plan {self.plans}: {', '.join(str(tool) for tool in tools)}",
+            # Tool names only: the model's reasons can quote private text, so they stay in debug output.
+            {"plan": self.plans, "steps": [{"tool": tool} for tool in tools]},
+            debug_data={"steps": steps},
+        )
+        self.messages.append(
+            {"role": "user", "content": "Plan noted. Take the first step now, one JSON step per reply."}
+        )
 
     def repair(self, reason: str, message: str) -> None:
         """Tell the model what was wrong and let it try again, within a small bound."""
@@ -327,6 +365,7 @@ class _Run:
         try:
             for item in raw:
                 drafts.append(parse_draft(item, set(self.tool_results), records, references))
+            check_time_blocks(drafts, self.tool_results.values())
         except DraftError as error:
             self.repair("invalid_draft", f"Draft rejected: {error}.")
             return None
