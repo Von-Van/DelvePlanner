@@ -1852,7 +1852,10 @@ mod tests {
         drop(connection);
 
         let mut migrated = PlannerDatabase::open(&path).unwrap();
-        assert_eq!(migrated.schema_version().unwrap(), 9);
+        assert_eq!(
+            migrated.schema_version().unwrap(),
+            super::super::CURRENT_SCHEMA_VERSION
+        );
         assert!(migrated.list_backups().unwrap()[0]
             .name
             .contains("migration"));
