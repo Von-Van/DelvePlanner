@@ -90,10 +90,9 @@ def test_default_catalog_is_the_rust_tools_contract(monkeypatch):
         pytest.skip("needs the full repository checkout")
     monkeypatch.delenv(CONTRACT_ENV, raising=False)
     catalog = {spec.name: spec for spec in default_catalog()}
-    # get_memory is reserved (not implemented) and left out. get_preferences and the read-only
-    # GitHub tools (piece M) came after the v0 table.
+    # get_memory (M2), get_preferences (M3) and the GitHub context tools (piece M) are implemented in Rust too.
     github = {"list_github_repos", "search_github_items", "get_github_item"}
-    assert set(catalog) == set(SPECS) | {"get_preferences"} | github
+    assert set(catalog) == set(SPECS) | {"get_memory", "get_preferences"} | github
     day = catalog["get_day_context"]
     # $defs references are inlined, so formats are checked before a tool call is spent.
     assert day.input_schema["properties"]["date"]["type"] == "string"

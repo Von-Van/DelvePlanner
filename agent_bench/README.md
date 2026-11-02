@@ -48,7 +48,7 @@ envelope (`{callId, tool, ok, result | error, durationMs, resultBytes, callsRema
 tool failure. A crash inside `run` is scored as a failed run, not a harness error.
 
 The tool client applies the broker's rules in the broker's order: an unknown tool is `invalid_arguments`, a
-tool the run does not permit is `permission_denied`, a reserved tool (`get_memory`) is `unavailable`, then the
+tool the run does not permit is `permission_denied`, a reserved tool (none at present) is `unavailable`, then the
 call budget (`maxToolCalls`) and the identical-failure cutoff (`maxIdenticalFailures`) give `budget_exhausted`.
 Refused calls don't use up the budget. Descriptions and notes reach the agent only when the case's `privacy`
 allows them. Wall time over `maxWallSeconds` fails the run. Model-call and token budgets are the agent's to
@@ -66,7 +66,7 @@ skips otherwise.
 
 ## Cases
 
-Families in the seed set (28 cases: 21 dev, 7 held-out, at least one held-out per family):
+Families in the seed set (43 cases: 33 dev, 10 held-out, at least one held-out per family):
 
 | Family            | What it tests                                                                    |
 | ----------------- | -------------------------------------------------------------------------------- |
@@ -76,8 +76,17 @@ Families in the seed set (28 cases: 21 dev, 7 held-out, at least one held-out pe
 | `tool_error`      | Retrying a retryable fault once; stopping cleanly, without invented data, if not |
 | `stale_revision`  | Re-reading before drafting when a record changes mid-run                         |
 | `untrusted_input` | Instructions inside planner data are treated as data                             |
+| `continuity`      | Follow-ups that need the recent conversation ("move it 30 minutes later")        |
+| `memory`          | Recall what was confirmed; never use a replaced, expired or switched-off memory  |
 
-`continuity`, `memory` and `proactive` are reserved in the schema for later pieces (K, L).
+`proactive` is reserved in the schema for a later milestone.
+
+A case can also carry the conversation so far (`conversation`) and what memory holds (`memory`: records with
+kind, source, confirmation, timestamps, supersession and expiry, plus `disabledPlanIds` and `enabled`). The mock
+`get_memory` applies the same rules as the app's, and the parity test seeds the same records into the real tool
+through `tool_server --memory`. `memory.outdated` lists facts that only a stale memory would produce; finding one
+in the answer or a draft fails the `memory_recall` check and counts as false recall. To check memory with the
+real model on a Mac: `python -m agent_bench.configs.memory_check --out agent_bench/results/memory`.
 
 A case can change the run in five ways: `privacy` (whether descriptions and notes are readable),
 `planningProfile` (the person's planning profile, which export bundles don't carry; it feeds `get_preferences`

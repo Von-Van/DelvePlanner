@@ -470,7 +470,7 @@ fn preferences_keep_what_the_person_set_apart_from_what_was_observed() {
 fn unknown_reserved_and_unpermitted_tools_are_refused_without_spending_budget() {
     let fixture = fixture();
     let mut config = SessionConfig::new(Utc::now(), ZONE.parse().unwrap());
-    config.permitted_tools = Some([ToolName::SearchTasks, ToolName::GetMemory].into());
+    config.permitted_tools = Some([ToolName::SearchTasks].into());
     let mut session = ToolSession::new(config);
     let start = session.calls_remaining();
     let outcome = call(&fixture, &mut session, "delete_task", json!({}));
@@ -478,7 +478,7 @@ fn unknown_reserved_and_unpermitted_tools_are_refused_without_spending_budget() 
     let outcome = call(&fixture, &mut session, "get_capacity", json!({}));
     assert_eq!(error_code(&outcome), "permission_denied");
     let outcome = call(&fixture, &mut session, "get_memory", json!({}));
-    assert_eq!(error_code(&outcome), "unavailable");
+    assert_eq!(error_code(&outcome), "permission_denied");
     assert_eq!(session.calls_remaining(), start);
     assert_eq!(session.log().len(), 3);
     assert_eq!(session.log()[1].call_id, "call-2");

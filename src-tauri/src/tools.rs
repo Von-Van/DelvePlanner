@@ -7,6 +7,7 @@
 
 pub mod error;
 pub mod github;
+pub mod memory;
 pub mod preferences;
 pub mod read;
 pub mod registry;
@@ -370,10 +371,11 @@ impl ToolSession {
             }
             ToolName::GetCapacity => encode(read::get_capacity(sources, parse(arguments)?)?),
             ToolName::GetRecentActions => encode(read::get_recent_actions(parse(arguments)?)?),
-            ToolName::GetMemory => Err(ToolError::new(
-                ToolErrorCode::Unavailable,
-                "get_memory is reserved and not available yet.",
-            )),
+            ToolName::GetMemory => encode(memory::get_memory(
+                sources,
+                self.config.now,
+                parse(arguments)?,
+            )?),
             ToolName::GetPreferences => {
                 encode(preferences::get_preferences(sources, parse(arguments)?)?)
             }

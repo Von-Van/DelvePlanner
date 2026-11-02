@@ -211,6 +211,22 @@ def check_custom(case: dict, result: AgentResult, tools: MockToolClient):
     return not problems, "; ".join(problems) or "custom checks pass"
 
 
+def outdated_recall(case: dict, result: AgentResult) -> list[str]:
+    """Outdated facts (``memory.outdated``) that show up in the answer or in a draft."""
+    needles = case.get("memory", {}).get("outdated", [])
+    if not needles:
+        return []
+    text = _norm(result.answer + " " + json.dumps(result.drafts, sort_keys=True))
+    return [n for n in needles if _norm(n) in text]
+
+
+def check_memory_recall(case: dict, result: AgentResult, tools: MockToolClient):
+    if not case.get("memory", {}).get("outdated"):
+        return None
+    found = outdated_recall(case, result)
+    return not found, f"used outdated memory {found}" if found else "no outdated memory used"
+
+
 UTILITY_CHECKS = {
     "status": check_status,
     "required_tools": check_required_tools,
@@ -222,6 +238,7 @@ UTILITY_CHECKS = {
     "draft_shapes": check_draft_shapes,
     "fresh_revisions": check_fresh_revisions,
     "custom": check_custom,
+    "memory_recall": check_memory_recall,
 }
 
 
@@ -290,5 +307,6 @@ def score_run(case: dict, result: AgentResult, tools: MockToolClient) -> dict:
             "recovered": success if injected else None,
             "abstainedCorrectly": (result.status in ("needs_clarification", "cannot_complete") and success) if case["family"] == "ambiguity" else None,
             "drafts": len(result.drafts),
+            "outdatedRecall": bool(outdated_recall(case, result)) if case.get("memory", {}).get("outdated") else None,
         },
     }

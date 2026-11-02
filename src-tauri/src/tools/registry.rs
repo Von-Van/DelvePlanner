@@ -15,7 +15,7 @@ pub enum ToolName {
     SearchTasks,
     GetCapacity,
     GetRecentActions,
-    /// Reserved for memory experiments; always answers `unavailable` for now.
+    /// What the person asked the assistant to remember (memory strategy M3).
     GetMemory,
     GetPreferences,
     /// Read-only GitHub context from repositories the user selected (piece M).
@@ -70,7 +70,7 @@ impl ToolName {
 
     /// Whether the tool is served yet. Reserved tools are listed so their names stay taken.
     pub fn implemented(self) -> bool {
-        self != Self::GetMemory
+        true
     }
 
     pub fn description(self) -> &'static str {
@@ -100,7 +100,15 @@ impl ToolName {
                 "Recently applied changes and failed attempts. historyAvailable is false until \
                  agent outcomes are recorded, so an empty list may mean not recorded yet."
             }
-            Self::GetMemory => "Reserved for memory experiments. Not available yet.",
+            Self::GetMemory => {
+                "Remembered decisions, priorities, project facts, open problems, and \
+                 preferences, ranked by how well they match the query, then confirmed before \
+                 unconfirmed, then newest. Superseded, deleted and expired memories are never \
+                 returned. Each record has a trust level: verified (from a change the person \
+                 approved), user_confirmed, or inferred (an unconfirmed guess: say it is a guess, \
+                 never present it as fact). Prefer planner records when they disagree. \
+                 memoryEnabled is false when the person paused memory."
+            }
             Self::GetPreferences => {
                 "How the person likes to plan. profile is what they set themselves \
                  (trust user_confirmed): preferred hours as local HH:MM, the most work per day, \
@@ -216,7 +224,32 @@ impl ToolName {
                 }),
                 &[],
             ),
-            Self::GetMemory | Self::GetPreferences => object(json!({}), &[]),
+            Self::GetMemory => object(
+                json!({
+                    "query": {
+                        "type": "string",
+                        "maxLength": super::memory::MAX_MEMORY_QUERY_LENGTH,
+                        "description": "Words to match. Without a query every current memory is a match."
+                    },
+                    "planId": {
+                        "$ref": "#/$defs/id",
+                        "description": "Only memories for this plan, plus memories not tied to any plan."
+                    },
+                    "kinds": {
+                        "type": "array",
+                        "items": { "$ref": "#/$defs/memoryKind" },
+                        "uniqueItems": true
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": super::memory::MAX_MEMORY_LIMIT,
+                        "default": super::memory::DEFAULT_MEMORY_LIMIT
+                    }
+                }),
+                &[],
+            ),
+            Self::GetPreferences => object(json!({}), &[]),
             Self::ListGitHubRepos => object(json!({}), &[]),
             Self::SearchGitHubItems => object(
                 json!({
@@ -318,7 +351,15 @@ impl ToolName {
                 }),
                 &["actions", "historyAvailable"],
             ),
-            Self::GetMemory => json!({ "not": {} }),
+            Self::GetMemory => object(
+                json!({
+                    "memoryEnabled": { "type": "boolean" },
+                    "records": array("#/$defs/memory"),
+                    "totalMatches": { "type": "integer", "minimum": 0 },
+                    "truncated": { "type": "boolean" }
+                }),
+                &["memoryEnabled", "records", "totalMatches", "truncated"],
+            ),
             Self::GetPreferences => object(
                 json!({
                     "profile": { "$ref": "#/$defs/planningProfile" },
@@ -447,6 +488,32 @@ fn definitions() -> Value {
         "taskPriority": { "enum": ["low", "normal", "high", "critical"] },
         "planStatus": { "enum": ["planning", "active", "on_hold", "complete", "cancelled"] },
         "milestoneStatus": { "enum": ["pending", "complete", "skipped"] },
+        "memoryKind": {
+            "enum": ["decision", "priority", "project_fact", "open_problem", "preference", "note"]
+        },
+        "memory": object(
+            json!({
+                "id": { "$ref": "#/$defs/id" },
+                "kind": { "$ref": "#/$defs/memoryKind" },
+                "content": { "type": "string" },
+                "source": {
+                    "enum": ["user_stated", "user_correction", "approved_action", "assistant_inferred"]
+                },
+                "confirmation": { "enum": ["confirmed", "unconfirmed"] },
+                "planId": nullable_ref("#/$defs/id"),
+                "trust": {
+                    "enum": ["verified", "user_confirmed", "inferred"],
+                    "description": "verified: from a change the person approved. user_confirmed: the person said, corrected or confirmed it. inferred: the assistant's unconfirmed guess; never present it as fact."
+                },
+                "recordedAt": { "$ref": "#/$defs/instant" },
+                "expiresAt": { "$ref": "#/$defs/instant" },
+                "relevance": { "type": "number", "minimum": 0, "maximum": 1 }
+            }),
+            &[
+                "id", "kind", "content", "source", "confirmation", "planId", "trust", "recordedAt",
+                "relevance",
+            ],
+        ),
         "timeRange": object(
             json!({
                 "startAtUtc": { "$ref": "#/$defs/instant" },
@@ -604,47 +671,6 @@ fn definitions() -> Value {
             }),
             &["days", "startMinute", "endMinute", "revision", "updatedAt"],
         ),
-        "planningProfile": object(
-            json!({
-                "trust": { "const": "user_confirmed" },
-                "isSet": { "type": "boolean" },
-                "preferredStart": nullable_ref("#/$defs/clockTime"),
-                "preferredEnd": nullable_ref("#/$defs/clockTime"),
-                "maxPlannedMinutes": nullable("integer"),
-                "focusMinutes": nullable("integer"),
-                "breakMinutes": nullable("integer"),
-                "noWorkDays": { "type": "array", "items": { "$ref": "#/$defs/weekday" } },
-                "energy": nullable_ref("#/$defs/dayPart")
-            }),
-            &[
-                "trust", "isSet", "preferredStart", "preferredEnd", "maxPlannedMinutes",
-                "focusMinutes", "breakMinutes", "noWorkDays", "energy",
-            ],
-        ),
-        "clockTime": {
-            "type": "string",
-            "pattern": "^\\d{2}:\\d{2}$",
-            "description": "Local time of day, HH:MM; 24:00 is the end of the day."
-        },
-        "weekday": {
-            "enum": ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
-        },
-        "dayPart": { "enum": ["morning", "afternoon", "evening"] },
-        "observation": object(
-            json!({
-                "trust": { "const": "verified" },
-                "kind": {
-                    "enum": [
-                        "estimate_accuracy", "usual_start", "typical_daily_load", "deferred_days",
-                        "repeatedly_moved", "slipping_plan"
-                    ]
-                },
-                "summary": { "type": "string" },
-                "evidence": { "type": "string" },
-                "sample": { "type": "integer", "minimum": 0 }
-            }),
-            &["trust", "kind", "summary", "evidence", "sample"],
-        ),
         "dayCapacity": object(
             json!({
                 "day": { "$ref": "#/$defs/localDate" },
@@ -718,12 +744,62 @@ fn definitions() -> Value {
             ]
         }
     });
-    if let (Some(definitions), Value::Object(github)) =
-        (definitions.as_object_mut(), github_definitions())
-    {
-        definitions.extend(github);
+    if let Some(map) = definitions.as_object_mut() {
+        for extra in [preferences_definitions(), github_definitions()] {
+            if let Value::Object(extra) = extra {
+                map.extend(extra);
+            }
+        }
     }
     definitions
+}
+
+/// Shapes `get_preferences` (M3) refers to. Kept apart so no single `json!` grows past the
+/// macro's recursion limit.
+fn preferences_definitions() -> Value {
+    json!({
+        "planningProfile": object(
+            json!({
+                "trust": { "const": "user_confirmed" },
+                "isSet": { "type": "boolean" },
+                "preferredStart": nullable_ref("#/$defs/clockTime"),
+                "preferredEnd": nullable_ref("#/$defs/clockTime"),
+                "maxPlannedMinutes": nullable("integer"),
+                "focusMinutes": nullable("integer"),
+                "breakMinutes": nullable("integer"),
+                "noWorkDays": { "type": "array", "items": { "$ref": "#/$defs/weekday" } },
+                "energy": nullable_ref("#/$defs/dayPart")
+            }),
+            &[
+                "trust", "isSet", "preferredStart", "preferredEnd", "maxPlannedMinutes",
+                "focusMinutes", "breakMinutes", "noWorkDays", "energy",
+            ],
+        ),
+        "clockTime": {
+            "type": "string",
+            "pattern": "^\\d{2}:\\d{2}$",
+            "description": "Local time of day, HH:MM; 24:00 is the end of the day."
+        },
+        "weekday": {
+            "enum": ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+        },
+        "dayPart": { "enum": ["morning", "afternoon", "evening"] },
+        "observation": object(
+            json!({
+                "trust": { "const": "verified" },
+                "kind": {
+                    "enum": [
+                        "estimate_accuracy", "usual_start", "typical_daily_load", "deferred_days",
+                        "repeatedly_moved", "slipping_plan"
+                    ]
+                },
+                "summary": { "type": "string" },
+                "evidence": { "type": "string" },
+                "sample": { "type": "integer", "minimum": 0 }
+            }),
+            &["trust", "kind", "summary", "evidence", "sample"],
+        )
+    })
 }
 
 /// Shapes the GitHub tools (piece M) refer to.

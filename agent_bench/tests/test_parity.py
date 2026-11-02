@@ -163,3 +163,45 @@ def test_preferences_profile_and_observations_match(muted):
     assert result["profile"]["noWorkDays"] == ["wednesday", "friday"]
     kinds = [o["kind"] for o in result["observations"]]
     assert kinds == (["estimate_accuracy"] if muted else ["estimate_accuracy", "usual_start", "typical_daily_load"])
+
+
+def test_memory_probes_match():
+    """get_memory on a store with every kind of record the rules treat differently."""
+
+    def rec(n: int, content: str, recorded: str, **extra) -> dict:
+        return {"id": f"mem-{n}", "kind": "decision", "content": content, "source": "user_stated", "confirmation": "confirmed",
+                "planId": None, "recordedAt": recorded} | extra
+
+    guess = {"kind": "note", "source": "assistant_inferred", "confirmation": "unconfirmed"}
+    memory = {
+        "disabledPlanIds": [ID["plan-garage"]],
+        "records": [
+            rec(1, "Design review probably moves.", "2026-11-01T00:00:00.000Z", expiresAt="2026-12-01T00:00:00.000Z", **guess),
+            rec(2, "Design review is at 3 pm.", "2026-10-01T00:00:00.000Z", source="approved_action"),
+            rec(3, "Design reviews happen weekly.", "2026-10-02T00:00:00.000Z", planId=ID["plan-launch"], kind="priority"),
+            rec(4, "Old design review time.", "2026-09-01T00:00:00.000Z", supersededBy="mem-2"),
+            rec(5, "Expired design review guess.", "2026-10-01T00:00:00.000Z", expiresAt="2026-10-15T00:00:00.000Z", **guess),
+            rec(6, "Garage shelves: design review with the builder.", "2026-10-05T00:00:00.000Z", planId=ID["plan-garage"]),
+            rec(7, "Movers are booked; lease review waits.", "2026-10-06T00:00:00.000Z", planId=ID["plan-move"], kind="open_problem"),
+            rec(8, "Prefers calls in the afternoon.", "2026-10-03T00:00:00.000Z", kind="preference", source="user_correction"),
+        ],
+    }
+    case = {"case_id": "parity-memory", "fixture": {"version": "planner.v2"}, "now": "2026-11-03T09:00-05:00", "timeZone": TZ,
+            "permittedTools": ALL_TOOLS, "memory": memory}
+    calls = [
+        ("get_memory", {}),
+        ("get_memory", {"query": "the design reviews"}),
+        ("get_memory", {"query": "DESIGN review", "planId": ID["plan-launch"]}),
+        ("get_memory", {"query": "design review", "planId": ID["plan-garage"]}),
+        ("get_memory", {"kinds": ["note", "priority"]}),
+        ("get_memory", {"kinds": ["preference"], "limit": 1}),
+        ("get_memory", {"limit": 2}),
+        ("get_memory", {"query": "lease movers booked"}),
+        ("get_memory", {"query": "nothing matches this"}),
+        ("get_memory", {"limit": 21}),
+        ("get_memory", {"planId": "plan-launch"}),
+        ("get_memory", {"kinds": ["fact"]}),
+    ]
+    assert run_both(case, calls) == []
+    paused = {**case, "memory": {**memory, "enabled": False}}
+    assert run_both(paused, [("get_memory", {}), ("get_memory", {"query": "design"})]) == []
