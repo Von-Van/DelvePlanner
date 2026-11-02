@@ -184,6 +184,10 @@ def test_memory_probes_match():
             rec(6, "Garage shelves: design review with the builder.", "2026-10-05T00:00:00.000Z", planId=ID["plan-garage"]),
             rec(7, "Movers are booked; lease review waits.", "2026-10-06T00:00:00.000Z", planId=ID["plan-move"], kind="open_problem"),
             rec(8, "Prefers calls in the afternoon.", "2026-10-03T00:00:00.000Z", kind="preference", source="user_correction"),
+            rec(9, "Seems to like early starts.", "2026-10-07T00:00:00.000Z", expiresAt="2026-12-01T00:00:00.000Z", **(guess | {"kind": "preference"})),
+            rec(10, "No deep work after 4 pm.", "2026-10-08T00:00:00.000Z", kind="preference"),
+            rec(11, "No deep work after 5 pm.", "2026-09-08T00:00:00.000Z", kind="preference", supersededBy="mem-10"),
+            rec(12, "Garage work only on weekends.", "2026-10-09T00:00:00.000Z", kind="preference", planId=ID["plan-garage"]),
         ],
     }
     case = {"case_id": "parity-memory", "fixture": {"version": "planner.v2"}, "now": "2026-11-03T09:00-05:00", "timeZone": TZ,
@@ -201,7 +205,10 @@ def test_memory_probes_match():
         ("get_memory", {"limit": 21}),
         ("get_memory", {"planId": "plan-launch"}),
         ("get_memory", {"kinds": ["fact"]}),
+        ("get_preferences", {}),
     ]
     assert run_both(case, calls) == []
+    remembered = MockToolClient(case).call("get_preferences", {})["result"]["rememberedPreferences"]
+    assert [r["id"] for r in remembered] == ["mem-10", "mem-8"]  # no guesses, superseded or switched-off projects
     paused = {**case, "memory": {**memory, "enabled": False}}
-    assert run_both(paused, [("get_memory", {}), ("get_memory", {"query": "design"})]) == []
+    assert run_both(paused, [("get_memory", {}), ("get_memory", {"query": "design"}), ("get_preferences", {})]) == []

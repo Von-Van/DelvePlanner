@@ -16,6 +16,7 @@
 //! planner and imports leave it alone. Deleting a conversation deletes its messages and the runs
 //! (traces, drafts, results) it started, so what the person typed is gone with it.
 
+use super::feedback::feedback_note;
 use super::{now, utc_string, PlannerDatabase};
 use crate::error::{AppError, AppResult};
 use rusqlite::{params, Connection, OptionalExtension, Row, TransactionBehavior};
@@ -409,10 +410,10 @@ impl PlannerDatabase {
                       WHERE d.run_id = m.run_id
                         AND (d.state IN ('stale', 'expired')
                              OR x.execution_state IN ('failed', 'stale'))),
-                    m.run_id IS NOT NULL
+                    m.run_id IS NOT NULL, m.run_id
              FROM agent_message m WHERE m.thread_id = ?1 ORDER BY m.seq",
         )?;
-        let messages = statement
+        let rows = statement
             .query_map(params![thread_id], |row| {
                 let role = MessageRole::parse(&row.get::<_, String>(0)?)?;
                 let text: String = row.get(1)?;
@@ -426,14 +427,32 @@ impl PlannerDatabase {
                     rejected: row.get(5)?,
                     not_applied: row.get(6)?,
                 });
-                Ok(StoredTurn {
-                    role,
-                    text,
-                    at: row.get(2)?,
-                    note: outcome_note(role, status, outcome),
-                })
+                let run_id: Option<String> = row.get(8)?;
+                Ok((
+                    StoredTurn {
+                        role,
+                        text,
+                        at: row.get(2)?,
+                        note: outcome_note(role, status, outcome),
+                    },
+                    run_id,
+                ))
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
+        // What the person said about a reply (milestone M6) travels with it, in this
+        // conversation only.
+        let mut messages = Vec::with_capacity(rows.len());
+        for (mut turn, run_id) in rows {
+            if let (MessageRole::Assistant, Some(run)) = (turn.role, run_id.as_deref()) {
+                if let Some(said) = feedback_note(&self.run_feedback(run)?) {
+                    turn.note = Some(match turn.note.take() {
+                        Some(note) => format!("{note} {said}"),
+                        None => said,
+                    });
+                }
+            }
+            messages.push(turn);
+        }
         let available = messages.len();
         let split = available.saturating_sub(turns);
         let summary = summarize(&messages[..split]);
