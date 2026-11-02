@@ -8,11 +8,11 @@ import subprocess
 import sys
 from pathlib import Path
 
-from delveops_agent.protocol import envelope as wire
-from delveops_agent.protocol.envelope import Envelope
+from delveagent.protocol import envelope as wire
+from delveagent.protocol.envelope import Envelope
 
 AGENT_DIR = Path(__file__).resolve().parents[1]
-RUNNER = "delveops_agent.link_runner:run"
+RUNNER = "delveagent.link_runner:run"
 
 TASK = {
     "goal": "Schedule my 'Draft grant budget' task for Thursday.",
@@ -27,7 +27,7 @@ TASK_RECORD = {"id": "task-42", "revision": 3, "planId": None, "milestoneId": No
 class App:
     def __init__(self) -> None:
         self.process = subprocess.Popen(
-            [sys.executable, "-s", "-m", "delveops_agent.protocol", "--runner", RUNNER],
+            [sys.executable, "-s", "-m", "delveagent.protocol", "--runner", RUNNER],
             cwd=AGENT_DIR,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,

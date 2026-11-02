@@ -1,9 +1,9 @@
-//! Packaging probe for the Python agent link (DelveOps piece D). Starts a packaged or source
+//! Packaging probe for the Python agent link (DelveAgent piece D). Starts a packaged or source
 //! agent through the real supervisor, runs the link's scenarios against it, and prints a JSON
 //! report with timings. Exits non-zero if any scenario fails.
 //!
 //! ```text
-//! cargo run --example sidecar_probe -- --frozen dist/delveops-agent/delveops-agent
+//! cargo run --example sidecar_probe -- --frozen dist/delveagent/delveagent
 //! cargo run --example sidecar_probe -- --python python3 --agent-dir agent-python
 //! ```
 

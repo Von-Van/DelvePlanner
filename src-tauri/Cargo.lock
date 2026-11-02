@@ -823,7 +823,7 @@ dependencies = [
 
 [[package]]
 name = "delve-planner-desktop"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "apple-native-keyring-store",
  "calcard",

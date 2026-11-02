@@ -69,7 +69,7 @@
     "cases": 3,
     "hardware": "chip: Apple M2, memory: 16 GB",
     "id": "benchmark:bench-a1-sample",
-    "label": "delveops_agent.a1:create_agent",
+    "label": "delveagent.a1:create_agent",
     "latencyP50Ms": 1504.25,
     "latencyP95Ms": 2310.5,
     "modelDigest": "500a1f067a9f782620b40bee6f7b0c89e17ae61f686b92c24933e4ca4b2b8b41",

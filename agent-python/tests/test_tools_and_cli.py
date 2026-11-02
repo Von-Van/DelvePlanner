@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from delveops_agent import V0_CATALOG, MockToolClient, ToolError, load_catalog
-from delveops_agent.tools import check_arguments
+from delveagent import V0_CATALOG, MockToolClient, ToolError, load_catalog
+from delveagent.tools import check_arguments
 
 SPECS = {spec.name: spec for spec in V0_CATALOG}
 
@@ -63,7 +63,7 @@ def test_load_catalog_falls_back_and_reads_contract_file(tmp_path):
 
 
 def test_cli_runs_example_against_local_server(ollama, capsys):
-    from delveops_agent.cli import main
+    from delveagent.cli import main
 
     port = ollama.rsplit(":", 1)[1]
     example = Path(__file__).resolve().parents[1] / "examples" / "reschedule_overdue.json"
@@ -74,7 +74,7 @@ def test_cli_runs_example_against_local_server(ollama, capsys):
 
 
 def test_cli_refuses_remote_host(capsys):
-    from delveops_agent.cli import main
+    from delveagent.cli import main
 
     example = Path(__file__).resolve().parents[1] / "examples" / "reschedule_overdue.json"
     assert main([str(example), "--host", "198.51.100.4"]) == 2
@@ -82,7 +82,7 @@ def test_cli_refuses_remote_host(capsys):
 
 
 def test_default_catalog_is_the_rust_tools_contract(monkeypatch):
-    from delveops_agent.tools import CONTRACT_ENV, REPO_CONTRACT, default_catalog
+    from delveagent.tools import CONTRACT_ENV, REPO_CONTRACT, default_catalog
 
     if not REPO_CONTRACT.is_file():
         import pytest
@@ -104,7 +104,7 @@ def test_default_catalog_is_the_rust_tools_contract(monkeypatch):
 
 
 def test_contract_path_can_be_overridden(monkeypatch, tmp_path):
-    from delveops_agent.tools import CONTRACT_ENV, default_catalog
+    from delveagent.tools import CONTRACT_ENV, default_catalog
 
     path = tmp_path / "tools.json"
     path.write_text(json.dumps({"tools": [{"name": "get_capacity", "inputSchema": {"type": "object"}}]}))

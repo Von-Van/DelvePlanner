@@ -7,8 +7,8 @@ import sys
 import unittest
 from pathlib import Path
 
-from delveops_agent.protocol import envelope as wire
-from delveops_agent.protocol.envelope import Envelope
+from delveagent.protocol import envelope as wire
+from delveagent.protocol.envelope import Envelope
 
 AGENT_DIR = Path(__file__).resolve().parents[3]
 
@@ -16,7 +16,7 @@ AGENT_DIR = Path(__file__).resolve().parents[3]
 class Child:
     def __init__(self, limits=None, runner="diagnostic"):
         self.process = subprocess.Popen(
-            [sys.executable, "-s", "-m", "delveops_agent.protocol", "--runner", runner],
+            [sys.executable, "-s", "-m", "delveagent.protocol", "--runner", runner],
             cwd=AGENT_DIR,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
@@ -185,7 +185,7 @@ class LinkTests(unittest.TestCase):
 
 class HandshakeTests(unittest.TestCase):
     def test_import_time_prints_never_reach_the_protocol(self):
-        child = Child(runner="delveops_agent.protocol.tests.noisy_runner:run")
+        child = Child(runner="delveagent.protocol.tests.noisy_runner:run")
         try:
             self.assertEqual(child.hello.type, wire.HELLO_ACK)
             child.start("run-1", "anything")
@@ -195,7 +195,7 @@ class HandshakeTests(unittest.TestCase):
 
     def test_refuses_an_app_without_version_one(self):
         process = subprocess.Popen(
-            [sys.executable, "-s", "-m", "delveops_agent.protocol"],
+            [sys.executable, "-s", "-m", "delveagent.protocol"],
             cwd=AGENT_DIR,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,

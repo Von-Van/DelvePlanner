@@ -5,9 +5,9 @@ use super::*;
 use std::path::Path;
 use std::sync::Mutex as StdMutex;
 
-/// A Python 3.10+ interpreter: `DELVEOPS_PYTHON` if set, otherwise `python3` or `python`.
+/// A Python 3.10+ interpreter: `DELVEAGENT_TEST_PYTHON` if set, otherwise `python3` or `python`.
 fn python() -> Option<PathBuf> {
-    let candidates: Vec<OsString> = match std::env::var_os("DELVEOPS_PYTHON") {
+    let candidates: Vec<OsString> = match std::env::var_os("DELVEAGENT_TEST_PYTHON") {
         Some(path) => vec![path],
         None => vec!["python3".into(), "python".into()],
     };
@@ -28,7 +28,7 @@ fn agent_dir() -> PathBuf {
 
 fn sidecar_with(limits: SidecarLimits) -> Option<Sidecar> {
     let Some(python) = python() else {
-        eprintln!("skipping: no Python 3.10+ found (set DELVEOPS_PYTHON)");
+        eprintln!("skipping: no Python 3.10+ found (set DELVEAGENT_TEST_PYTHON)");
         return None;
     };
     Some(Sidecar::new(
@@ -415,7 +415,7 @@ async fn a_child_that_never_handshakes_is_refused() {
 #[tokio::test]
 async fn a_missing_program_is_a_spawn_error() {
     let sidecar = Sidecar::new(
-        SidecarCommand::frozen("/definitely/not/here/delveops-agent".into(), "diagnostic"),
+        SidecarCommand::frozen("/definitely/not/here/delveagent".into(), "diagnostic"),
         fast_limits(),
     );
     assert!(matches!(

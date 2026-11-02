@@ -26,8 +26,8 @@ from agent_bench.cases import load_cases  # noqa: E402
 from agent_bench.faults import PROFILES, fault_cases, graceful, original_id  # noqa: E402
 from agent_bench.runner import run_case  # noqa: E402
 
-from delveops_agent import A1Agent, AgentTask, Budget, ToolError, ToolResult  # noqa: E402
-from delveops_agent.model import ModelResponse  # noqa: E402
+from delveagent import A1Agent, AgentTask, Budget, ToolError, ToolResult  # noqa: E402
+from delveagent.model import ModelResponse  # noqa: E402
 
 CASES = {c["case_id"]: c for c in load_cases("dev")}
 FAULTED = [(p, c) for p in PROFILES for c in fault_cases(list(CASES.values()), p)]

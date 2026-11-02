@@ -23,7 +23,7 @@ Delve Planner sits in between:
 
 ## Features
 
-The lists below describe the current source (v0.4.0). The [changelog](CHANGELOG.md) says which version added what, and [Releases](https://github.com/Von-Van/DelvePlanner/releases) lists the published builds.
+The lists below describe the current source (v0.4.1, an internal version that has not been released). The [changelog](CHANGELOG.md) says which version added what, and [Releases](https://github.com/Von-Van/DelvePlanner/releases) lists the published builds.
 
 ### Available
 

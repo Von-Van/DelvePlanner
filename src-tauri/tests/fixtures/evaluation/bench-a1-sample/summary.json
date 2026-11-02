@@ -1,6 +1,6 @@
 {
   "meta": {
-    "agent": "delveops_agent.a1:create_agent",
+    "agent": "delveagent.a1:create_agent",
     "architectureId": "A1",
     "benchVersion": "0.1.0",
     "budgetOverride": null,

@@ -179,7 +179,7 @@ export function QuickCaptureSetting({
 const shortcuts: [keys: string, action: string][] = [
   [
     `${commandShortcutText("1")}–${commandShortcutText("7")}`,
-    "Go to Today, Week, Plans, People, Inbox, Calendars, or What it knows",
+    "Go to Assistant, Schedule, Projects, People, Inbox, Calendars, or What it knows",
   ],
   [commandShortcutText("N"), "New task for the day, week, or plan in view"],
   [commandShortcutText("N", { shift: true }), "New plan"],
@@ -188,7 +188,10 @@ const shortcuts: [keys: string, action: string][] = [
     `${commandShortcutText("←")} ${commandShortcutText("→")}`,
     "Previous or next day, or week in Week",
   ],
-  [commandShortcutText("↩"), "Save the open editor, or send a planner request"],
+  [
+    commandShortcutText("↩"),
+    "Save the open editor, or send a request to the planner or the Assistant",
+  ],
   [commandShortcutText(","), "Settings"],
   ["Esc", "Close a dialog or menu"],
 ];

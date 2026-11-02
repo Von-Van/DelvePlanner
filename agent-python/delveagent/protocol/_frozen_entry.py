@@ -6,8 +6,8 @@ should offer is imported here. Add the agent's own runner modules next to the di
 
 import sys
 
-import delveops_agent.protocol.diagnostic  # noqa: F401  (the link's test runner)
-from delveops_agent.protocol.__main__ import main
+import delveagent.protocol.diagnostic  # noqa: F401  (the link's test runner)
+from delveagent.protocol.__main__ import main
 
 if __name__ == "__main__":
     sys.exit(main())

@@ -8,8 +8,8 @@ from __future__ import annotations
 
 from conftest import FakeClock, ScriptedModel
 
-from delveops_agent import A1Agent, AgentTask, Budget, MockToolClient, ToolError
-from delveops_agent.tools import default_catalog
+from delveagent import A1Agent, AgentTask, Budget, MockToolClient, ToolError
+from delveagent.tools import default_catalog
 
 ALL_TOOLS = tuple(spec.name for spec in default_catalog() if spec.name != "get_memory")
 TZ = "America/New_York"

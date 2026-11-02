@@ -11,10 +11,10 @@ import json
 
 from conftest import FakeClock, ScriptedModel
 
-from delveops_agent import A1Agent, AgentTask, Budget, MockToolClient, mutation_operation
-from delveops_agent.drafts import DraftError, check_time_blocks, observed_free_ranges, parse_draft
-from delveops_agent.prompts import STEP_SCHEMA, task_message
-from delveops_agent.tools import default_catalog
+from delveagent import A1Agent, AgentTask, Budget, MockToolClient, mutation_operation
+from delveagent.drafts import DraftError, check_time_blocks, observed_free_ranges, parse_draft
+from delveagent.prompts import STEP_SCHEMA, task_message
+from delveagent.tools import default_catalog
 
 TOOLS = ("get_day_context", "list_active_projects", "get_project_context", "get_preferences")
 LEASE, MOVERS, DNS = "task-lease", "task-movers", "task-dns"

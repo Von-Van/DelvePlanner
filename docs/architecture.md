@@ -131,7 +131,7 @@ Closing the window hides it to the tray (so reminders keep working) and releases
 | [`shortcuts.ts`](../src/shortcuts.ts), [`openTasks.ts`](../src/openTasks.ts)                                                                                                         | Recording and showing keyboard shortcuts; the open tasks that waits refer to                                                                      |
 | [`styles.css`](../src/styles.css), [`Geometry.tsx`](../src/Geometry.tsx)                                                                                                             | The visual design; icons drawn as CSS geometry instead of an icon library                                                                         |
 
-Keyboard shortcuts (⌘ on macOS, Ctrl on Windows): ⌘1 Today, ⌘2 Week, ⌘3 Plans, ⌘4 People, ⌘5 Inbox, ⌘6 Calendars, ⌘7 What Delve Planner knows, ⌘I quick capture, ⌘N a new task for the day, week, or plan in view, ⇧⌘N a new plan, ⌘← and ⌘→ the previous or next day (week in Week), ⌘↩ to save an editor or send a planner request, and ⌘, for Settings. The system-wide quick-capture shortcut is separate: the user records it in Settings.
+Keyboard shortcuts (⌘ on macOS, Ctrl on Windows): ⌘1 Assistant, ⌘2 Schedule (Today or Week, whichever was open last), ⌘3 Projects, ⌘4 People, ⌘5 Inbox, ⌘6 Calendars, ⌘7 What Delve Planner knows, ⌘I quick capture, ⌘N a new task for the day, week, or plan in view, ⇧⌘N a new plan, ⌘← and ⌘→ the previous or next day (week in Week), ⌘↩ to save an editor or send a request to the planner or the Assistant, and ⌘, for Settings. The system-wide quick-capture shortcut is separate: the user records it in Settings.
 
 ## State
 

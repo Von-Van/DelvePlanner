@@ -294,7 +294,7 @@ The planner database schema is version 11 (`CURRENT_SCHEMA_VERSION` in [`db.rs`]
 | 7      | The `planning_profile` record and the empty `task_moves` history                                                                                               |
 | 8      | Each task's `recurrence` and `checklist`, the `task_dependencies` table, and each plan's `links`                                                               |
 | 9      | [Agent storage](#agent-storage): `experiment_run`, `agent_run`, `agent_step`, `agent_action_draft`, and `agent_action_result`                                  |
-| 10     | Assistant memory: `agent_memory`, `memory_settings`, and `memory_project_setting` (see [memory](delveops/memory.md))                                           |
+| 10     | Assistant memory: `agent_memory`, `memory_settings`, and `memory_project_setting` (see [memory](delveagent/memory.md))                                         |
 | 11     | Assistant conversations: `agent_thread` and `agent_message`                                                                                                    |
 
 The calendar cache has its own, independent version (`STORE_VERSION` in [`calendar/store.rs`](../src-tauri/src/calendar/store.rs)).

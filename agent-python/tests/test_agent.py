@@ -4,9 +4,9 @@ import json
 
 from conftest import FakeClock, ScriptedModel
 
-from delveops_agent import V0_CATALOG, A1Agent, AgentTask, Budget, MockToolClient, ToolError, mutation_operation
-from delveops_agent.model import ModelError
-from delveops_agent.trace import TRACE_KINDS
+from delveagent import V0_CATALOG, A1Agent, AgentTask, Budget, MockToolClient, ToolError, mutation_operation
+from delveagent.model import ModelError
+from delveagent.trace import TRACE_KINDS
 
 ALL_TOOLS = (
     "get_day_context",

@@ -1,4 +1,4 @@
-# Baseline report: DelvePlanner 0.4.0 before the DelveOps overhaul
+# Baseline report: DelvePlanner 0.4.0 before the DelveAgent overhaul
 
 **Date:** 2026-11-01 · **Branch measured:** `delveops-overhaul` at `47b0728` (identical to the 0.4.0 code; no
 overhaul code had landed yet) · **Handoff ticket:** P0 "Inventory and baseline"

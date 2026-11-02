@@ -1,4 +1,4 @@
-"""Shared data shapes for DelveOps agents (overhaul plan, contract 4).
+"""Shared data shapes for the DelveAgent agent (overhaul plan, contract 4).
 
 Field names on the wire are camelCase to match the Rust side; Python attributes are snake_case.
 Every shape here is plain data so the benchmark (piece B) and the comparison runner (piece H) can

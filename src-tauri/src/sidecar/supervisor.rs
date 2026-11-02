@@ -59,7 +59,7 @@ impl SidecarCommand {
                 // No user site-packages: only what the interpreter and the agent folder provide.
                 "-s".into(),
                 "-m".into(),
-                "delveops_agent.protocol".into(),
+                "delveagent.protocol".into(),
                 "--runner".into(),
                 runner.into(),
             ],

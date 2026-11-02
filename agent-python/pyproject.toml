@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "delveops-agent"
+name = "delveagent"
 version = "0.1.0"
-description = "DelveOps local agent runtime: agent architectures, local model client, tool clients"
+description = "DelveAgent local agent runtime: agent architectures, local model client, tool clients"
 requires-python = ">=3.11"
 # Standard library only at runtime: no agent frameworks, no HTTP libraries.
 dependencies = []
@@ -14,10 +14,10 @@ dependencies = []
 dev = ["pytest>=8", "ruff>=0.6"]
 
 [project.scripts]
-delveops-agent = "delveops_agent.cli:main"
+delveagent = "delveagent.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["delveops_agent*"]
+include = ["delveagent*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

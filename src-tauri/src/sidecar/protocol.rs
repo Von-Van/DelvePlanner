@@ -1,6 +1,6 @@
 //! The wire format between the app and the Python agent: one JSON object per line on the child's
 //! stdin and stdout, every message wrapped in the same small envelope. The Python twin of this file
-//! is `agent-python/delveops_agent/protocol/envelope.py`; the two must agree on every constant.
+//! is `agent-python/delveagent/protocol/envelope.py`; the two must agree on every constant.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

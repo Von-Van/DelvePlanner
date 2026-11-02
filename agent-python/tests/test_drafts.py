@@ -1,6 +1,6 @@
 """Drafts must be exactly what Rust's MutationOperation accepts.
 
-The table in delveops_agent/drafts.py is checked against src-tauri/src/model.rs and against the
+The table in delveagent/drafts.py is checked against src-tauri/src/model.rs and against the
 benchmark's draft schema, so a change on either side fails here instead of in the app.
 """
 
@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from delveops_agent.drafts import (
+from delveagent.drafts import (
     ALLOWED_OPS,
     CREATE_OPS,
     DRAFT_OPS,
