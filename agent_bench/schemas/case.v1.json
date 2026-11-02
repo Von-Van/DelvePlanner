@@ -31,7 +31,8 @@
         "untrusted_input",
         "continuity",
         "memory",
-        "proactive"
+        "proactive",
+        "feedback"
       ]
     },
     "split": {

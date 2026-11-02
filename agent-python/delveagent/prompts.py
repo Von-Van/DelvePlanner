@@ -13,7 +13,7 @@ from .drafts import DRAFT_OPS, MEMORY_OP_SPECS, OP_SPECS, TYPE_HELP, payload_hel
 from .tools import ToolSpec
 from .types import AgentTask
 
-PROMPT_VERSION = "a1-v4"  # a1-v3 plus "remember" suggestions
+PROMPT_VERSION = "a1-v5"  # a1-v4 plus following remembered preferences and the person's feedback
 
 # JSON Schema passed to Ollama's `format` so the model must reply with exactly one step object.
 STEP_SCHEMA = {
@@ -100,13 +100,18 @@ be empty). basis is "stated" only for what the person said in this request; "inf
 Keep content to one sentence in plain words. Don't propose remembering planner records (tasks, events, dates) \
 or what memory already holds. If you only have something to remember, use "draft" with your whole reply to \
 the person as the summary. Nothing is remembered unless the person approves it.
+- Feedback: when an earlier reply in this conversation carries the person's feedback ("not helpful because ..."), \
+your next reply must fix what they said was wrong. Feedback marked for this conversation only does not apply \
+anywhere else.
 
 Planning free time ("I have two hours tomorrow, what should I do?"):
 - Read the day's free ranges with get_day_context, the person's preferences with get_preferences when that tool \
 is offered, and the open work (list_active_projects, then get_project_context or search_tasks).
 - Prefer work that is overdue or due soonest, then higher priority, then work that unblocks other tasks. Skip done \
 tasks and tasks whose waitingOn lists a task that is not done.
-- Respect preferences: preferred hours, focus and break lengths, and the most work per day.
+- Respect preferences: preferred hours, focus and break lengths, the most work per day, and every entry in \
+rememberedPreferences (rules the person set, often after correcting an earlier plan). Never draft a block that \
+breaks one; if the request can't be met without breaking one, say so. An inferred memory is a guess, not a rule.
 - Draft create_task_block blocks inside the free ranges, copying startAtUtc from a free range or counting forward \
 from it. Never plan more time than is free, and leave the preferred break between blocks.
 - The summary says what you chose and why in one or two sentences (under 280 characters)."""

@@ -521,8 +521,36 @@ def tool_get_preferences(state: PlannerState, args: dict, s: Session) -> dict:
             "energy": p.get("energy"),
         },
         "workingHours": copy.deepcopy(state.working_hours),
+        "rememberedPreferences": _remembered_preferences(state, s),
         "observations": _observations(state),
     }
+
+
+def _current_memories(state: PlannerState, s: Session) -> list[dict]:
+    """What memory may offer now, as db/memory.rs memory_candidates: memory on, the record not
+    superseded or expired, and its project's memory on."""
+    memory = getattr(state, "memory", None) or {"records": []}
+    if not memory.get("enabled", True):
+        return []
+    disabled = set(memory.get("disabledPlanIds", []))
+    return [
+        r for r in memory.get("records", [])
+        if not r.get("supersededBy")
+        and not (r.get("expiresAt") and parse_utc(r["expiresAt"]) <= s.now)
+        and not (r.get("planId") and r["planId"] in disabled)
+    ]
+
+
+def _remembered_preferences(state: PlannerState, s: Session) -> list[dict]:
+    """Confirmed preference memories, newest first (src-tauri/src/tools/preferences.rs remembered)."""
+    found = [
+        {"trust": "user_confirmed", "id": r["id"], "content": r["content"], "planId": r.get("planId"), "recordedAt": r["recordedAt"]}
+        for r in _current_memories(state, s)
+        if r["kind"] == "preference" and r.get("confirmation") == "confirmed"
+    ]
+    found.sort(key=lambda v: v["id"])
+    found.sort(key=lambda v: parse_utc(v["recordedAt"]), reverse=True)
+    return found[:20]
 
 
 # get_memory mirrors src-tauri/src/tools/memory.rs: same filters, same ranking, same word rules.

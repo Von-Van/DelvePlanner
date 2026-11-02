@@ -16,7 +16,7 @@ Standard library only. No agent frameworks, no web server.
 | `delveagent/drafts.py`  | Draft validation against the Rust `MutationOperation` shapes, grounding, evidence (plan contract 2).      |
 | `delveagent/verify/`    | The self-check (milestone M4): safe fixes, fact checks, re-reads, one repair, then a clear stop.          |
 | `delveagent/trace.py`   | Trace events in the shared shape (plan contract 5); text only in opt-in debug traces.                     |
-| `delveagent/prompts.py` | Versioned prompt (`a1-v4`) and the JSON step format the model must reply in.                              |
+| `delveagent/prompts.py` | Versioned prompt (`a1-v5`) and the JSON step format the model must reply in.                              |
 | `delveagent/cli.py`     | Run A1 once against a fixture file and a local Ollama, print the result and trace.                        |
 | `delveagent/protocol/`  | Python end of the Rust ↔ Python link. Owned by piece D, not this package's code.                          |
 
