@@ -8,12 +8,13 @@ order:
 2. **Shape and grounding.** Every payload problem at once, plus A1's grounding rules (target and
    revision seen in this run, evidence from real calls). A failure goes back to the model as a normal
    repair: one attempt, then the run stops and says what was wrong.
-3. **Facts.** Time clashes, working hours, the past, open dependencies, capacity (`facts.py`). These go
-   back to the model once. If the next drafts still trip them, the drafts are handed over with the
-   problems spelled out for the person: a clash can be deliberate, and the person decides.
-4. **Freshness.** Re-read each target from its source just before finishing. A record that changed
-   goes back to the model once with the fresh data. If the agent cannot redraft, the run stops rather
-   than hand over a change Rust would refuse.
+3. **Freshness.** Re-read each target from its source. A record that changed goes back to the model
+   once with the fresh data. A record that disappeared can't be changed: a later draft against it is a
+   shape problem, so the run stops rather than hand over a change Rust would refuse.
+4. **Facts.** Time clashes, working hours, the past, open dependencies, capacity (`facts.py`), checked
+   against everything read so far, re-reads included. These go back to the model once. If the next
+   drafts still trip them, the drafts are handed over with the problems spelled out for the person: a
+   clash can be deliberate, and the person decides.
 
 Each round is traced as a `verify` event whose `outcome` is `passed`, `fixed`, `sent_back`, `noted` or
 `stopped`, so the app can show "checked → fixed" or "checked → stopped". Problem text (record titles)
@@ -43,6 +44,7 @@ class SelfCheck:
         self.reread_done = False
         self.sent_back = False
         self.changed: list[Staleness] = []
+        self.missing: set[str] = set()  # targets a fresh read no longer shows
 
     # -- helpers --------------------------------------------------------------------------------
 
@@ -92,6 +94,9 @@ class SelfCheck:
             # The parser stops at its first problem. When the full list already names it, skip the repeat.
             if not (problems and "payload" in str(error)):
                 problems.append(str(error))
+        for index, draft in enumerate(drafts):
+            if draft.target and draft.target["id"] in self.missing:
+                problems.append(f"draft {index}: {draft.target['id']} no longer exists, so it can't be changed")
         if problems:
             stopping = run.repairs_in_a_row + 1 >= run.repair_limit
             self.trace("stopped" if stopping else "sent_back", "shape", problems, fixed)
@@ -103,8 +108,10 @@ class SelfCheck:
             )
             return None
 
-        observations = self.observations()
-        findings = fact_findings(drafts, observations, run.task.now, run.task.time_zone)
+        if not self.reread_done and self.recheck_freshness(drafts) is False:
+            return None
+
+        findings = fact_findings(drafts, self.observations(), run.task.now, run.task.time_zone)
         if findings and not self.facts_round_used and self.model_calls_left() > 0:
             self.facts_round_used = True
             self.sent_back = True
@@ -118,9 +125,6 @@ class SelfCheck:
                     "drafts again. Otherwise send corrected drafts or another action. Reply with one JSON step.",
                 }
             )
-            return None
-
-        if not self.reread_done and self.recheck_freshness(drafts) is False:
             return None
 
         notes = [f.message for f in findings]
@@ -168,6 +172,7 @@ class SelfCheck:
             self.trace("passed", "freshness", reads=len(reads))
             return True
         self.changed = stale
+        self.missing = {s.record_id for s in stale if s.current_revision is None}
         self.sent_back = True
         problems = [s.for_model() for s in stale]
         if self.model_calls_left() <= 0:

@@ -357,3 +357,32 @@ def test_self_check_off_is_the_loop_as_it_was():
     assert len(tools.calls) == 2
     assert checks(result) == []
     assert result.answer == "Here is the change."
+
+
+def test_a_clash_that_appears_in_the_reread_is_caught():
+    # The slot was free on the first read; by the re-read someone has put a meeting there.
+    standup = {**REVIEW, "id": "ev-standup", "title": "Standup", "startAtUtc": "2026-11-04T20:00:00Z"}
+    standup["endAtUtc"] = "2026-11-04T20:30:00Z"
+    later = {**DAY, "events": [REVIEW, standup]}
+    move = draft(
+        "reschedule_event",
+        {"startAtUtc": "2026-11-04T20:00:00Z", "timeZone": TZ},
+        target={"id": "ev-review", "revision": 1},
+    )
+    result, tools, model = run([day_call(), move, move], responses={"get_day_context": [DAY, later]})
+    assert len(tools.calls) == 2
+    assert 'overlaps "Standup" (15:00-15:30)' in model.requests[2].messages[-1]["content"]
+    assert result.status == "drafted"
+    assert 'overlaps "Standup"' in result.answer
+    assert [(c["check"], c["outcome"]) for c in checks(result)][-2:] == [("facts", "sent_back"), ("all", "noted")]
+
+
+def test_a_target_that_disappeared_cannot_be_drafted_again():
+    gone = {**DAY, "events": []}
+    rename = draft("update_event", {"title": "Design review (room 4)"}, target={"id": "ev-review", "revision": 1})
+    result, _, model = run([day_call(), rename, rename, rename], responses={"get_day_context": [DAY, gone]})
+    assert "no longer appears in a fresh read" in model.requests[2].messages[-1]["content"]
+    assert "ev-review no longer exists, so it can't be changed" in model.requests[3].messages[-1]["content"]
+    assert result.status == "cannot_complete"
+    assert result.drafts == []
+    assert "no longer exists" in result.answer
