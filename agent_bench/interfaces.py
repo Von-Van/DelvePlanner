@@ -19,6 +19,9 @@ class AgentTask:
     now: str  # frozen ISO timestamp with offset
     timeZone: str
     permittedTools: tuple[str, ...]
+    # Earlier turns of the same conversation ({"role", "text", "at"?}), oldest first. Empty for single
+    # requests; agents without conversational memory ignore it.
+    conversation: tuple[dict[str, Any], ...] = ()
 
 
 @dataclass(frozen=True)

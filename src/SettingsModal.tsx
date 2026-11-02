@@ -11,6 +11,7 @@ import {
 } from "./api";
 import { Glyph } from "./Geometry";
 import { useModalFocus } from "./useModalFocus";
+import { MemorySettings } from "./MemorySettings";
 import { ModelPicker, TESTED_MODEL } from "./ModelPicker";
 import {
   KeyboardShortcutList,
@@ -360,6 +361,14 @@ export function SettingsModal({
 
           <SettingsBlock
             index="07"
+            title="Memory & privacy"
+            subtitle="What the assistant may remember, kept on this computer."
+          >
+            <MemorySettings onMessage={onMessage} />
+          </SettingsBlock>
+
+          <SettingsBlock
+            index="08"
             title={`Delve Planner ${version}`}
             subtitle={updateState}
           >
