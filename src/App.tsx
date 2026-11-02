@@ -65,6 +65,7 @@ import {
   DayContext,
   worthAttention,
 } from "./AssistantView";
+import { AssistantAgentPanel } from "./AssistantAgentPanel";
 import { EventEditor } from "./EventEditor";
 import { ensureNotificationPermission, reminderShortLabel } from "./events";
 import { Glyph, LoadingLine, Mark, MarkShape } from "./Geometry";
@@ -265,6 +266,10 @@ export default function App() {
   const [busyTaskId, setBusyTaskId] = useState<string | null>(null);
   const [taskTitle, setTaskTitle] = useState("");
   const [command, setCommand] = useState("");
+  const [assistantSurface, setAssistantSurface] = useState<"agent" | "planner">(
+    "agent",
+  );
+  const [plannerFallback, setPlannerFallback] = useState<string | null>(null);
   const [agentResponse, setAgentResponse] = useState<PlannerResponse | null>(
     null,
   );
@@ -735,20 +740,33 @@ export default function App() {
 
   async function askPlanner(submit: FormEvent) {
     submit.preventDefault();
-    if (!command.trim() || isThinking) return;
+    setPlannerFallback(null);
+    await runPlanner(command);
+  }
+
+  /** The agent couldn't run, so the same request goes to the old planner instead. */
+  async function fallBackToPlanner(request: string, reason: string) {
+    setAssistantSurface("planner");
+    setPlannerFallback(reason);
+    setCommand(request);
+    await runPlanner(request);
+  }
+
+  async function runPlanner(request: string) {
+    if (!request.trim() || isThinking) return;
     setIsThinking(true);
     setAgentResponse(null);
     try {
       setAgentResponse(
         view.kind === "plan"
           ? await api.propose(
-              command,
+              request,
               today,
               localTimeZone,
               view.planId,
               weekStartsOn,
             )
-          : await api.propose(command, day, localTimeZone, null, weekStartsOn),
+          : await api.propose(request, day, localTimeZone, null, weekStartsOn),
       );
     } catch (cause) {
       setError(messageFor(cause));
@@ -1166,6 +1184,16 @@ export default function App() {
                 kicker: "LOCAL ASSISTANT",
                 title: "Say it messily.",
               })}
+              agent={
+                <AssistantAgentPanel
+                  onChanged={dataChanged}
+                  onMessage={setError}
+                  onFallback={fallBackToPlanner}
+                />
+              }
+              surface={assistantSurface}
+              onSurface={setAssistantSurface}
+              fallbackNote={plannerFallback}
               attention={assistantAttention}
               pendingReview={pendingReview}
               inboxCount={inbox.length}

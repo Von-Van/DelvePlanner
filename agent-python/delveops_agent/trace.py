@@ -38,9 +38,11 @@ class Tracer:
             "seq": len(self.events) + 1,
             "kind": kind,
             "at": datetime.now(UTC).isoformat(timespec="milliseconds"),
-            "durationMs": duration_ms,
             "summary": summary,
             "data": payload,
         }
+        # The shared trace shape has no null duration: an untimed step simply leaves it out.
+        if duration_ms is not None:
+            event["durationMs"] = duration_ms
         self.events.append(event)
         return event
