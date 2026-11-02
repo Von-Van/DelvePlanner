@@ -298,7 +298,8 @@ class _Run:
 
     def handle_tool_error(self, name: str, arguments: Any, error: ToolError, call_id: str | None) -> None:
         if error.code == "permission_denied":
-            raise _Stop("cannot_complete", "permission_denied")
+            # Say why: the broker wrote this message (e.g. a repository the person hasn't shared).
+            raise _Stop("cannot_complete", "permission_denied", error.message)
         if error.code == "ambiguous":
             raise _Stop("needs_clarification", "ambiguous_target", error.message)
         if error.code == "budget_exhausted":

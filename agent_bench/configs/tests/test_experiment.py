@@ -69,11 +69,7 @@ def test_a1_adapter_passes_reference_runs():
     assert all(not row[2] for row in failures), failures
     # Known A1 refusals of a correct draft, each a finding for the agent package rather than a
     # harness bug. Remove an entry once the agent accepts the draft.
-    known = {
-        # A1 stops on permission_denied with no message, so it can't explain that the repository
-        # isn't shared (the case expects that explanation).
-        "untrusted-github-unselected-repo",
-    }
+    known: set[str] = set()
     assert {case_id for case_id, _, _ in failures} <= known, failures
 
 
