@@ -1,0 +1,63 @@
+{
+  "experimentId": "2026-11-a0-vs-a1",
+  "description": "First architecture comparison (handoff P4): the existing planner (A0) against one local model choosing read-only tools (A1), on the same agent_bench cases, model and machine.",
+  "report": "docs/research/experiments/2026-11-a0-vs-a1/README.md",
+  "benchmark": {
+    "fixture": "planner.v2",
+    "splits": [
+      "dev",
+      "heldout"
+    ],
+    "repeats": 3,
+    "toolDefinitions": "contracts/tools.v1.json"
+  },
+  "model": {
+    "name": "qwen3:8b",
+    "expectedDigest": "500a1f067a9f782620b40bee6f7b0c89e17ae61f686b92c24933e4ca4b2b8b41",
+    "runtime": "bundled Ollama 0.32.0",
+    "endpoint": "http://127.0.0.1:11434"
+  },
+  "architectures": {
+    "A0": {
+      "runner": "src-tauri/examples/a0_bench.rs",
+      "prompt": "src-tauri/src/agent/prompt.rs (unchanged from 0.4.0)",
+      "context": "one snapshot of relevant records, chosen by Rust (planner_candidates), plus spare-time facts when the request hands over the choice of a day",
+      "generation": "as in the app: temperature 0, think off, 8192-token context window"
+    },
+    "A1": {
+      "agent": "agent-python A1Agent",
+      "promptVersion": "a1-v2",
+      "catalog": "contracts/tools.v1.json (the same definitions the Rust tools and the benchmark's mock use)",
+      "generation": {
+        "temperature": 0,
+        "seed": 7,
+        "num_ctx": 16384,
+        "think": false
+      },
+      "contextNote": "A1 gets a 16384-token window to match its context budget, since tool results accumulate over steps; A0 sends one prompt into the app's 8192-token window.",
+      "budget": "each case's own budget (benchmark defaults: 12 model calls, 12 tool calls, 120 s, 16384 context tokens)"
+    }
+  },
+  "scoring": {
+    "outcome": "every check except the tool-process ones (required tools, order, calls and call limits); applies to both architectures",
+    "full": "every check, as agent_bench scores it; A1 only, since A0 makes no tool calls",
+    "processChecks": [
+      "required_tools",
+      "tool_order",
+      "required_calls",
+      "call_limits"
+    ],
+    "a0NotApplicableWhen": "the case injects tool errors or tool responses, or changes state between tool calls: those test behaviour between reads, and A0 does not read",
+    "caseVerdict": "a case counts as solved when at least 2 of 3 repeats succeed"
+  },
+  "previousRuns": [
+    {
+      "date": "2026-11-01",
+      "commit": "3359097",
+      "fixture": "planner.v1",
+      "toolDefinitions": "agent_bench/schemas/tools.v0.json",
+      "a1PromptVersion": "a1-v1",
+      "results": "docs/research/experiments/2026-11-a0-vs-a1/README.md#results"
+    }
+  ]
+}

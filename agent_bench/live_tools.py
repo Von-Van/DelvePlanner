@@ -21,6 +21,7 @@ from typing import Any
 from .mock_tools import load_fixture
 
 REPO = Path(__file__).resolve().parent.parent
+GITHUB_FIXTURE = Path(__file__).parent / "fixtures" / "github.v1.json"
 DEFAULT_BINARY = REPO / "src-tauri" / "target" / "debug" / "examples" / "tool_server"
 
 
@@ -48,7 +49,8 @@ class LiveToolClient:
         self._dir = tempfile.TemporaryDirectory(prefix="agent_bench_")
         bundle_path = Path(self._dir.name) / "bundle.json"
         bundle_path.write_text(json.dumps(bundle))
-        command = [str(binary), "--bundle", str(bundle_path)]
+        # The mock always serves the GitHub fixture (piece M), so the real server does too.
+        command = [str(binary), "--bundle", str(bundle_path), "--github", str(GITHUB_FIXTURE)]
         if case.get("planningProfile"):
             profile_path = Path(self._dir.name) / "profile.json"
             profile_path.write_text(json.dumps(case["planningProfile"]))

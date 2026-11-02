@@ -6,6 +6,7 @@
 //! cargo run --example tool_server -- [--bundle export.json | --db planner.sqlite3]
 //!     [--now 2026-11-02T15:00:00Z] [--time-zone America/Chicago] [--allow-descriptions]
 //!     [--profile planning-profile.json]
+//!     [--github agent_bench/fixtures/github.v1.json]
 //! cargo run --example tool_server -- --print-contract
 //! ```
 //!
@@ -14,6 +15,9 @@
 //! `--profile` sets the copy's planning profile (export bundles don't carry it), for
 //! `get_preferences`: the profile's fields in camelCase, as Settings saves them, without
 //! `revision`; fields left out stay unset.
+//!
+//! `--github` serves the GitHub tools from a saved GitHub context snapshot; without it they answer
+//! `permission_denied`, as they do in the app until the user selects repositories.
 //!
 //! Every message is `{ "v": 1, "id": "…", "type": "…", "payload": { … } }`:
 //! - `hello` → `hello_ack` with the protocol and contract versions, tool names, and limits.
@@ -26,6 +30,7 @@ use chrono::{DateTime, Utc};
 use chrono_tz::Tz;
 use delve_planner_desktop::db::PlannerDatabase;
 use delve_planner_desktop::model::UpdatePlanningProfileInput;
+use delve_planner_desktop::tools::github::GitHubContext;
 use delve_planner_desktop::tools::registry::{contract, ToolName, CONTRACT_VERSION};
 use delve_planner_desktop::tools::{
     open_fixture_database, NoCalendars, PrivacyPolicy, SessionConfig, ToolBudget, ToolSession,
@@ -40,6 +45,7 @@ use std::fs;
 use std::io::{self, BufRead, Read, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::Arc;
 
 const PROTOCOL_VERSION: u64 = 1;
 const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
@@ -50,6 +56,7 @@ struct Options {
     now: DateTime<Utc>,
     time_zone: Tz,
     privacy: PrivacyPolicy,
+    github: Option<GitHubContext>,
 }
 
 enum Source {
@@ -80,6 +87,7 @@ fn run() -> Result<(), String> {
     eprintln!("tool_server: serving {CONTRACT_VERSION} from a fixture copy");
     let defaults = SessionConfig {
         privacy: options.privacy,
+        github: options.github.map(Arc::new),
         ..SessionConfig::new(options.now, options.time_zone)
     };
     let mut session = ToolSession::new(defaults.clone());
@@ -172,6 +180,7 @@ fn parse_options() -> Result<Option<Options>, String> {
         now: Utc::now(),
         time_zone: Tz::UTC,
         privacy: PrivacyPolicy::default(),
+        github: None,
     };
     let mut args = env::args().skip(1);
     while let Some(flag) = args.next() {
@@ -183,6 +192,14 @@ fn parse_options() -> Result<Option<Options>, String> {
             "--now" => options.now = parse_now(&value()?)?,
             "--time-zone" => options.time_zone = parse_zone(&value()?)?,
             "--allow-descriptions" => options.privacy.include_descriptions = true,
+            "--github" => {
+                let path = value()?;
+                let text = fs::read_to_string(&path)
+                    .map_err(|error| format!("can't read {path}: {error}"))?;
+                let context = serde_json::from_str(&text)
+                    .map_err(|error| format!("{path} is not a GitHub context: {error}"))?;
+                options.github = Some(context);
+            }
             "--print-contract" => {
                 let text = serde_json::to_string_pretty(&contract()).map_err(|e| e.to_string())?;
                 println!("{text}");
@@ -191,7 +208,8 @@ fn parse_options() -> Result<Option<Options>, String> {
             "--help" | "-h" => {
                 eprintln!(
                     "usage: tool_server [--bundle FILE | --db FILE] [--profile FILE] [--now ISO] \
-                     [--time-zone ZONE] [--allow-descriptions] [--print-contract]"
+                     [--time-zone ZONE] [--allow-descriptions] [--github FILE] \
+                     [--print-contract]"
                 );
                 return Ok(None);
             }
