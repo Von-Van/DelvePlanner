@@ -109,7 +109,8 @@ def run(script, budget=None, debug=False):
 def test_plans_reads_and_drafts_two_blocks_that_fit_the_free_time():
     result, tools, model = run([PLAN, *READS, GOOD])
     assert result.status == "drafted"
-    assert [name for name, _ in tools.calls] == [step["tool"] for step in PLAN["steps"]]
+    # The plan's reads, then the self-check's re-read of the tasks before handing the blocks over.
+    assert [name for name, _ in tools.calls] == [step["tool"] for step in PLAN["steps"]] + ["get_project_context"]
     assert [draft.op for draft in result.drafts] == ["create_task_block", "create_task_block"]
     assert mutation_operation(result.drafts[0]) == {
         "type": "create_task_block",
@@ -129,7 +130,7 @@ def test_a_simple_request_needs_no_plan():
     one = block(LEASE, 3, "2026-11-05T17:00:00Z", 45) | {"evidence": ["tc-1", "tc-2"]}
     result, tools, _ = run([READS[0], READS[3], blocks_step(one)])
     assert result.status == "drafted"
-    assert len(tools.calls) == 2
+    assert len(tools.calls) == 3  # two reads and the self-check's re-read
     assert not [event for event in result.trace if event["kind"] == "plan" and "steps" in event["data"]]
 
 
