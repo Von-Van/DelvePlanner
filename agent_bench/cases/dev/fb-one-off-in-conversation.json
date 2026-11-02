@@ -1,0 +1,138 @@
+{
+  "case_id": "fb-one-off-in-conversation",
+  "family": "feedback",
+  "split": "dev",
+  "description": "M6: a one-off correction. In this conversation the person turned down a 4 pm lease-review block, saying they are out after 3 tomorrow, and chose 'just this once', so nothing is in memory; the reason travels only in the conversation note. 'Try again' must draft the lease review again, ending by 3 pm.",
+  "fixture": {
+    "version": "planner.v2",
+    "overrides": [
+      {
+        "entity": "tasks",
+        "id": "00000000-0000-4000-8000-000000000401",
+        "fields": {
+          "status": "done",
+          "completedAt": "2026-11-04T16:00:00.000Z"
+        }
+      },
+      {
+        "entity": "tasks",
+        "id": "00000000-0000-4000-8000-000000000402",
+        "fields": {
+          "status": "done",
+          "completedAt": "2026-11-04T16:00:00.000Z"
+        }
+      }
+    ]
+  },
+  "now": "2026-11-04T17:10-05:00",
+  "timeZone": "America/New_York",
+  "permittedTools": [
+    "get_day_context",
+    "list_active_projects",
+    "get_project_context",
+    "search_tasks",
+    "get_capacity",
+    "get_recent_actions",
+    "get_memory",
+    "get_preferences"
+  ],
+  "conversation": [
+    {
+      "role": "user",
+      "text": "Block out time tomorrow afternoon for the lease review.",
+      "at": "2026-11-04T17:02-05:00"
+    },
+    {
+      "role": "assistant",
+      "text": "Drafted: Review lease, Thursday 4:00 to 4:45 pm. [The person turned down the drafted change. The person said this reply about \"Review lease, Thu 4:00 pm\" was not helpful because: \"I'm out after 3 tomorrow\". This applies to this conversation only.]",
+      "at": "2026-11-04T17:03-05:00"
+    }
+  ],
+  "goal": "Try again.",
+  "expected": {
+    "status": [
+      "drafted"
+    ],
+    "requiredCalls": [
+      {
+        "tool": "get_day_context",
+        "args": {
+          "date": "2026-11-05"
+        }
+      }
+    ],
+    "toolCallBudget": 5,
+    "drafts": [
+      {
+        "op": "create_task_block",
+        "target": {
+          "id": "00000000-0000-4000-8000-000000000408",
+          "revision": 3
+        }
+      }
+    ],
+    "allowExtraDrafts": true,
+    "checks": [
+      {
+        "type": "draft_fits_free_time",
+        "op": "create_task_block"
+      },
+      {
+        "type": "draft_time_window",
+        "op": "create_task_block",
+        "notBefore": "2026-11-05T09:00-05:00",
+        "notAfter": "2026-11-05T15:00-05:00"
+      }
+    ]
+  },
+  "safety": {
+    "noDraftTargets": [
+      "00000000-0000-4000-8000-000000000404",
+      "00000000-0000-4000-8000-000000000405"
+    ]
+  },
+  "reference": {
+    "calls": [
+      {
+        "tool": "get_day_context",
+        "args": {
+          "date": "2026-11-05",
+          "timeZone": "America/New_York"
+        }
+      },
+      {
+        "tool": "search_tasks",
+        "args": {
+          "query": "lease"
+        }
+      }
+    ],
+    "result": {
+      "status": "drafted",
+      "answer": "You're out after 3 tomorrow, so: Review lease 2:00 to 2:45 pm.",
+      "drafts": [
+        {
+          "op": "create_task_block",
+          "target": {
+            "id": "00000000-0000-4000-8000-000000000408",
+            "revision": 3
+          },
+          "payload": {
+            "startAtUtc": "2026-11-05T19:00:00Z",
+            "timeZone": "America/New_York",
+            "durationMinutes": 45
+          },
+          "evidence": [
+            "1",
+            "2"
+          ]
+        }
+      ]
+    }
+  },
+  "tags": [
+    "feedback",
+    "continuity",
+    "time_blocks"
+  ]
+}

@@ -2,6 +2,7 @@ mod agent;
 mod availability;
 mod capture;
 mod conversation;
+mod feedback;
 mod heads_up;
 mod horizons;
 mod memory;
@@ -28,6 +29,7 @@ use chrono::{
     TimeZone, Utc,
 };
 use conversation::ensure_conversation_schema;
+use feedback::ensure_feedback_schema;
 use heads_up::ensure_heads_up_schema;
 use memory::ensure_memory_schema;
 use planning::{
@@ -60,6 +62,10 @@ pub use conversation::{
     AgentMessage, AgentThread, AgentThreadDetail, ConversationContext, ConversationTurn,
     MessageRole, MessageRunStatus, NewAgentMessage, DEFAULT_THREAD_TITLE,
 };
+pub use feedback::{
+    propose_lesson, AgentFeedback, FeedbackRating, FeedbackScope, FeedbackTarget, LessonProposal,
+    NewFeedback, MAX_FEEDBACK_ABOUT_CHARS, MAX_FEEDBACK_REASON_CHARS,
+};
 pub use heads_up::{
     HeadsUp, HeadsUpKind, HeadsUpRefresh, HeadsUpSettings, HeadsUpStatus, HeadsUpTarget,
     HeadsUpTargetKind, NewHeadsUp, PlannerHeadsUpFacts, PushedTask, QuietPlan, UpcomingBlock,
@@ -75,7 +81,7 @@ pub use proposals::{
 };
 pub(crate) use proposals::{fold, planning_tokens, title_matches};
 
-pub const CURRENT_SCHEMA_VERSION: u32 = 12;
+pub const CURRENT_SCHEMA_VERSION: u32 = 13;
 pub const EXPORT_FORMAT_VERSION: u32 = 7;
 const BACKUP_RETENTION: usize = 5;
 const REMINDER_DELIVERY_GRACE_MINUTES: i64 = 15;
@@ -1065,6 +1071,7 @@ fn migrate(connection: &Connection, from_version: u32) -> AppResult<()> {
         ensure_agent_schema(connection)?;
         ensure_memory_schema(connection)?;
         ensure_conversation_schema(connection)?;
+        ensure_feedback_schema(connection)?;
         ensure_heads_up_schema(connection)?;
         connection.pragma_update(None, "user_version", CURRENT_SCHEMA_VERSION)?;
         Ok::<(), AppError>(())

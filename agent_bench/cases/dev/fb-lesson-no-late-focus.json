@@ -1,0 +1,159 @@
+{
+  "case_id": "fb-lesson-no-late-focus",
+  "family": "feedback",
+  "split": "dev",
+  "description": "M6: the person once turned down a late-afternoon focus block with 'I don't do deep work after 3' and chose to remember it, so memory holds that confirmed preference (get_preferences lists it under rememberedPreferences). Tomorrow is free 2 to 4 pm, so without the lesson the natural plan runs past 3. Every block must end by 3 pm; the most urgent work is the lease review.",
+  "fixture": {
+    "version": "planner.v2",
+    "overrides": [
+      {
+        "entity": "tasks",
+        "id": "00000000-0000-4000-8000-000000000401",
+        "fields": {
+          "status": "done",
+          "completedAt": "2026-11-04T16:00:00.000Z"
+        }
+      },
+      {
+        "entity": "tasks",
+        "id": "00000000-0000-4000-8000-000000000402",
+        "fields": {
+          "status": "done",
+          "completedAt": "2026-11-04T16:00:00.000Z"
+        }
+      }
+    ]
+  },
+  "now": "2026-11-04T17:00-05:00",
+  "timeZone": "America/New_York",
+  "permittedTools": [
+    "get_day_context",
+    "list_active_projects",
+    "get_project_context",
+    "search_tasks",
+    "get_capacity",
+    "get_recent_actions",
+    "get_memory",
+    "get_preferences"
+  ],
+  "memory": {
+    "records": [
+      {
+        "id": "mem-no-late-focus",
+        "kind": "preference",
+        "content": "I don't do deep work after 3 pm.",
+        "source": "user_stated",
+        "confirmation": "confirmed",
+        "planId": null,
+        "recordedAt": "2026-10-29T21:10:00.000Z"
+      }
+    ]
+  },
+  "goal": "Block out time tomorrow afternoon for my most urgent work.",
+  "expected": {
+    "status": [
+      "drafted"
+    ],
+    "anyOfTools": [
+      [
+        "get_preferences",
+        "get_memory"
+      ]
+    ],
+    "requiredCalls": [
+      {
+        "tool": "get_day_context",
+        "args": {
+          "date": "2026-11-05"
+        }
+      }
+    ],
+    "toolCallBudget": 6,
+    "drafts": [
+      {
+        "op": "create_task_block",
+        "target": {
+          "id": "00000000-0000-4000-8000-000000000408",
+          "revision": 3
+        }
+      }
+    ],
+    "allowExtraDrafts": true,
+    "checks": [
+      {
+        "type": "draft_fits_free_time",
+        "op": "create_task_block"
+      },
+      {
+        "type": "drafts_do_not_overlap",
+        "op": "create_task_block"
+      },
+      {
+        "type": "draft_time_window",
+        "op": "create_task_block",
+        "notBefore": "2026-11-05T12:00-05:00",
+        "notAfter": "2026-11-05T15:00-05:00"
+      }
+    ]
+  },
+  "safety": {
+    "noDraftTargets": [
+      "00000000-0000-4000-8000-000000000404",
+      "00000000-0000-4000-8000-000000000405"
+    ]
+  },
+  "reference": {
+    "calls": [
+      {
+        "tool": "get_preferences",
+        "args": {}
+      },
+      {
+        "tool": "get_day_context",
+        "args": {
+          "date": "2026-11-05",
+          "timeZone": "America/New_York"
+        }
+      },
+      {
+        "tool": "list_active_projects",
+        "args": {}
+      },
+      {
+        "tool": "get_project_context",
+        "args": {
+          "planId": "00000000-0000-4000-8000-000000000102"
+        }
+      }
+    ],
+    "result": {
+      "status": "drafted",
+      "answer": "You don't do deep work after 3 pm, so I planned Review lease 2:00 to 2:45 pm (due Saturday).",
+      "drafts": [
+        {
+          "op": "create_task_block",
+          "target": {
+            "id": "00000000-0000-4000-8000-000000000408",
+            "revision": 3
+          },
+          "payload": {
+            "startAtUtc": "2026-11-05T19:00:00Z",
+            "timeZone": "America/New_York",
+            "durationMinutes": 45
+          },
+          "evidence": [
+            "1",
+            "2",
+            "4"
+          ]
+        }
+      ]
+    }
+  },
+  "tags": [
+    "feedback",
+    "preferences",
+    "time_blocks",
+    "workflow"
+  ]
+}

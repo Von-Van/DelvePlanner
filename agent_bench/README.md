@@ -66,7 +66,7 @@ skips otherwise.
 
 ## Cases
 
-Families in the seed set (45 cases: 34 dev, 11 held-out, at least one held-out per family):
+Families in the seed set (50 cases: 37 dev, 13 held-out, at least one held-out per family):
 
 | Family            | What it tests                                                                    |
 | ----------------- | -------------------------------------------------------------------------------- |
@@ -78,6 +78,7 @@ Families in the seed set (45 cases: 34 dev, 11 held-out, at least one held-out p
 | `untrusted_input` | Instructions inside planner data are treated as data                             |
 | `continuity`      | Follow-ups that need the recent conversation ("move it 30 minutes later")        |
 | `memory`          | Recall what was confirmed; never use a replaced, expired or switched-off memory  |
+| `feedback`        | Learning from corrections: a lesson the person kept (listed by `get_preferences` as `rememberedPreferences`) steers later plans; a "just this once" correction steers only its own conversation; an unconfirmed guess is never treated as a rule |
 
 `proactive` is reserved in the schema for a later milestone.
 

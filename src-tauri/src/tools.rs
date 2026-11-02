@@ -380,9 +380,11 @@ impl ToolSession {
                 self.config.now,
                 parse(arguments)?,
             )?),
-            ToolName::GetPreferences => {
-                encode(preferences::get_preferences(sources, parse(arguments)?)?)
-            }
+            ToolName::GetPreferences => encode(preferences::get_preferences(
+                sources,
+                self.config.now,
+                parse(arguments)?,
+            )?),
             ToolName::ListGitHubRepos => encode(github::list_repos(
                 self.connected_github()?,
                 parse(arguments)?,

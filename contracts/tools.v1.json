@@ -1021,6 +1021,37 @@
       ],
       "type": "object"
     },
+    "rememberedPreference": {
+      "additionalProperties": false,
+      "properties": {
+        "content": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "planId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "recordedAt": {
+          "$ref": "#/$defs/instant"
+        },
+        "trust": {
+          "const": "user_confirmed"
+        }
+      },
+      "required": [
+        "trust",
+        "id",
+        "content",
+        "planId",
+        "recordedAt"
+      ],
+      "type": "object"
+    },
     "task": {
       "additionalProperties": false,
       "properties": {
@@ -1862,7 +1893,7 @@
       "privacyClass": "memory"
     },
     {
-      "description": "How the person likes to plan. profile is what they set themselves (trust user_confirmed): preferred hours as local HH:MM, the most work per day, focus and break lengths, days off, and when demanding work suits them; isSet is false when they have set nothing. workingHours are the hours capacity counts. observations are patterns computed from their own records (trust verified), such as estimates running long: evidence about habits, not stated wishes.",
+      "description": "How the person likes to plan. profile is what they set themselves (trust user_confirmed): preferred hours as local HH:MM, the most work per day, focus and break lengths, days off, and when demanding work suits them; isSet is false when they have set nothing. workingHours are the hours capacity counts. rememberedPreferences are preferences the person asked you to remember, often after correcting a plan (trust user_confirmed): follow them like the profile, and never plan against one; planId null means they apply everywhere. observations are patterns computed from their own records (trust verified), such as estimates running long: evidence about habits, not stated wishes.",
       "implemented": true,
       "inputSchema": {
         "additionalProperties": false,
@@ -1883,6 +1914,12 @@
           "profile": {
             "$ref": "#/$defs/planningProfile"
           },
+          "rememberedPreferences": {
+            "items": {
+              "$ref": "#/$defs/rememberedPreference"
+            },
+            "type": "array"
+          },
           "workingHours": {
             "$ref": "#/$defs/workingHours"
           }
@@ -1890,6 +1927,7 @@
         "required": [
           "profile",
           "workingHours",
+          "rememberedPreferences",
           "observations"
         ],
         "type": "object"
