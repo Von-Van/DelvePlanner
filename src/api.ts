@@ -1,5 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { z } from "zod";
+import { traceEventSchema } from "./AgentTrace";
 
 export const planStatuses = [
   "planning",
@@ -695,6 +697,94 @@ const appliedProposalSchema = z
   })
   .strict();
 
+/* The new assistant (the Python agent behind the Assistant screen). */
+
+const agentModelSchema = z
+  .object({
+    name: z.string(),
+    digest: z.string(),
+    ollamaVersion: z.string(),
+  })
+  .strict();
+
+const count = z.number().int().nonnegative();
+
+/** What one run cost: the numbers the Assistant shows next to every answer. */
+const agentRunUsageSchema = z
+  .object({
+    modelCalls: count,
+    toolCalls: count,
+    toolFailures: count,
+    promptTokens: count,
+    completionTokens: count,
+    durationMs: count,
+  })
+  .strict();
+
+/** What the app's own checks made of the agent's drafted changes. */
+const draftCheckSchema = z
+  .object({
+    drafted: count,
+    passed: count,
+    problems: z.array(z.string()),
+  })
+  .strict();
+
+const reviewStateSchema = z.discriminatedUnion("state", [
+  z.object({ state: z.literal("none") }).strict(),
+  z.object({ state: z.literal("pending") }).strict(),
+  z.object({ state: z.literal("applied"), changes: count }).strict(),
+  z.object({ state: z.literal("discarded") }).strict(),
+  z.object({ state: z.literal("expired") }).strict(),
+  z.object({ state: z.literal("failed"), message: z.string() }).strict(),
+]);
+
+export const agentRunStatuses = [
+  "answered",
+  "drafted",
+  "needs_clarification",
+  "cannot_complete",
+  "failed",
+] as const;
+
+export const agentRunSchema = z
+  .object({
+    runKey: z.string().min(1),
+    runId: z.string().nullable(),
+    storedRunId: z.string().nullable(),
+    architecture: z.string(),
+    goal: z.string(),
+    startedAt: timestampSchema,
+    finishedAt: timestampSchema,
+    status: z.enum(agentRunStatuses),
+    stopReason: z.string().nullable(),
+    answer: z.string().nullable(),
+    error: z.string().nullable(),
+    cancelled: z.boolean(),
+    model: agentModelSchema.nullable(),
+    usage: agentRunUsageSchema,
+    draftCheck: draftCheckSchema.nullable(),
+    review: reviewStateSchema,
+    proposal: plannerResponseSchema.options[0].nullable(),
+    trace: z.array(traceEventSchema),
+  })
+  .strict();
+
+const assistantStatusSchema = z
+  .object({
+    available: z.boolean(),
+    source: z.enum(["packaged", "source"]).nullable(),
+    architecture: z.string(),
+    running: z.boolean(),
+    detail: z.string(),
+  })
+  .strict();
+
+const agentRunEventSchema = z.object({
+  runKey: z.string(),
+  event: traceEventSchema,
+});
+
 const agendaSchema = z
   .object({
     events: z.array(eventSchema),
@@ -861,6 +951,10 @@ export type TaskStatus = Task["status"];
 export type TaskPriority = Task["priority"];
 export type PlannerResponse = z.infer<typeof plannerResponseSchema>;
 export type Proposal = Extract<PlannerResponse, { kind: "proposal" }>;
+export type AgentRun = z.infer<typeof agentRunSchema>;
+export type AgentRunStatus = AgentRun["status"];
+export type AgentRunUsage = z.infer<typeof agentRunUsageSchema>;
+export type AssistantStatus = z.infer<typeof assistantStatusSchema>;
 export type ProposalOperation = Proposal["operations"][number];
 export type ProposalChange = ProposalOperation["change"];
 /** A suggestion changed in review before applying; Rust checks it still targets the same record. */
@@ -1516,5 +1610,44 @@ export const api = {
   },
   async restoreBackup(backupName: string) {
     await invokeCommand("restore_database_backup", { backupName });
+  },
+  async assistantStatus() {
+    return assistantStatusSchema.parse(await invokeCommand("assistant_status"));
+  },
+  /**
+   * Runs one request through the agent and resolves with the finished run. Its steps arrive
+   * earlier, one by one, through `onAssistantStep` under the same `runKey`.
+   */
+  async runAssistant(goal: string, timeZone: string, runKey: string) {
+    return agentRunSchema.parse(
+      await invokeCommand("run_assistant", { goal, timeZone, runKey }),
+    );
+  },
+  async cancelAssistantRun() {
+    await invokeCommand("cancel_assistant_run");
+  },
+  /** This session's runs, newest first. */
+  async listAssistantRuns() {
+    return z
+      .array(agentRunSchema)
+      .parse(await invokeCommand("list_assistant_runs"));
+  },
+  /** Applies the agent's checked changes the user kept; leaving `accepted` out applies all. */
+  async applyAssistantChanges(proposalId: string, accepted?: string[]) {
+    return appliedProposalSchema.parse(
+      await invokeCommand("apply_assistant_changes", { proposalId, accepted }),
+    );
+  },
+  async discardAssistantChanges(proposalId: string) {
+    await invokeCommand("discard_assistant_changes", { proposalId });
+  },
+  /** Calls `handler` with each step of a run in progress, as it happens. */
+  onAssistantStep(
+    handler: (step: z.infer<typeof agentRunEventSchema>) => void,
+  ): Promise<UnlistenFn> {
+    return listen("assistant-run-event", (message) => {
+      const parsed = agentRunEventSchema.safeParse(message.payload);
+      if (parsed.success) handler(parsed.data);
+    });
   },
 };
