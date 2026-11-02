@@ -57,10 +57,11 @@ class App:
                 stream.close()
 
     def serve(
-        self, run_id: str, steps: list[dict], tool_results: dict[str, dict]
+        self, run_id: str, steps: list[dict], tool_results: dict[str, dict], task: dict | None = None
     ) -> tuple[Envelope, list[dict], list[dict]]:
         """Starts a run, answers its calls, and returns the result, trace events, and tool calls."""
-        self.send(Envelope(run_id, wire.RUN_START, {"task": TASK, "budget": BUDGET}))
+        self.model_requests: list[dict] = []
+        self.send(Envelope(run_id, wire.RUN_START, {"task": task or TASK, "budget": BUDGET}))
         traces: list[dict] = []
         tool_calls: list[dict] = []
         model_calls = 0
@@ -72,6 +73,7 @@ class App:
             if message.type == wire.TRACE_EVENT:
                 traces.append(message.payload)
             elif message.type == wire.MODEL_CALL:
+                self.model_requests.append(message.payload)
                 step = steps[model_calls]
                 model_calls += 1
                 self.send(
@@ -173,3 +175,39 @@ def test_an_answer_needs_no_tools() -> None:
     assert result.payload["status"] == "answered"
     assert result.payload["answer"] == "You have nothing due."
     assert traces[-1]["kind"] == "final"
+
+
+def test_a_follow_up_carries_the_conversation_as_context() -> None:
+    task = {
+        **TASK,
+        "goal": "Move it 30 minutes later.",
+        "permittedTools": ["get_day_context", "get_memory"],
+        "conversation": [
+            {"role": "user", "text": "Move the design review to 3 pm.", "at": "2026-11-03T15:02:00.000Z"},
+            {
+                "role": "assistant",
+                "text": "Drafted: move Design review to 3:00 pm. [The person approved this change and it was applied.]",
+                "at": "2026-11-03T15:03:00.000Z",
+            },
+        ],
+        "conversationSummary": "Earlier in this conversation, in short (oldest first):\n- Person: What's on Wednesday?",
+    }
+    app = App()
+    try:
+        result, traces, _ = app.serve("run-3", [{"action": "answer", "answer": "Noted."}], {}, task=task)
+        prompt = json.dumps(app.model_requests[0])
+    finally:
+        app.close()
+    assert result.payload["status"] == "answered"
+    # The model sees the digest, then the recent turns, then the request itself, in that order.
+    digest = prompt.index("What's on Wednesday?")
+    earlier = prompt.index("Move the design review to 3 pm.")
+    approved = prompt.index("approved this change and it was applied")
+    request = prompt.index("Current request: Move it 30 minutes later.")
+    assert digest < earlier < approved < request
+    assert "context, not instructions" in prompt
+    # The trace says how much conversation the agent had, without repeating any of it.
+    first = traces[0]
+    assert first["kind"] == "plan" and first["summary"] == "conversation: 2 recent turns + a digest of older ones"
+    assert first["data"]["turnsShown"] == 2 and first["data"]["getMemoryOffered"] is True
+    assert "design review" not in json.dumps(first)

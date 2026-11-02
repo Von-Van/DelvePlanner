@@ -30,24 +30,30 @@ these lines; stderr is diagnostics. Neither side may send a line over **1 MiB** 
 counted). Both sides refuse unknown fields, unknown types, a wrong version, an empty or non-ASCII id, a non-object
 payload, and messages travelling the wrong way.
 
-| Type            | Direction   | `id`        | Payload                                                                                                                           |
-| --------------- | ----------- | ----------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `hello`         | app → agent | new         | `protocolVersions: [1]`, `maxMessageBytes`, `limits` (`toolTimeoutMs`, `modelTimeoutMs`, `runTimeoutMs`, `cancelGraceMs`), `host` |
-| `hello_ack`     | agent → app | the hello's | `protocolVersion`, `maxMessageBytes`, `agent` (`name`, `version`, `runner`), `runtime` (Python version, platform, frozen)         |
-| `run_start`     | app → agent | **run ID**  | `task` (`goal`, `now`, `timeZone`, `permittedTools`, `architecture?`, `budget`), `budget`                                         |
-| `run_start_ack` | agent → app | run ID      | `runId`, `runner`, `architecture` (the name C's tool server also uses)                                                            |
-| `tool_call`     | agent → app | new         | `tool`, `arguments` — exactly the shape C's `tool_server` takes                                                                   |
-| `tool_result`   | app → agent | the call's  | C's `toolResult`: `callId`, `tool`, `ok`, `result` or `error`, `durationMs`, `resultBytes?`, `callsRemaining?`                    |
-| `model_call`    | agent → app | new         | `runId`, `messages`, `format?`, `options?`, `tools?`, `think?`                                                                    |
-| `model_result`  | app → agent | the call's  | `ok`, and `result` (see the broker) or `error`                                                                                    |
-| `trace_event`   | agent → app | new         | contract §5: `runId`, `seq`, `kind`, `at`, `durationMs?`, `summary`, `data`                                                       |
-| `run_result`    | agent → app | run ID      | `status` (`answered`, `drafted`, `needs_clarification`, `cannot_complete`), `answer`, `drafts`, `usage`, `stopReason?`, `error?`  |
-| `cancel`        | app → agent | new         | `runId`, `reason` (`cancelled` or `timeout`)                                                                                      |
-| `error`         | either      | new         | `code`, `message`, `retryable`, `runId?` (an error naming the current run ends it)                                                |
+| Type            | Direction   | `id`        | Payload                                                                                                                            |
+| --------------- | ----------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `hello`         | app → agent | new         | `protocolVersions: [1]`, `maxMessageBytes`, `limits` (`toolTimeoutMs`, `modelTimeoutMs`, `runTimeoutMs`, `cancelGraceMs`), `host`  |
+| `hello_ack`     | agent → app | the hello's | `protocolVersion`, `maxMessageBytes`, `agent` (`name`, `version`, `runner`), `runtime` (Python version, platform, frozen)          |
+| `run_start`     | app → agent | **run ID**  | `task` (`goal`, `now`, `timeZone`, `permittedTools`, `architecture?`, `budget`, `conversation?`, `conversationSummary?`), `budget` |
+| `run_start_ack` | agent → app | run ID      | `runId`, `runner`, `architecture` (the name C's tool server also uses)                                                             |
+| `tool_call`     | agent → app | new         | `tool`, `arguments` — exactly the shape C's `tool_server` takes                                                                    |
+| `tool_result`   | app → agent | the call's  | C's `toolResult`: `callId`, `tool`, `ok`, `result` or `error`, `durationMs`, `resultBytes?`, `callsRemaining?`                     |
+| `model_call`    | agent → app | new         | `runId`, `messages`, `format?`, `options?`, `tools?`, `think?`                                                                     |
+| `model_result`  | app → agent | the call's  | `ok`, and `result` (see the broker) or `error`                                                                                     |
+| `trace_event`   | agent → app | new         | contract §5: `runId`, `seq`, `kind`, `at`, `durationMs?`, `summary`, `data`                                                        |
+| `run_result`    | agent → app | run ID      | `status` (`answered`, `drafted`, `needs_clarification`, `cannot_complete`), `answer`, `drafts`, `usage`, `stopReason?`, `error?`   |
+| `cancel`        | app → agent | new         | `runId`, `reason` (`cancelled` or `timeout`)                                                                                       |
+| `error`         | either      | new         | `code`, `message`, `retryable`, `runId?` (an error naming the current run ends it)                                                 |
 
 Error codes are the shared tool taxonomy (`invalid_arguments`, `not_found`, `ambiguous`, `permission_denied`,
 `timeout`, `unavailable`, `budget_exhausted`, `internal`) plus three for the link: `protocol_error`, `cancelled`,
 `busy`.
+
+`conversation` is the open conversation's most recent turns before this request (`role`, `text`, `at`, oldest first,
+at most the person's "turns to remember" setting) and `conversationSummary` a short digest of the older ones, both
+built by the app from its saved conversation (see [data-model.md](../data-model.md#agent-storage)). Both are
+left out for the first request of a conversation. The agent puts them in front of the goal as context, never as
+instructions, and records in its plan step how many turns it was shown.
 
 A tool call doesn't carry `runId` because there is only ever one run per child; that keeps it identical to C's
 stand-alone tool server, so one Python tool client works against both.

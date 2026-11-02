@@ -49,6 +49,8 @@ fn task(goal: &str) -> RunRequest {
         permitted_tools: vec!["get_day_context".into()],
         architecture: None,
         budget: RunBudget::default(),
+        conversation: Vec::new(),
+        conversation_summary: None,
     }
 }
 

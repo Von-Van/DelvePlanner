@@ -296,6 +296,64 @@ fn proposal_id(record: &AgentRunRecord) -> String {
 }
 
 #[test]
+fn a_finished_run_becomes_the_conversations_reply() {
+    let (record, _) = drafted("key-reply");
+    let (text, status) = conversation_reply(&record);
+    assert_eq!(status, MessageRunStatus::Drafted);
+    assert!(!text.is_empty());
+
+    let (answered, _) = finish_run(
+        start(),
+        Ok(outcome(
+            json!({ "status": "answered", "answer": "  Two meetings today.  " }),
+        )),
+        &Observed::default(),
+        Vec::new(),
+        "2026-11-02T15:00:01Z".parse().unwrap(),
+    );
+    assert_eq!(
+        conversation_reply(&answered),
+        (
+            "Two meetings today.".to_string(),
+            MessageRunStatus::Answered
+        )
+    );
+
+    let (stopped, _) = finish_run(
+        start(),
+        Err(SidecarError::Cancelled),
+        &Observed::default(),
+        Vec::new(),
+        "2026-11-02T15:00:01Z".parse().unwrap(),
+    );
+    assert_eq!(
+        conversation_reply(&stopped),
+        (
+            "Stopped before finishing.".to_string(),
+            MessageRunStatus::Cancelled
+        )
+    );
+}
+
+#[test]
+fn deleting_a_conversation_forgets_its_runs_and_pending_changes() {
+    let runtime = runtime();
+    let (mut kept, response) = drafted("key-kept");
+    kept.thread_id = Some("thread-kept".into());
+    runtime.record(kept, response);
+    let (mut gone, response) = drafted("key-gone");
+    gone.thread_id = Some("thread-gone".into());
+    runtime.record(gone, response);
+    assert!(runtime.pending.lock().unwrap().is_some());
+
+    runtime.forget_thread("thread-gone");
+    let keys: Vec<_> = runtime.runs().into_iter().map(|run| run.run_key).collect();
+    assert_eq!(keys, ["key-kept"]);
+    // The newest changes belonged to the deleted conversation, so nothing is left to apply.
+    assert!(runtime.pending.lock().unwrap().is_none());
+}
+
+#[test]
 fn changes_can_be_applied_once_and_newer_changes_replace_older_ones() {
     let runtime = runtime();
     let (record, response) = drafted("first");
@@ -493,6 +551,8 @@ async fn the_python_agent_reads_drafts_and_its_change_applies_through_the_planne
         permitted_tools: permitted_tools(),
         architecture: Some(ARCHITECTURE.into()),
         budget: RunBudget::default(),
+        conversation: Vec::new(),
+        conversation_summary: None,
     };
     let outcome = sidecar
         .run(&request, &host, &CancellationToken::new())
