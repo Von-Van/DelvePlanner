@@ -609,23 +609,113 @@ pub struct RecentActionsArgs {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RecentActions {
-    pub actions: Vec<serde_json::Value>,
-    /// False until agent runs and their outcomes are stored; an empty list then means "not
-    /// recorded yet", not "nothing happened".
+    pub actions: Vec<RecentAction>,
+    /// True when the stored history was read. An empty list then means nothing was decided yet.
     pub history_available: bool,
 }
 
-pub fn get_recent_actions(args: RecentActionsArgs) -> Result<RecentActions, ToolError> {
+/// One change the assistant drafted that the person decided on, newest first. It names its
+/// target by `targetId` (no revision): a later change must read the record again first.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecentAction {
+    pub op: String,
+    /// `applied`, `failed` or `stale` once the change was tried; otherwise the decision:
+    /// `approved`, `rejected` or `expired`.
+    pub outcome: String,
+    /// What the person asked for in that request.
+    pub request: String,
+    pub target_id: Option<String>,
+    /// The target's title as the planner has it now; null if it no longer exists.
+    pub target_title: Option<String>,
+    /// The changed fields: dates, times, titles, statuses. Ids and revisions are left out, and
+    /// descriptions and notes unless the privacy policy allows them.
+    pub change: serde_json::Map<String, serde_json::Value>,
+    pub error: Option<String>,
+    pub at: String,
+}
+
+const MAX_ACTION_TEXT: usize = 200;
+
+pub fn get_recent_actions(
+    sources: &ToolSources<'_>,
+    privacy: PrivacyPolicy,
+    args: RecentActionsArgs,
+) -> Result<RecentActions, ToolError> {
     let limit = args.limit.unwrap_or(10);
     if !(1..=MAX_RECENT_ACTIONS).contains(&limit) {
         return Err(ToolError::invalid(format!(
             "limit must be between 1 and {MAX_RECENT_ACTIONS}."
         )));
     }
+    let actions = sources
+        .database
+        .recent_agent_actions(limit)?
+        .into_iter()
+        .map(|action| RecentAction {
+            outcome: match action.execution_state {
+                Some(state) => enum_text(&state),
+                None => enum_text(&action.state),
+            },
+            request: clip(&action.request, MAX_ACTION_TEXT),
+            target_id: action.target.map(|target| target.id),
+            target_title: action.target_title,
+            change: change_fields(&action.payload, privacy),
+            error: action.error.map(|error| clip(&error, MAX_ACTION_TEXT)),
+            at: action.at,
+            op: action.op,
+        })
+        .collect();
     Ok(RecentActions {
-        actions: Vec::new(),
-        history_available: false,
+        actions,
+        history_available: true,
     })
+}
+
+/// The scalar fields of a draft's payload, minus anything that identifies a record or its
+/// revision (so history can't stand in for a fresh read) and minus private free text.
+fn change_fields(
+    payload: &serde_json::Value,
+    privacy: PrivacyPolicy,
+) -> serde_json::Map<String, serde_json::Value> {
+    let Some(fields) = payload.as_object() else {
+        return Default::default();
+    };
+    fields
+        .iter()
+        .filter(|(key, _)| {
+            let key = key.as_str();
+            key != "id" && !key.ends_with("Id") && !key.to_ascii_lowercase().contains("revision")
+        })
+        .filter(|(key, _)| {
+            privacy.include_descriptions || !matches!(key.as_str(), "notes" | "description")
+        })
+        .filter_map(|(key, value)| {
+            let value = match value {
+                serde_json::Value::String(text) => {
+                    serde_json::Value::String(clip(text, MAX_ACTION_TEXT))
+                }
+                serde_json::Value::Number(_) | serde_json::Value::Bool(_) => value.clone(),
+                _ => return None,
+            };
+            Some((key.clone(), value))
+        })
+        .collect()
+}
+
+fn enum_text<T: Serialize>(value: &T) -> String {
+    serde_json::to_value(value)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_string))
+        .unwrap_or_default()
+}
+
+fn clip(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_string();
+    }
+    let cut: String = text.chars().take(max.saturating_sub(1)).collect();
+    format!("{}…", cut.trim_end())
 }
 
 // ---------------------------------------------------------------------------------------------

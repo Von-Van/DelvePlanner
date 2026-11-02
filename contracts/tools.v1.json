@@ -832,6 +832,70 @@
       ],
       "type": "object"
     },
+    "recentAction": {
+      "additionalProperties": false,
+      "properties": {
+        "at": {
+          "$ref": "#/$defs/instant"
+        },
+        "change": {
+          "additionalProperties": {
+            "type": [
+              "string",
+              "number",
+              "boolean"
+            ]
+          },
+          "type": "object"
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "op": {
+          "type": "string"
+        },
+        "outcome": {
+          "enum": [
+            "applied",
+            "failed",
+            "stale",
+            "approved",
+            "rejected",
+            "expired"
+          ]
+        },
+        "request": {
+          "maxLength": 200,
+          "type": "string"
+        },
+        "targetId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "targetTitle": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "op",
+        "outcome",
+        "request",
+        "targetId",
+        "targetTitle",
+        "change",
+        "error",
+        "at"
+      ],
+      "type": "object"
+    },
     "task": {
       "additionalProperties": false,
       "properties": {
@@ -1558,7 +1622,7 @@
       "privacyClass": "planner_and_calendar_busy"
     },
     {
-      "description": "Recently applied changes and failed attempts. historyAvailable is false until agent outcomes are recorded, so an empty list may mean not recorded yet.",
+      "description": "Changes you drafted earlier that the person decided on, newest first: what they asked for, the change, and whether it was applied, rejected, or failed. Use it for questions like 'what did we change yesterday?'. It names records by targetId only; read a record again before drafting another change to it.",
       "implemented": true,
       "inputSchema": {
         "additionalProperties": false,
@@ -1578,7 +1642,10 @@
         "additionalProperties": false,
         "properties": {
           "actions": {
-            "maxItems": 0,
+            "items": {
+              "$ref": "#/$defs/recentAction"
+            },
+            "maxItems": 20,
             "type": "array"
           },
           "historyAvailable": {
