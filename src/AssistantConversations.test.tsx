@@ -58,6 +58,20 @@ describe("ConversationHistory", () => {
     expect(html).toContain("chat-reply");
   });
 
+  it("keeps an earlier proposal reachable after a follow-up", () => {
+    const html = renderToStaticMarkup(
+      <ConversationHistory
+        messages={gym}
+        awaitingReview={new Map([["run-1", "key-1"]])}
+        onReview={() => undefined}
+      />,
+    );
+    expect(html.match(/Review these changes/g)).toHaveLength(1);
+    expect(html.indexOf("Review these changes")).toBeLessThan(
+      html.indexOf("actually 30 minutes later"),
+    );
+  });
+
   it("shows nothing for a new conversation", () => {
     expect(renderToStaticMarkup(<ConversationHistory messages={[]} />)).toBe(
       "",

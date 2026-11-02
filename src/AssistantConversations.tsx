@@ -43,8 +43,13 @@ export function conversationDateLabel(at: string, now = new Date()) {
  */
 export function ConversationHistory({
   messages,
+  awaitingReview = new Map(),
+  onReview,
 }: {
   messages: ConversationMessage[];
+  /** Stored run id → run key, for replies whose proposed changes still wait for a decision. */
+  awaitingReview?: ReadonlyMap<string, string>;
+  onReview?: (runKey: string) => void;
 }) {
   if (messages.length === 0) return null;
   return (
@@ -69,11 +74,37 @@ export function ConversationHistory({
                 </span>
               )}
               <p className="agent-answer">{message.text}</p>
+              <ReviewButton
+                runKey={
+                  message.runId ? awaitingReview.get(message.runId) : undefined
+                }
+                onReview={onReview}
+              />
             </div>
           </li>
         ),
       )}
     </ol>
+  );
+}
+
+/** Reopens an earlier reply whose proposed changes still wait for a decision. */
+function ReviewButton({
+  runKey,
+  onReview,
+}: {
+  runKey: string | undefined;
+  onReview?: (runKey: string) => void;
+}) {
+  if (!runKey || !onReview) return null;
+  return (
+    <button
+      type="button"
+      className="secondary-button small conversation-review"
+      onClick={() => onReview(runKey)}
+    >
+      Review these changes
+    </button>
   );
 }
 
