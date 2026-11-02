@@ -18,7 +18,9 @@ from datetime import UTC, datetime
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from ..drafts import _CHECKS, OP_SPECS, TYPE_HELP, UNCHANGED_DEFAULT
+from ..drafts import _CHECKS, MEMORY_OP_SPECS, OP_SPECS, TYPE_HELP, UNCHANGED_DEFAULT
+
+_ALL_SPECS = {**OP_SPECS, **MEMORY_OP_SPECS}  # planner changes and "remember this?" suggestions
 
 # Field names models reach for that the planner calls something else.
 _HINTS = {
@@ -50,7 +52,7 @@ def _zone_ok(value: Any) -> bool:
 
 def payload_problems(op: str, payload: Any) -> list[str]:
     """Every reason the app would refuse this payload for `op`, worded for the model."""
-    spec = OP_SPECS.get(op)
+    spec = _ALL_SPECS.get(op)
     if spec is None:
         return [f"unknown operation {op!r}"]
     if not isinstance(payload, dict):
@@ -110,7 +112,7 @@ def normalize_payload(op: str, payload: dict[str, Any], time_zone: str) -> tuple
     """
     out = dict(payload)
     notes: list[str] = []
-    spec = OP_SPECS.get(op, {})
+    spec = _ALL_SPECS.get(op, {})
 
     if "startAtUtc" in spec and "startAtUtc" not in out:
         start, end = _moment(out.get("start")), _moment(out.get("end"))

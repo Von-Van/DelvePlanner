@@ -1878,7 +1878,8 @@ impl Resolver<'_> {
                     milestone.as_ref(),
                 ),
                 MutationOperation::CreateWorkstream { plan, .. } => (None, Some(plan), None),
-                MutationOperation::SetTaskWorkstream { task_id, .. } => {
+                MutationOperation::SetTaskWorkstream { task_id, .. }
+                | MutationOperation::CreateTaskBlock { task_id, .. } => {
                     (Some((RecordKind::Task, task_id)), None, None)
                 }
             };

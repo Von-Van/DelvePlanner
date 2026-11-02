@@ -14,9 +14,9 @@
 //! single transaction as the planner's own proposals.
 
 use crate::db::{
-    ActionOutcome, AgentStep, DraftDecision, DraftTarget, ExecutionState, NewActionDraft,
-    NewAgentRun, PlannerDatabase, RunOutcome as StoredOutcome, RunSource, RunStatus,
-    RunUsage as StoredUsage,
+    ActionOutcome, AgentStep, DraftDecision, DraftTarget, ExecutionState, MessageRunStatus,
+    NewActionDraft, NewAgentRun, PlannerDatabase, RunOutcome as StoredOutcome, RunSource,
+    RunStatus, RunUsage as StoredUsage,
 };
 use crate::error::{AppError, AppResult};
 use crate::model::{
@@ -58,6 +58,12 @@ const MAX_SUMMARY_CHARS: usize = 280;
 pub const MAX_GOAL_CHARS: usize = 2_000;
 /// A sidecar left unused this long is stopped; the next request starts a fresh one.
 pub const SIDECAR_IDLE: Duration = Duration::from_secs(10 * 60);
+
+mod suggestions;
+pub use suggestions::{
+    apply_memory_settings, check_suggestions, is_remember, memory_suggestion, new_memory,
+    MemorySuggestion, SuggestionBasis, SuggestionState, MAX_SUGGESTIONS, REMEMBER_OP,
+};
 
 /// Where the agent comes from in this build: a packaged executable, or Python source in
 /// development.
@@ -314,9 +320,13 @@ fn references(operations: &[MutationOperation], observed: &Observed) -> Vec<Prop
 #[derive(Debug, Clone, Default, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct DraftCheck {
+    /// Every draft, planner changes and "remember this?" suggestions alike.
     pub drafted: usize,
     pub passed: usize,
+    /// Why planner changes were refused; any one means none are offered.
     pub problems: Vec<String>,
+    /// Why memory suggestions were left out. They never hold back planner changes.
+    pub memory_problems: Vec<String>,
 }
 
 /// Checks every draft. Changes are offered only when all of them pass: a set of changes the
@@ -407,11 +417,16 @@ pub struct AgentRunRecord {
     pub usage: RunUsage,
     pub draft_check: Option<DraftCheck>,
     pub review: ReviewState,
+    /// Memories the agent suggested ("remember this?"), each waiting for the person's yes or no.
+    /// Kept apart from `proposal`: approving planner changes never stores a memory.
+    pub memory_suggestions: Vec<MemorySuggestion>,
     /// Validated changes, in the planner's own review shape, while they can still be applied.
     pub proposal: Option<PlannerResponse>,
     pub trace: Vec<Value>,
     /// The run's id in the run history, once saved there.
     pub stored_run_id: Option<String>,
+    /// The conversation the request belongs to.
+    pub thread_id: Option<String>,
     /// The drafts behind `proposal`, as the agent sent them, for the run history.
     #[serde(skip)]
     pub checked_drafts: Vec<Value>,
@@ -570,9 +585,11 @@ pub fn finish_run(
         },
         draft_check: None,
         review: ReviewState::None,
+        memory_suggestions: Vec::new(),
         proposal: None,
         trace,
         stored_run_id: None,
+        thread_id: None,
         checked_drafts: Vec::new(),
         stored_drafts: Vec::new(),
     };
@@ -614,15 +631,31 @@ pub fn finish_run(
     record.usage.completion_tokens = usage("completionTokens").unwrap_or(0);
     record.usage.duration_ms = u64::try_from(outcome.duration.as_millis()).unwrap_or(duration_ms);
 
-    if record.status != "drafted" {
+    if !matches!(record.status.as_str(), "drafted" | "answered") {
         return (record, None);
     }
-    let drafts = result
+    let (memory_drafts, drafts): (Vec<Value>, Vec<Value>) = result
         .get("drafts")
         .and_then(Value::as_array)
         .cloned()
-        .unwrap_or_default();
-    let (check, operations) = check_drafts(&drafts, observed);
+        .unwrap_or_default()
+        .into_iter()
+        .partition(is_remember);
+    if record.status == "answered" && memory_drafts.is_empty() {
+        return (record, None);
+    }
+    // An answer may carry "Remember this?" suggestions but never planner changes.
+    let (mut check, operations) = if record.status == "drafted" {
+        check_drafts(&drafts, observed)
+    } else {
+        (DraftCheck::default(), Vec::new())
+    };
+    // "Remember this?" drafts are checked and offered on their own.
+    let (suggestions, problems) = check_suggestions(&memory_drafts, observed);
+    check.drafted += memory_drafts.len();
+    check.passed += memory_drafts.len() - problems.len();
+    check.memory_problems = problems;
+    record.memory_suggestions = suggestions;
     record.draft_check = Some(check);
     if operations.is_empty() {
         return (record, None);
@@ -696,6 +729,54 @@ fn stored_status(record: &AgentRunRecord) -> RunStatus {
         "cannot_complete" => RunStatus::CannotComplete,
         _ => RunStatus::Failed,
     }
+}
+
+/// What a conversation keeps of a finished run: the reply as the person saw it, and how the run
+/// ended. A drafted run keeps the drafted change's summary; whether it was approved is read from
+/// the run history when the conversation is next used.
+pub fn conversation_reply(record: &AgentRunRecord) -> (String, MessageRunStatus) {
+    let status = if record.cancelled {
+        MessageRunStatus::Cancelled
+    } else {
+        match record.status.as_str() {
+            "answered" => MessageRunStatus::Answered,
+            "drafted" => MessageRunStatus::Drafted,
+            "needs_clarification" => MessageRunStatus::NeedsClarification,
+            "cannot_complete" => MessageRunStatus::CannotComplete,
+            _ => MessageRunStatus::Failed,
+        }
+    };
+    let summary = match &record.proposal {
+        Some(PlannerResponse::Proposal { summary, .. }) => Some(summary.clone()),
+        Some(PlannerResponse::Clarification { question }) => Some(question.clone()),
+        None => None,
+    };
+    let text = [record.answer.clone(), summary]
+        .into_iter()
+        .flatten()
+        .map(|text| text.trim().to_string())
+        .find(|text| !text.is_empty())
+        .unwrap_or_else(|| {
+            match status {
+                MessageRunStatus::Cancelled => "Stopped before finishing.",
+                MessageRunStatus::Drafted => "Drafted changes for review.",
+                MessageRunStatus::NeedsClarification => "Asked a question.",
+                MessageRunStatus::CannotComplete => "Couldn't complete this request.",
+                MessageRunStatus::Answered => "Answered.",
+                MessageRunStatus::Failed => "The assistant couldn't run this request.",
+            }
+            .to_string()
+        });
+    (clip_reply(&text), status)
+}
+
+fn clip_reply(text: &str) -> String {
+    const MAX_REPLY_CHARS: usize = 8_000;
+    if text.chars().count() <= MAX_REPLY_CHARS {
+        return text.to_string();
+    }
+    let cut: String = text.chars().take(MAX_REPLY_CHARS - 1).collect();
+    format!("{cut}…")
 }
 
 /// Saves a finished run in the run history: the run, every step, and the drafts it offers for
@@ -973,6 +1054,29 @@ impl AssistantRuntime {
             }
         }
         record
+    }
+
+    /// Drops the runs kept from a deleted conversation, and any changes of theirs still
+    /// waiting for review, so nothing from it stays on screen.
+    pub fn forget_thread(&self, thread_id: &str) {
+        let mut forgotten = Vec::new();
+        if let Ok(mut runs) = self.runs.lock() {
+            runs.retain(|run| {
+                let keep = run.thread_id.as_deref() != Some(thread_id);
+                if !keep {
+                    forgotten.push(run.run_key.clone());
+                }
+                keep
+            });
+        }
+        if let Ok(mut slot) = self.pending.lock() {
+            if slot
+                .as_ref()
+                .is_some_and(|pending| forgotten.contains(&pending.run_key))
+            {
+                *slot = None;
+            }
+        }
     }
 
     /// Recent runs, newest first. Changes that expired since are shown as expired.

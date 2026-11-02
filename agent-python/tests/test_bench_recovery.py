@@ -77,7 +77,8 @@ class NaiveModel:
         if self.lookups:
             return self.lookups.pop(0)
         status = self.result["status"]
-        if status == "drafted":
+        if status == "drafted" or self.result.get("drafts"):
+            # A run that only suggests remembering something answers with remember drafts (milestone M2).
             self.last_drafts = self.result["drafts"]
             return self.draft_step(messages, self.last_drafts, refresh=False)
         if status == "answered":

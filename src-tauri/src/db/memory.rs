@@ -265,6 +265,11 @@ impl PlannerDatabase {
         read_settings(&self.connection)
     }
 
+    /// Whether `id` names a project, as opposed to a task, event or any other record.
+    pub fn is_plan(&self, id: &str) -> AppResult<bool> {
+        Ok(super::planning::ensure_plan_exists(&self.connection, id).is_ok())
+    }
+
     pub fn update_memory_settings(
         &mut self,
         update: UpdateMemorySettings,

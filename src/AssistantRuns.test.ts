@@ -16,6 +16,7 @@ function run(overrides: Partial<AgentRun> = {}): AgentRun {
     runKey: "key-1",
     runId: "run-1",
     storedRunId: null,
+    threadId: null,
     architecture: "A1",
     goal: "What's due this week?",
     startedAt: "2026-11-02T15:00:00.000Z",
@@ -41,6 +42,7 @@ function run(overrides: Partial<AgentRun> = {}): AgentRun {
     draftCheck: null,
     review: { state: "none" },
     proposal: null,
+    memorySuggestions: [],
     trace: [
       {
         runId: "run-1",
@@ -86,11 +88,16 @@ describe("agent runs", () => {
     const measures = runMeasures(
       run({
         status: "drafted",
-        draftCheck: { drafted: 2, passed: 1, problems: ["stale revision"] },
+        draftCheck: {
+          drafted: 2,
+          passed: 1,
+          problems: ["stale revision"],
+          memoryProblems: [],
+        },
       }),
     );
     expect(measures.find((m) => m.label === "Safety check")?.value).toBe(
-      "1 of 2 changes passed",
+      "1 of 2 drafts passed",
     );
   });
 

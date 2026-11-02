@@ -17,7 +17,8 @@ re-validates everything against live data before the person is ever asked to app
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from .types import Draft
@@ -112,6 +113,11 @@ OP_SPECS: dict[str, dict[str, tuple[str, bool]]] = {
     "delete_task": {},
     "create_workstream": {"plan": ("record_ref", True), "name": ("str", True)},
     "set_task_workstream": {"workstream": ("record_ref", False)},
+    "create_task_block": {
+        "startAtUtc": ("utc", True),
+        "timeZone": ("tz", True),
+        "durationMinutes": ("int", True),
+    },
 }
 
 # Operations on an existing record, and the Rust field that carries the record's id.
@@ -128,16 +134,36 @@ TARGET_ID_FIELDS: dict[str, str] = {
     "set_task_plan": _TASK,
     "delete_task": _TASK,
     "set_task_workstream": _TASK,
+    "create_task_block": _TASK,
 }
 TARGETED_OPS = frozenset(TARGET_ID_FIELDS)
 CREATE_OPS = frozenset(OP_SPECS) - TARGETED_OPS
+# The planner's own operations (each a `MutationOperation` variant).
 ALLOWED_OPS = frozenset(OP_SPECS)
+
+# "Remember this?": a memory the person is asked to approve (milestone M2). It is not a planner
+# change: Rust offers it on its own and stores it in memory only if the person says yes. `basis`
+# says who it comes from: "stated" when the person said it, "inferred" when it is the agent's own
+# conclusion (stored as an unconfirmed guess that expires).
+MEMORY_OP_SPECS: dict[str, dict[str, tuple[str, bool]]] = {
+    "remember": {
+        "kind": ("memory_kind", True),
+        "content": ("memory_text", True),
+        "basis": ("memory_basis", True),
+        "planId": ("plan_id", False),
+    },
+}
+MAX_MEMORY_CHARS = 500
+# Every op a draft may use.
+DRAFT_OPS = ALLOWED_OPS | frozenset(MEMORY_OP_SPECS)
 
 ENUMS: dict[str, tuple[str, ...]] = {
     "plan_status": ("planning", "active", "on_hold", "complete", "cancelled"),
     "milestone_status": ("pending", "complete", "skipped"),
     "task_status": ("todo", "in_progress", "blocked", "done"),
     "task_priority": ("low", "normal", "high", "critical"),
+    "memory_kind": ("decision", "priority", "project_fact", "open_problem", "preference", "note"),
+    "memory_basis": ("stated", "inferred"),
 }
 
 # How each value type is written, for the prompt and for error messages.
@@ -152,6 +178,8 @@ TYPE_HELP: dict[str, str] = {
     "reminder_change": '{"action": "unchanged"} | {"action": "clear"} | {"action": "set", "minutesBefore": N}',
     "day_change": '{"action": "unchanged"} | {"action": "clear"} | {"action": "set", "day": "YYYY-MM-DD"}',
     "estimate_change": '{"action": "unchanged"} | {"action": "clear"} | {"action": "set", "minutes": N}',
+    "memory_text": f"one short sentence, at most {MAX_MEMORY_CHARS} characters",
+    "plan_id": "a plan id from a tool result",
     **{name: " | ".join(f'"{v}"' for v in values) for name, values in ENUMS.items()},
 }
 
@@ -210,13 +238,19 @@ _CHECKS: dict[str, Callable[[Any], bool]] = {
     "reminder_change": lambda v: _tagged(v, {"minutesBefore": _is_int}),
     "day_change": lambda v: _tagged(v, {"day": lambda d: isinstance(d, str) and bool(_DATE.match(d))}),
     "estimate_change": lambda v: _tagged(v, {"minutes": _is_int}),
+    "memory_text": lambda v: _nonempty_str(v) and len(v.strip()) <= MAX_MEMORY_CHARS,
+    "plan_id": _nonempty_str,
     **{name: _one_of(allowed) for name, allowed in ENUMS.items()},
 }
 
 
+def _spec(op: str) -> dict[str, tuple[str, bool]]:
+    return OP_SPECS[op] if op in OP_SPECS else MEMORY_OP_SPECS[op]
+
+
 def payload_help(op: str) -> str:
     """One line describing an op's payload, for the prompt."""
-    spec = OP_SPECS[op]
+    spec = _spec(op)
     target = f" target {TARGET_ID_FIELDS[op][:-2]}" if op in TARGETED_OPS else " target null"
     if not spec:
         return f"- {op} ({target.strip()}): payload {{}}"
@@ -284,7 +318,7 @@ def observed_references(tool_data: Iterable[Any]) -> set[str]:
 
 
 def _check_payload(op: str, payload: dict[str, Any], references: set[str]) -> None:
-    spec = OP_SPECS[op]
+    spec = _spec(op)
     unknown = sorted(set(payload) - set(spec))
     if unknown:
         hint = " (the record id and revision go in target)" if {"expectedRevision", "id"} & set(unknown) else ""
@@ -303,6 +337,8 @@ def _check_payload(op: str, payload: dict[str, Any], references: set[str]) -> No
             raise DraftError(f"{op}: payload.{name} must be {TYPE_HELP[kind]}")
         if kind == "record_ref" and "id" in value and value["id"] not in references:
             raise DraftError(f"{op}: payload.{name} refers to {value['id']}, which no tool result showed")
+        if kind == "plan_id" and value not in references:
+            raise DraftError(f"{op}: payload.{name} refers to {value}, which no tool result showed")
 
 
 def parse_draft(
@@ -313,8 +349,8 @@ def parse_draft(
     if not isinstance(raw, dict):
         raise DraftError("each draft must be an object")
     op = raw.get("op")
-    if op not in ALLOWED_OPS:
-        raise DraftError(f"unsupported op {op!r}; allowed: {', '.join(sorted(ALLOWED_OPS))}")
+    if op not in DRAFT_OPS:
+        raise DraftError(f"unsupported op {op!r}; allowed: {', '.join(sorted(DRAFT_OPS))}")
     payload = raw.get("payload")
     if payload is None:
         payload = {}
@@ -349,12 +385,16 @@ def parse_draft(
         target = None
 
     payload = dict(payload)
-    _check_payload(op, payload, set(records) if references is None else references)
+    # A memory's project must be a record a tool returned (as Rust checks), not just a foreign key.
+    known = set(records) if references is None or op in MEMORY_OP_SPECS else references
+    _check_payload(op, payload, known)
     return Draft(op=op, target=target, payload=payload, evidence=tuple(evidence))
 
 
 def mutation_operation(draft: Draft) -> dict[str, Any]:
     """The exact JSON for Rust's `MutationOperation` (`tag = "type"`, camelCase fields)."""
+    if draft.op not in ALLOWED_OPS:
+        raise DraftError(f"{draft.op} is not a planner change")
     operation: dict[str, Any] = {"type": draft.op}
     if draft.op in TARGETED_OPS:
         assert draft.target is not None
@@ -362,3 +402,88 @@ def mutation_operation(draft: Draft) -> dict[str, Any]:
         operation["expectedRevision"] = draft.target["revision"]
     operation.update({k: v for k, v in draft.payload.items() if v is not None})
     return operation
+
+
+# -- time blocks ----------------------------------------------------------------------------------
+#
+# A time block reserves time on the schedule, so it has to fit time the agent actually saw free:
+# inside a `free` range from get_day_context or get_capacity, and not on top of another block in the
+# same set of drafts. Rust checks planner events and other blocks again when the person applies it;
+# read-only calendar busy time is only visible here, through those free ranges.
+
+MIN_BLOCK_MINUTES = 5
+MAX_BLOCK_MINUTES = 1440
+
+
+def _instant(value: Any) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        moment = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return moment.astimezone(UTC) if moment.tzinfo else None
+
+
+def _collect_free(value: Any, out: list[tuple[datetime, datetime]]) -> None:
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if key == "free" and isinstance(child, list):
+                for item in child:
+                    if isinstance(item, dict):
+                        start, end = _instant(item.get("startAtUtc")), _instant(item.get("endAtUtc"))
+                        if start and end and end > start:
+                            out.append((start, end))
+            else:
+                _collect_free(child, out)
+    elif isinstance(value, list):
+        for child in value:
+            _collect_free(child, out)
+
+
+def observed_free_ranges(tool_data: Iterable[Any]) -> list[tuple[datetime, datetime]]:
+    """Every free time range any tool result reported, in UTC. Rust checks the schedule again when
+    the person applies the block, so time that filled up since the read is still caught."""
+    ranges: list[tuple[datetime, datetime]] = []
+    for data in tool_data:
+        _collect_free(data, ranges)
+    return sorted(set(ranges))
+
+
+def _utc_label(moment: datetime) -> str:
+    return moment.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def check_time_blocks(drafts: Sequence[Draft], tool_data: Iterable[Any]) -> None:
+    """Raise `DraftError` when a create_task_block draft doesn't fit observed free time."""
+    blocks = [d for d in drafts if d.op == "create_task_block"]
+    if not blocks:
+        return
+    free = observed_free_ranges(tool_data)
+    if not free:
+        raise DraftError(
+            "create_task_block: look up the free time first (get_day_context for that day), "
+            "then place blocks inside a free range"
+        )
+    windows: list[tuple[datetime, datetime, str]] = []
+    for draft in blocks:
+        start = _instant(draft.payload.get("startAtUtc"))
+        minutes = draft.payload.get("durationMinutes")
+        task = (draft.target or {}).get("id", "?")
+        if start is None or not _is_int(minutes):
+            raise DraftError("create_task_block: startAtUtc and durationMinutes are required")
+        if not MIN_BLOCK_MINUTES <= minutes <= MAX_BLOCK_MINUTES:
+            raise DraftError(f"create_task_block: durationMinutes must be {MIN_BLOCK_MINUTES} to {MAX_BLOCK_MINUTES}")
+        end = start + timedelta(minutes=minutes)
+        if not any(fs <= start and end <= fe for fs, fe in free):
+            same_day = [r for r in free if r[0].date() == start.date() or r[1].date() == start.date()] or free
+            options = ", ".join(f"{_utc_label(s)} to {_utc_label(e)}" for s, e in same_day[:6])
+            raise DraftError(
+                f"create_task_block for {task}: {_utc_label(start)} to {_utc_label(end)} is not inside "
+                f"any free range the tools returned. Free ranges (UTC): {options}"
+            )
+        windows.append((start, end, task))
+    windows.sort()
+    for (_, first_end, first), (second_start, _, second) in zip(windows, windows[1:], strict=False):
+        if second_start < first_end:
+            raise DraftError(f"create_task_block: the blocks for {first} and {second} overlap")

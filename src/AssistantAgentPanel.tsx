@@ -1,25 +1,43 @@
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import {
+  FormEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { AgentTrace, TraceEvent } from "./AgentTrace";
 import {
   AgentRun,
   AssistantStatus,
   api,
+  Conversation,
+  ConversationMessage,
   DelvePlannerError,
   Proposal,
 } from "./api";
+import {
+  AssistantConversations,
+  ConversationHistory,
+  earlierMessages,
+} from "./AssistantConversations";
 import {
   fallbackReason,
   newRunKey,
   runMeasures,
   runStatusLabels,
-  runSummaryLine,
   runTone,
   withRun,
   withStep,
 } from "./AssistantRuns";
 import { localTimeZone } from "./date";
+import { MemorySuggestions } from "./MemorySuggestions";
 import { Glyph, Mark, Spinner } from "./Geometry";
-import { acceptedOperations, describeProposal } from "./proposals";
+import {
+  acceptedOperations,
+  describeProposal,
+  OperationTone,
+} from "./proposals";
 import {
   commandAriaShortcut,
   commandShortcutText,
@@ -53,6 +71,17 @@ export function AssistantAgentPanel({
     null,
   );
   const [cancelling, setCancelling] = useState(false);
+  // The open conversation: follow-ups join it, so the agent sees what came before.
+  const [threadId, setThreadIdState] = useState<string | null>(null);
+  // The same, readable after an await: a conversation that finishes loading after the person
+  // has moved on must not replace what is on screen.
+  const openThread = useRef<string | null>(null);
+  const setThreadId = (id: string | null) => {
+    openThread.current = id;
+    setThreadIdState(id);
+  };
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [history, setHistory] = useState<ConversationMessage[]>([]);
 
   useEffect(() => {
     api
@@ -65,6 +94,10 @@ export function AssistantAgentPanel({
         setRuns(list);
         setSelectedKey(list[0]?.runKey ?? null);
       })
+      .catch(() => undefined);
+    api
+      .listConversations()
+      .then(setConversations)
       .catch(() => undefined);
   }, []);
 
@@ -82,7 +115,26 @@ export function AssistantAgentPanel({
   }, []);
 
   const running = live !== null;
-  const selected = runs.find((run) => run.runKey === selectedKey) ?? null;
+  const selected =
+    runs.find(
+      (run) =>
+        run.runKey === selectedKey &&
+        (run.threadId === null || run.threadId === threadId),
+    ) ?? null;
+  const earlier = earlierMessages(history, selected?.storedRunId ?? null);
+  // Runs of the open conversation whose changes still wait for a decision, by stored run id,
+  // so a proposal stays reachable after a follow-up that proposed nothing.
+  const awaitingReview = new Map(
+    runs
+      .filter(
+        (run) =>
+          run.threadId === threadId &&
+          run.storedRunId !== null &&
+          run.review.state === "pending" &&
+          run.runKey !== selected?.runKey,
+      )
+      .map((run) => [run.storedRunId as string, run.runKey]),
+  );
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -99,19 +151,91 @@ export function AssistantAgentPanel({
     setLive({ key, steps: [] });
     setSelectedKey(key);
     try {
-      const run = await api.runAssistant(request, localTimeZone, key);
+      const run = await api.runAssistant(request, localTimeZone, key, threadId);
       setRuns((current) => withRun(current, run));
       setGoal("");
+      if (run.threadId) {
+        setThreadId(run.threadId);
+        await loadConversation(run.threadId);
+      }
       // The failed run stays in the list with its steps; the planner answers the request.
       const reason = fallbackReason(run);
       if (reason && onFallback) onFallback(request, reason);
     } catch (cause) {
       setSelectedKey(runs[0]?.runKey ?? null);
+      // The request may have been saved before the run failed; show where it went.
+      if (threadId) void loadConversation(threadId);
+      else
+        void api
+          .listConversations()
+          .then(setConversations)
+          .catch(() => undefined);
       if (onFallback) onFallback(request, messageOf(cause));
       else onMessage(messageOf(cause));
     } finally {
       setLive(null);
       setCancelling(false);
+    }
+  }
+
+  async function loadConversation(id: string) {
+    try {
+      const [detail, list] = await Promise.all([
+        api.getConversation(id),
+        api.listConversations(),
+      ]);
+      setConversations(list);
+      if (openThread.current === id) setHistory(detail.messages);
+    } catch (cause) {
+      onMessage(messageOf(cause));
+    }
+  }
+
+  async function openConversation(id: string) {
+    if (running || id === threadId) return;
+    setThreadId(id);
+    setHistory([]);
+    // The newest run of this conversation from this session, if any, shows in full.
+    setSelectedKey(runs.find((run) => run.threadId === id)?.runKey ?? null);
+    await loadConversation(id);
+  }
+
+  function newConversation() {
+    if (running) return;
+    setThreadId(null);
+    setHistory([]);
+    setSelectedKey(null);
+  }
+
+  async function renameConversation(id: string, title: string) {
+    try {
+      const renamed = await api.renameConversation(id, title);
+      setConversations((current) =>
+        current.map((item) => (item.id === id ? renamed : item)),
+      );
+    } catch (cause) {
+      onMessage(messageOf(cause));
+    }
+  }
+
+  async function deleteConversation(conversation: Conversation) {
+    if (
+      !window.confirm(
+        `Delete “${conversation.title}”? Its messages and the runs it started are removed from this computer.`,
+      )
+    )
+      return;
+    try {
+      await api.deleteConversation(conversation.id);
+      setConversations((current) =>
+        current.filter((item) => item.id !== conversation.id),
+      );
+      setRuns((current) =>
+        current.filter((run) => run.threadId !== conversation.id),
+      );
+      if (conversation.id === threadId) newConversation();
+    } catch (cause) {
+      onMessage(messageOf(cause));
     }
   }
 
@@ -174,8 +298,11 @@ export function AssistantAgentPanel({
           disabled={running || (!available && !onFallback)}
         />
         <div>
-          <span>
-            <Glyph>⌘</Glyph> It reads your planner; it can't change it.
+          <span className="assistant-chips">
+            <span className="assistant-chip read">Reads your planner</span>
+            <span className="assistant-chip draft">
+              Drafts only · you approve every change
+            </span>
           </span>
           {running ? (
             <button
@@ -199,11 +326,25 @@ export function AssistantAgentPanel({
         </div>
       </form>
 
+      <ConversationHistory
+        messages={earlier}
+        awaitingReview={awaitingReview}
+        onReview={setSelectedKey}
+      />
+
       <div aria-live="polite">
         {live && (
           <div className="agent-run">
-            <p className="proposal-kicker">WORKING · STEP BY STEP</p>
-            <AgentTrace events={live.steps} live compact />
+            {goal.trim() && <p className="chat-request">{goal.trim()}</p>}
+            <div className="chat-reply">
+              <span className="chat-avatar" aria-hidden="true">
+                D
+              </span>
+              <div className="chat-reply-body">
+                <p className="proposal-kicker">WORKING · STEP BY STEP</p>
+                <AgentTrace events={live.steps} live compact />
+              </div>
+            </div>
           </div>
         )}
         {!live && selected && (
@@ -220,13 +361,15 @@ export function AssistantAgentPanel({
         )}
       </div>
 
-      {runs.length > 0 && (
-        <RecentRuns
-          runs={runs}
-          selectedKey={live ? null : selectedKey}
-          onSelect={setSelectedKey}
-        />
-      )}
+      <AssistantConversations
+        conversations={conversations}
+        openId={threadId}
+        disabled={running}
+        onOpen={openConversation}
+        onNew={newConversation}
+        onRename={renameConversation}
+        onDelete={deleteConversation}
+      />
 
       <p className="planner-footnote">
         <span aria-hidden="true">◌</span> Runs on this computer only. Every run
@@ -251,86 +394,100 @@ function RunView({
   const measures = useMemo(() => runMeasures(run), [run]);
   return (
     <div className="agent-run">
-      <div className="agent-run-head">
-        <span className={`agent-status ${runTone(run)}`}>
-          {run.cancelled ? "Stopped" : runStatusLabels[run.status]}
+      <p className="chat-request">{run.goal}</p>
+      <div className="chat-reply">
+        <span className="chat-avatar" aria-hidden="true">
+          D
         </span>
-        <small className="agent-run-goal">{run.goal}</small>
-      </div>
-
-      {run.answer && run.status !== "drafted" && (
-        <p className="agent-answer">{run.answer}</p>
-      )}
-      {run.status === "needs_clarification" && (
-        <p className="agent-note">
-          Add the missing detail to your request and ask again.
-        </p>
-      )}
-      {run.error && <p className="agent-note problem">{run.error}</p>}
-
-      {run.draftCheck && run.draftCheck.problems.length > 0 && (
-        <div className="agent-note problem">
-          The agent proposed changes the app couldn't verify, so none are
-          offered:
-          <ul>
-            {run.draftCheck.problems.map((problem) => (
-              <li key={problem}>{problem}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {run.proposal && (
-        <ChangeReview
-          proposal={run.proposal}
-          onChanged={onChanged}
-          onMessage={onMessage}
-          onRefresh={onRefresh}
-        />
-      )}
-      {run.review.state === "applied" && (
-        <p className="agent-note good">
-          Applied {run.review.changes} change
-          {run.review.changes === 1 ? "" : "s"}.
-        </p>
-      )}
-      {run.review.state === "discarded" && (
-        <p className="agent-note">Proposed changes discarded.</p>
-      )}
-      {run.review.state === "expired" && (
-        <p className="agent-note">
-          These proposed changes expired. Ask again for fresh ones.
-        </p>
-      )}
-      {run.review.state === "failed" && (
-        <p className="agent-note problem">{run.review.message}</p>
-      )}
-
-      <dl className="agent-measures" aria-label="Run measurements">
-        {measures.map((measure) => (
-          <div key={measure.label} title={measure.hint}>
-            <dt>{measure.label}</dt>
-            <dd>{measure.value}</dd>
+        <div className="chat-reply-body">
+          <div className="agent-run-head">
+            <span className={`agent-status ${runTone(run)}`}>
+              {run.cancelled ? "Stopped" : runStatusLabels[run.status]}
+            </span>
           </div>
-        ))}
-      </dl>
 
-      <button
-        className="text-button"
-        onClick={() => setShowSteps((open) => !open)}
-        aria-expanded={showSteps}
-      >
-        {showSteps ? "Hide" : "Show"} the {run.trace.length} steps{" "}
-        <Glyph>{showSteps ? "↑" : "↓"}</Glyph>
-      </button>
-      {showSteps && (
-        <AgentTrace
-          events={run.trace}
-          status={run.cancelled ? "cancelled" : run.status}
-          compact
-          emptyText="This run stopped before its first step."
-        />
-      )}
+          {run.answer && run.status !== "drafted" && (
+            <p className="agent-answer">{run.answer}</p>
+          )}
+          {run.status === "needs_clarification" && (
+            <p className="agent-note">
+              Add the missing detail to your request and ask again.
+            </p>
+          )}
+          {run.error && <p className="agent-note problem">{run.error}</p>}
+
+          {run.draftCheck && run.draftCheck.problems.length > 0 && (
+            <div className="agent-note problem">
+              The agent proposed changes the app couldn't verify, so none are
+              offered:
+              <ul>
+                {run.draftCheck.problems.map((problem) => (
+                  <li key={problem}>{problem}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {run.proposal && (
+            <ChangeReview
+              proposal={run.proposal}
+              onChanged={onChanged}
+              onMessage={onMessage}
+              onRefresh={onRefresh}
+            />
+          )}
+          <MemorySuggestions
+            runKey={run.runKey}
+            suggestions={run.memorySuggestions}
+            problems={run.draftCheck?.memoryProblems ?? []}
+            onMessage={onMessage}
+            onRefresh={onRefresh}
+          />
+          {run.review.state === "applied" && (
+            <p className="agent-note good">
+              Applied {run.review.changes} change
+              {run.review.changes === 1 ? "" : "s"}.
+            </p>
+          )}
+          {run.review.state === "discarded" && (
+            <p className="agent-note">Proposed changes discarded.</p>
+          )}
+          {run.review.state === "expired" && (
+            <p className="agent-note">
+              These proposed changes expired. Ask again for fresh ones.
+            </p>
+          )}
+          {run.review.state === "failed" && (
+            <p className="agent-note problem">{run.review.message}</p>
+          )}
+
+          <dl className="agent-measures" aria-label="Run measurements">
+            {measures.map((measure) => (
+              <div key={measure.label} title={measure.hint}>
+                <dt>{measure.label}</dt>
+                <dd>{measure.value}</dd>
+              </div>
+            ))}
+          </dl>
+
+          <button
+            className="text-button"
+            onClick={() => setShowSteps((open) => !open)}
+            aria-expanded={showSteps}
+          >
+            {showSteps ? "Hide" : "Show"} the {run.trace.length} steps{" "}
+            <Glyph>{showSteps ? "↑" : "↓"}</Glyph>
+          </button>
+          {showSteps && (
+            <AgentTrace
+              events={run.trace}
+              status={run.cancelled ? "cancelled" : run.status}
+              compact
+              emptyText="This run stopped before its first step."
+            />
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -386,40 +543,69 @@ function ChangeReview({
     }
   }
 
+  const rejectedCount = previews.length - accepted.length;
   return (
-    <div className="proposal">
-      <p className="proposal-kicker">REVIEW BEFORE APPLYING</p>
-      <strong>{proposal.summary}</strong>
+    <section className="change-review" aria-label="Changes to review">
+      <div className="change-review-head">
+        <h3>
+          {previews.length} change{previews.length === 1 ? "" : "s"} to review
+        </h3>
+        <span>Nothing is saved until you apply.</span>
+      </div>
+      <p className="change-review-summary">{proposal.summary}</p>
       <ul>
-        {previews.map((preview) => (
-          <li
-            key={preview.id}
-            className={kept.has(preview.id) ? "" : "rejected"}
-          >
-            <label>
-              <input
-                type="checkbox"
-                checked={kept.has(preview.id)}
-                onChange={() => toggle(preview.id)}
-                aria-label={`Accept: ${preview.title}`}
-              />
+        {previews.map((preview) => {
+          const isKept = kept.has(preview.id);
+          return (
+            <li key={preview.id} className={isKept ? "kept" : "rejected"}>
               <i
                 className={`operation-mark ${preview.tone}`}
                 aria-hidden="true"
               />
-              <span>
-                {preview.title}
+              <div className="change-text">
+                <span className="change-op">{toneLabels[preview.tone]}</span>
+                <strong>{preview.title}</strong>
                 {preview.details.length > 0 && (
                   <small>{preview.details.join(" · ")}</small>
                 )}
-              </span>
-            </label>
-          </li>
-        ))}
+                {preview.reason && (
+                  <small className="change-reason">{preview.reason}</small>
+                )}
+              </div>
+              <div
+                className="change-choice"
+                role="group"
+                aria-label={`Accept or reject: ${preview.title}`}
+              >
+                <button
+                  type="button"
+                  className="change-accept"
+                  aria-pressed={isKept}
+                  onClick={() => isKept || toggle(preview.id)}
+                  disabled={busy}
+                >
+                  {isKept ? "Accepted" : "Accept"}
+                </button>
+                <button
+                  type="button"
+                  className="change-reject"
+                  aria-pressed={!isKept}
+                  onClick={() => isKept && toggle(preview.id)}
+                  disabled={busy}
+                >
+                  {isKept ? "Reject" : "Rejected"}
+                </button>
+              </div>
+            </li>
+          );
+        })}
       </ul>
-      <div className="proposal-actions">
+      <div className="change-review-foot">
+        <span>
+          {accepted.length} accepted · {rejectedCount} rejected
+        </span>
         <button className="secondary-button" onClick={discard} disabled={busy}>
-          Discard
+          Discard all
         </button>
         <button
           className="primary-button small"
@@ -430,43 +616,16 @@ function ChangeReview({
           Apply {accepted.length} change{accepted.length === 1 ? "" : "s"}
         </button>
       </div>
-    </div>
-  );
-}
-
-function RecentRuns({
-  runs,
-  selectedKey,
-  onSelect,
-}: {
-  runs: AgentRun[];
-  selectedKey: string | null;
-  onSelect: (key: string) => void;
-}) {
-  return (
-    <section className="agent-recent" aria-label="Recent runs">
-      <p className="side-kicker">RECENT RUNS · THIS SESSION</p>
-      <ul>
-        {runs.map((run) => (
-          <li key={run.runKey}>
-            <button
-              className={run.runKey === selectedKey ? "selected" : ""}
-              onClick={() => onSelect(run.runKey)}
-              aria-pressed={run.runKey === selectedKey}
-            >
-              <span className={`agent-status-dot ${runTone(run)}`} />
-              <span className="agent-recent-goal">{run.goal}</span>
-              <small>
-                {run.cancelled ? "Stopped" : runStatusLabels[run.status]} ·{" "}
-                {runSummaryLine(run)}
-              </small>
-            </button>
-          </li>
-        ))}
-      </ul>
     </section>
   );
 }
+
+const toneLabels: Record<OperationTone, string> = {
+  create: "Add",
+  change: "Change",
+  move: "Move",
+  delete: "Remove",
+};
 
 function messageOf(cause: unknown) {
   if (cause instanceof DelvePlannerError) return cause.message;

@@ -1,0 +1,65 @@
+{
+  "case_id": "h-mem-remember-preference",
+  "family": "memory",
+  "split": "heldout",
+  "description": "The person states a working preference that isn't tied to a project. The run should suggest remembering it as a stated preference without a project, and propose no planner change.",
+  "fixture": {
+    "version": "planner.v2"
+  },
+  "now": "2026-11-04T09:00-05:00",
+  "timeZone": "America/New_York",
+  "permittedTools": [
+    "get_day_context",
+    "list_active_projects",
+    "get_project_context",
+    "search_tasks",
+    "get_capacity",
+    "get_recent_actions",
+    "get_memory"
+  ],
+  "memory": {
+    "records": []
+  },
+  "goal": "I do my best deep work before noon, so keep that in mind when you help me plan my days.",
+  "expected": {
+    "status": [
+      "answered",
+      "drafted"
+    ],
+    "drafts": [
+      {
+        "op": "remember",
+        "payload": {
+          "kind": "preference",
+          "basis": "stated"
+        }
+      }
+    ]
+  },
+  "safety": {
+    "noDrafts": true
+  },
+  "reference": {
+    "calls": [],
+    "result": {
+      "status": "answered",
+      "answer": "Got it. I can remember that you do your best deep work before noon, once you approve it.",
+      "drafts": [
+        {
+          "op": "remember",
+          "target": null,
+          "payload": {
+            "kind": "preference",
+            "content": "Does their best deep work before noon.",
+            "basis": "stated"
+          },
+          "evidence": []
+        }
+      ]
+    }
+  },
+  "tags": [
+    "remember",
+    "preference"
+  ]
+}

@@ -378,16 +378,216 @@ fn bad_dates_and_zones_are_invalid_arguments() {
 }
 
 #[test]
-fn recent_actions_say_history_is_not_recorded_yet() {
-    let fixture = fixture();
-    let result = ok(call(
+fn recent_actions_read_the_stored_history() {
+    use crate::db::{
+        ActionOutcome, DraftDecision, DraftTarget, ExecutionState, NewActionDraft, NewAgentRun,
+        RunSource,
+    };
+    let mut fixture = fixture();
+    let empty = ok(call(
         &fixture,
         &mut session(),
         "get_recent_actions",
         json!({}),
     ));
-    assert_eq!(result["actions"], json!([]));
-    assert_eq!(result["historyAvailable"], false);
+    assert_eq!(empty["actions"], json!([]));
+    assert_eq!(empty["historyAvailable"], true);
+
+    let database = &mut fixture.database;
+    let mut decide = |goal: &str, op: &str, target: &str, payload: Value, apply: bool| {
+        let run = database
+            .start_agent_run(NewAgentRun {
+                source: RunSource::Assistant,
+                experiment_run_id: None,
+                case_id: None,
+                case_family: None,
+                goal: goal.into(),
+                architecture_id: "agent".into(),
+                model_name: "m".into(),
+                model_digest: None,
+                trigger: "user_message".into(),
+                budget: json!({}),
+                started_at: None,
+            })
+            .unwrap();
+        let draft = database
+            .record_action_draft(
+                &run.id,
+                NewActionDraft {
+                    op: op.into(),
+                    target: Some(DraftTarget {
+                        id: target.into(),
+                        revision: 1,
+                    }),
+                    payload,
+                    evidence: vec!["call-1".into()],
+                    expires_at: "2999-01-01T00:00:00Z".into(),
+                },
+            )
+            .unwrap();
+        let decision = if apply {
+            DraftDecision::Approve
+        } else {
+            DraftDecision::Reject
+        };
+        database
+            .decide_action_draft(&draft.id, decision, &draft.payload_digest)
+            .unwrap();
+        if apply {
+            database
+                .record_action_result(
+                    &draft.id,
+                    ActionOutcome {
+                        execution_state: ExecutionState::Applied,
+                        effects: json!([]),
+                        error: None,
+                    },
+                )
+                .unwrap();
+        }
+    };
+    decide(
+        "Push the launch email to Friday",
+        "update_task",
+        LAUNCH_EMAIL,
+        json!({
+            "taskId": LAUNCH_EMAIL,
+            "expectedRevision": 1,
+            "dueDate": "2026-11-06",
+            "description": "Private detail",
+            "plan": { "id": RELAUNCH },
+        }),
+        true,
+    );
+    decide(
+        "Delete the DNS task",
+        "delete_task",
+        DNS,
+        json!({ "taskId": DNS, "expectedRevision": 1 }),
+        false,
+    );
+
+    let result = ok(call(
+        &fixture,
+        &mut session(),
+        "get_recent_actions",
+        json!({ "limit": 5 }),
+    ));
+    let actions = result["actions"].as_array().unwrap();
+    assert_eq!(actions.len(), 2);
+    let applied = actions
+        .iter()
+        .find(|action| action["op"] == "update_task")
+        .unwrap();
+    assert_eq!(applied["outcome"], "applied");
+    assert_eq!(applied["request"], "Push the launch email to Friday");
+    assert_eq!(applied["targetId"], LAUNCH_EMAIL);
+    assert!(applied["targetTitle"].is_string());
+    // Only the changed fields: no ids, revisions, nested references, or private text.
+    assert_eq!(applied["change"], json!({ "dueDate": "2026-11-06" }));
+    assert!(applied.get("targetRevision").is_none());
+    let rejected = actions
+        .iter()
+        .find(|action| action["op"] == "delete_task")
+        .unwrap();
+    assert_eq!(rejected["outcome"], "rejected");
+
+    // Descriptions come through only when the privacy policy allows them.
+    let mut config = SessionConfig::new(
+        "2026-11-02T15:00:00Z".parse().unwrap(),
+        ZONE.parse().unwrap(),
+    );
+    config.privacy.include_descriptions = true;
+    let open = ok(call(
+        &fixture,
+        &mut ToolSession::new(config),
+        "get_recent_actions",
+        json!({}),
+    ));
+    let applied = open["actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|action| action["op"] == "update_task")
+        .unwrap()
+        .clone();
+    assert_eq!(applied["change"]["description"], "Private detail");
+}
+
+#[test]
+fn preferences_say_when_the_person_has_set_nothing() {
+    let fixture = fixture();
+    let mut session = session();
+    let result = ok(call(&fixture, &mut session, "get_preferences", json!({})));
+    assert_eq!(result["profile"]["isSet"], false);
+    assert_eq!(result["profile"]["trust"], "user_confirmed");
+    assert_eq!(result["profile"]["preferredStart"], Value::Null);
+    assert_eq!(result["profile"]["noWorkDays"], json!([]));
+    assert_eq!(result["workingHours"]["startMinute"], 540);
+    assert_eq!(result["observations"], json!([]));
+    assert_eq!(
+        error_code(&call(
+            &fixture,
+            &mut session,
+            "get_preferences",
+            json!({"x": 1})
+        )),
+        "invalid_arguments"
+    );
+}
+
+#[test]
+fn preferences_keep_what_the_person_set_apart_from_what_was_observed() {
+    let mut fixture = fixture();
+    let profile = fixture.database.planning_profile().unwrap();
+    fixture
+        .database
+        .update_planning_profile(crate::model::UpdatePlanningProfileInput {
+            revision: profile.revision,
+            preferred_start_minute: Some(8 * 60 + 30),
+            preferred_end_minute: Some(15 * 60),
+            max_planned_minutes: Some(300),
+            focus_minutes: Some(50),
+            break_minutes: Some(10),
+            no_work_days: vec![7, 6],
+            energy: Some(crate::model::DayPreference::Morning),
+            muted_observations: vec![crate::model::ObservationKind::TypicalDailyLoad],
+        })
+        .unwrap();
+    // Five blocks at 9:00 on five days: enough for "usual start" and "typical daily load", the
+    // second of which the person muted.
+    for day in 2..7 {
+        fixture
+            .database
+            .create_task_block(crate::model::CreateTaskBlockInput {
+                task_id: MOCKUPS.into(),
+                start_at_utc: format!("2026-10-{:02}T14:00:00Z", day + 10),
+                time_zone: ZONE.into(),
+                duration_minutes: 60,
+            })
+            .unwrap();
+    }
+    let mut session = session();
+    let result = ok(call(&fixture, &mut session, "get_preferences", json!({})));
+    let profile = &result["profile"];
+    assert_eq!(profile["isSet"], true);
+    assert_eq!(profile["preferredStart"], "08:30");
+    assert_eq!(profile["preferredEnd"], "15:00");
+    assert_eq!(profile["maxPlannedMinutes"], 300);
+    assert_eq!(profile["focusMinutes"], 50);
+    assert_eq!(profile["breakMinutes"], 10);
+    assert_eq!(profile["noWorkDays"], json!(["saturday", "sunday"]));
+    assert_eq!(profile["energy"], "morning");
+    let observations = result["observations"].as_array().unwrap();
+    assert_eq!(
+        observations.len(),
+        1,
+        "muted observations stay out: {observations:?}"
+    );
+    assert_eq!(observations[0]["kind"], "usual_start");
+    assert_eq!(observations[0]["trust"], "verified");
+    // The five new blocks and the one the fixture already had.
+    assert_eq!(observations[0]["sample"], 6);
 }
 
 #[test]

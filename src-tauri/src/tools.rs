@@ -8,6 +8,7 @@
 pub mod error;
 pub mod github;
 pub mod memory;
+pub mod preferences;
 pub mod read;
 pub mod registry;
 
@@ -369,12 +370,19 @@ impl ToolSession {
                 encode(read::search_tasks(sources, privacy, parse(arguments)?)?)
             }
             ToolName::GetCapacity => encode(read::get_capacity(sources, parse(arguments)?)?),
-            ToolName::GetRecentActions => encode(read::get_recent_actions(parse(arguments)?)?),
+            ToolName::GetRecentActions => encode(read::get_recent_actions(
+                sources,
+                privacy,
+                parse(arguments)?,
+            )?),
             ToolName::GetMemory => encode(memory::get_memory(
                 sources,
                 self.config.now,
                 parse(arguments)?,
             )?),
+            ToolName::GetPreferences => {
+                encode(preferences::get_preferences(sources, parse(arguments)?)?)
+            }
             ToolName::ListGitHubRepos => encode(github::list_repos(
                 self.connected_github()?,
                 parse(arguments)?,

@@ -296,6 +296,64 @@ fn proposal_id(record: &AgentRunRecord) -> String {
 }
 
 #[test]
+fn a_finished_run_becomes_the_conversations_reply() {
+    let (record, _) = drafted("key-reply");
+    let (text, status) = conversation_reply(&record);
+    assert_eq!(status, MessageRunStatus::Drafted);
+    assert!(!text.is_empty());
+
+    let (answered, _) = finish_run(
+        start(),
+        Ok(outcome(
+            json!({ "status": "answered", "answer": "  Two meetings today.  " }),
+        )),
+        &Observed::default(),
+        Vec::new(),
+        "2026-11-02T15:00:01Z".parse().unwrap(),
+    );
+    assert_eq!(
+        conversation_reply(&answered),
+        (
+            "Two meetings today.".to_string(),
+            MessageRunStatus::Answered
+        )
+    );
+
+    let (stopped, _) = finish_run(
+        start(),
+        Err(SidecarError::Cancelled),
+        &Observed::default(),
+        Vec::new(),
+        "2026-11-02T15:00:01Z".parse().unwrap(),
+    );
+    assert_eq!(
+        conversation_reply(&stopped),
+        (
+            "Stopped before finishing.".to_string(),
+            MessageRunStatus::Cancelled
+        )
+    );
+}
+
+#[test]
+fn deleting_a_conversation_forgets_its_runs_and_pending_changes() {
+    let runtime = runtime();
+    let (mut kept, response) = drafted("key-kept");
+    kept.thread_id = Some("thread-kept".into());
+    runtime.record(kept, response);
+    let (mut gone, response) = drafted("key-gone");
+    gone.thread_id = Some("thread-gone".into());
+    runtime.record(gone, response);
+    assert!(runtime.pending.lock().unwrap().is_some());
+
+    runtime.forget_thread("thread-gone");
+    let keys: Vec<_> = runtime.runs().into_iter().map(|run| run.run_key).collect();
+    assert_eq!(keys, ["key-kept"]);
+    // The newest changes belonged to the deleted conversation, so nothing is left to apply.
+    assert!(runtime.pending.lock().unwrap().is_none());
+}
+
+#[test]
 fn changes_can_be_applied_once_and_newer_changes_replace_older_ones() {
     let runtime = runtime();
     let (record, response) = drafted("first");
@@ -493,6 +551,8 @@ async fn the_python_agent_reads_drafts_and_its_change_applies_through_the_planne
         permitted_tools: permitted_tools(),
         architecture: Some(ARCHITECTURE.into()),
         budget: RunBudget::default(),
+        conversation: Vec::new(),
+        conversation_summary: None,
     };
     let outcome = sidecar
         .run(&request, &host, &CancellationToken::new())
@@ -599,4 +659,285 @@ async fn the_python_agent_reads_drafts_and_its_change_applies_through_the_planne
     let task = &after.result.unwrap()["tasks"][0];
     assert_eq!(task["status"], "done");
     assert_eq!(task["revision"], 2);
+}
+
+// -------------------------------------------------------------------------------------------------
+// "Remember this?"
+
+fn remember(kind: &str, content: &str, basis: &str, plan: Option<&str>) -> Value {
+    let mut payload = json!({ "kind": kind, "content": content, "basis": basis });
+    if let Some(plan) = plan {
+        payload["planId"] = json!(plan);
+    }
+    json!({ "op": "remember", "target": null, "payload": payload, "evidence": [] })
+}
+
+const GRANT: &str = "00000000-0000-4000-8000-0000000000b1";
+
+fn suggested(drafts: Vec<Value>) -> AgentRunRecord {
+    finish_run(
+        RunStart {
+            run_key: "run-memory".into(),
+            ..start()
+        },
+        Ok(outcome(
+            json!({ "status": "drafted", "answer": "Noted.", "drafts": drafts }),
+        )),
+        &observed(),
+        Vec::new(),
+        Utc::now(),
+    )
+    .0
+}
+
+#[test]
+fn remember_drafts_become_suggestions_not_planner_changes() {
+    let record = suggested(vec![
+        remember(
+            "priority",
+            "  Sponsors come before the venue.  ",
+            "stated",
+            Some(GRANT),
+        ),
+        remember("preference", "Probably prefers mornings.", "inferred", None),
+    ]);
+    assert!(
+        record.proposal.is_none(),
+        "a memory is never a planner change"
+    );
+    assert_eq!(record.review, ReviewState::None);
+    let [first, second] = record.memory_suggestions.as_slice() else {
+        panic!("expected two suggestions");
+    };
+    assert_eq!(first.content, "Sponsors come before the venue.");
+    assert_eq!(first.basis, SuggestionBasis::Stated);
+    assert_eq!(first.plan_title.as_deref(), Some("Grant"));
+    assert_eq!(second.basis, SuggestionBasis::Inferred);
+    assert!(record
+        .memory_suggestions
+        .iter()
+        .all(|s| s.state == SuggestionState::Pending));
+    let check = record.draft_check.unwrap();
+    assert_eq!((check.drafted, check.passed), (2, 2));
+}
+
+#[test]
+fn a_bad_remember_draft_is_dropped_without_blocking_planner_changes() {
+    let record = suggested(vec![
+        schedule(
+            json!({ "id": "00000000-0000-4000-8000-0000000000a1", "revision": 4 }),
+            json!(["call-1"]),
+        ),
+        remember(
+            "priority",
+            "Sponsors first.",
+            "stated",
+            Some("00000000-0000-4000-8000-00000000ffff"),
+        ),
+        remember("mood", "Feels tired.", "stated", None),
+        remember("note", "", "stated", None),
+        remember("note", "Something.", "maybe", None),
+        json!({ "op": "remember", "target": { "id": GRANT, "revision": 2 }, "payload": { "kind": "note", "content": "x", "basis": "stated" } }),
+    ]);
+    assert!(record.memory_suggestions.is_empty());
+    assert_eq!(
+        record.review,
+        ReviewState::Pending,
+        "the schedule change is still offered"
+    );
+    let check = record.draft_check.unwrap();
+    assert_eq!((check.drafted, check.passed), (6, 1));
+    assert!(
+        check.problems.is_empty(),
+        "memory problems never hold back planner changes"
+    );
+    assert_eq!(check.memory_problems.len(), 5);
+    assert!(check.memory_problems[0].contains("project no tool returned"));
+}
+
+#[test]
+fn suggestions_are_capped_and_deduplicated() {
+    let record = suggested(vec![
+        remember("note", "One.", "stated", None),
+        remember("note", "one.", "stated", None),
+        remember("note", "Two.", "stated", None),
+        remember("note", "Three.", "stated", None),
+        remember("note", "Four.", "stated", None),
+    ]);
+    let contents: Vec<_> = record
+        .memory_suggestions
+        .iter()
+        .map(|s| s.content.as_str())
+        .collect();
+    assert_eq!(contents, ["One.", "Two.", "Three."]);
+    assert!(record.draft_check.unwrap().memory_problems[0].contains("Four."));
+}
+
+#[test]
+fn the_same_words_for_two_projects_are_two_suggestions() {
+    const TASK: &str = "00000000-0000-4000-8000-0000000000a1";
+    let record = suggested(vec![
+        remember("preference", "Mornings for calls.", "stated", Some(GRANT)),
+        remember("preference", "mornings for calls.", "stated", Some(TASK)),
+        remember("preference", "Mornings for calls.", "stated", Some(GRANT)),
+    ]);
+    assert_eq!(record.memory_suggestions.len(), 2);
+}
+
+#[test]
+fn a_suggestion_naming_a_record_that_isnt_a_project_is_left_out() {
+    // A task id passes "a tool returned it", so the planner decides what is a project.
+    const TASK: &str = "00000000-0000-4000-8000-0000000000a1";
+    let settings = crate::db::MemorySettings {
+        enabled: true,
+        conversation_turns: 6,
+        inferred_ttl_days: 14,
+        disabled_plan_ids: Vec::new(),
+    };
+    let mut record = suggested(vec![
+        remember("priority", "Budget first.", "stated", Some(TASK)),
+        remember("priority", "Sponsors first.", "stated", Some(GRANT)),
+    ]);
+    apply_memory_settings(&mut record, &settings, |id| id == GRANT);
+    assert_eq!(record.memory_suggestions.len(), 1);
+    assert_eq!(record.memory_suggestions[0].plan_id.as_deref(), Some(GRANT));
+    let check = record.draft_check.unwrap();
+    assert!(check.memory_problems[0].contains("isn't a project"));
+    assert!(check.problems.is_empty());
+}
+
+#[test]
+fn memory_settings_decide_which_suggestions_are_offered() {
+    let mut settings = crate::db::MemorySettings {
+        enabled: true,
+        conversation_turns: 6,
+        inferred_ttl_days: 14,
+        disabled_plan_ids: vec![GRANT.into()],
+    };
+    let drafts = vec![
+        remember("priority", "Sponsors first.", "stated", Some(GRANT)),
+        remember("note", "Weekly sync on Thursdays.", "stated", None),
+    ];
+    let mut record = suggested(drafts.clone());
+    apply_memory_settings(&mut record, &settings, |_| true);
+    assert_eq!(record.memory_suggestions.len(), 1);
+    assert_eq!(
+        record.memory_suggestions[0].content,
+        "Weekly sync on Thursdays."
+    );
+
+    settings.enabled = false;
+    let mut record = suggested(drafts);
+    apply_memory_settings(&mut record, &settings, |_| true);
+    assert!(record.memory_suggestions.is_empty());
+    assert!(record
+        .draft_check
+        .unwrap()
+        .memory_problems
+        .iter()
+        .any(|p| p.contains("memory settings")));
+}
+
+#[test]
+fn nothing_is_remembered_until_approved_and_each_suggestion_is_answered_once() {
+    let dir = TempDir::new().unwrap();
+    let mut database = PlannerDatabase::open(&dir.path().join("memory.sqlite3")).unwrap();
+    let runtime = runtime();
+    let record = runtime.record(
+        suggested(vec![
+            remember("decision", "Blog moves to phase 2.", "stated", None),
+            remember("preference", "Seems to prefer mornings.", "inferred", None),
+            remember("note", "Not this one.", "stated", None),
+        ]),
+        None,
+    );
+    let stored = |database: &PlannerDatabase| database.export_memory().unwrap().records;
+    assert!(stored(&database).is_empty(), "suggesting stores nothing");
+    let ids: Vec<String> = record
+        .memory_suggestions
+        .iter()
+        .map(|s| s.id.clone())
+        .collect();
+
+    // Approve the stated one: stored as the person's own, confirmed, linked to the run.
+    let (suggestion, run_id) = runtime.claim_suggestion("run-memory", &ids[0]).unwrap();
+    let memory = database
+        .add_memory(new_memory(&suggestion, run_id.as_deref()))
+        .unwrap();
+    assert_eq!(memory.source, crate::db::MemorySource::UserStated);
+    assert_eq!(memory.confirmation, crate::db::Confirmation::Confirmed);
+    assert_eq!(memory.source_ref.as_deref(), Some("assistant run run-1"));
+    runtime
+        .settle_suggestion(
+            "run-memory",
+            &ids[0],
+            SuggestionState::Remembered {
+                memory_id: memory.id.clone(),
+            },
+        )
+        .unwrap();
+    assert!(matches!(
+        runtime.claim_suggestion("run-memory", &ids[0]),
+        Err(AppError::Validation(_))
+    ));
+
+    // Approve the inferred one: it stays a guess, unconfirmed and expiring.
+    let (suggestion, run_id) = runtime.claim_suggestion("run-memory", &ids[1]).unwrap();
+    let guess = database
+        .add_memory(new_memory(&suggestion, run_id.as_deref()))
+        .unwrap();
+    assert_eq!(guess.source, crate::db::MemorySource::AssistantInferred);
+    assert_eq!(guess.confirmation, crate::db::Confirmation::Unconfirmed);
+    assert!(guess.expires_at.is_some());
+
+    // Decline the third: nothing stored, and it can't be approved afterwards.
+    let dismissed = runtime.dismiss_suggestion("run-memory", &ids[2]).unwrap();
+    assert_eq!(dismissed.state, SuggestionState::Dismissed);
+    assert!(runtime.claim_suggestion("run-memory", &ids[2]).is_err());
+    assert_eq!(stored(&database).len(), 2);
+    assert!(matches!(
+        runtime.claim_suggestion("run-memory", "missing"),
+        Err(AppError::NotFound)
+    ));
+    let shown = &runtime.runs()[0].memory_suggestions;
+    assert!(matches!(shown[0].state, SuggestionState::Remembered { .. }));
+    assert_eq!(shown[2].state, SuggestionState::Dismissed);
+}
+
+#[test]
+fn an_answer_can_carry_suggestions_but_never_planner_changes() {
+    let finish = |status: &str, drafts: Vec<Value>| {
+        finish_run(
+            start(),
+            Ok(outcome(
+                json!({ "status": status, "answer": "Book movers next.", "drafts": drafts }),
+            )),
+            &observed(),
+            Vec::new(),
+            Utc::now(),
+        )
+        .0
+    };
+    let record = finish(
+        "answered",
+        vec![
+            remember("priority", "Movers before the lease.", "stated", None),
+            schedule(
+                json!({ "id": "00000000-0000-4000-8000-0000000000a1", "revision": 4 }),
+                json!(["call-1"]),
+            ),
+        ],
+    );
+    assert_eq!(record.answer.as_deref(), Some("Book movers next."));
+    assert_eq!(record.memory_suggestions.len(), 1);
+    assert!(record.proposal.is_none());
+    assert_eq!(record.review, ReviewState::None);
+
+    let plain = finish("answered", Vec::new());
+    assert!(plain.draft_check.is_none() && plain.memory_suggestions.is_empty());
+    let unclear = finish(
+        "needs_clarification",
+        vec![remember("note", "Something.", "stated", None)],
+    );
+    assert!(unclear.memory_suggestions.is_empty());
 }

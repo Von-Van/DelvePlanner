@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..drafts import DraftError, observed_records, observed_references, parse_draft
+from ..drafts import DraftError, check_time_blocks, observed_records, observed_references, parse_draft
 from ..types import Draft
 from .facts import Finding, Observation, fact_findings, normalize_drafts, shape_problems
 from .freshness import Staleness, plan_rereads, stale_targets
@@ -90,6 +90,7 @@ class SelfCheck:
         drafts: list[Draft] = []
         try:
             drafts = [parse_draft(item, set(run.tool_results), records, references) for item in raw]
+            check_time_blocks(drafts, run.tool_results.values())  # M3: blocks must sit in free time
         except DraftError as error:
             # The parser stops at its first problem. When the full list already names it, skip the repeat.
             if not (problems and "payload" in str(error)):

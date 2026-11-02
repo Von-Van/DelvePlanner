@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { z } from "zod";
 import { traceEventSchema } from "./AgentTrace";
+import { memorySuggestionSchema } from "./memoryApi";
 
 export const planStatuses = [
   "planning",
@@ -626,6 +627,16 @@ export const operationSchema = z.discriminatedUnion("type", [
       workstream: recordReferenceSchema.nullable(),
     })
     .strict(),
+  z
+    .object({
+      type: z.literal("create_task_block"),
+      taskId: z.guid(),
+      ...targetSchema,
+      startAtUtc: timestampSchema,
+      timeZone: z.string(),
+      durationMinutes: z.number().int().min(5).max(1440),
+    })
+    .strict(),
 ]);
 
 const proposalReferenceSchema = z
@@ -683,6 +694,7 @@ const appliedProposalSchema = z
     milestoneIds: z.array(z.guid()),
     taskIds: z.array(z.guid()),
     workstreamIds: z.array(z.guid()),
+    taskBlockIds: z.array(z.guid()),
   })
   .strict();
 
@@ -716,6 +728,7 @@ const draftCheckSchema = z
     drafted: count,
     passed: count,
     problems: z.array(z.string()),
+    memoryProblems: z.array(z.string()),
   })
   .strict();
 
@@ -741,6 +754,7 @@ export const agentRunSchema = z
     runKey: z.string().min(1),
     runId: z.string().nullable(),
     storedRunId: z.string().nullable(),
+    threadId: z.string().nullable(),
     architecture: z.string(),
     goal: z.string(),
     startedAt: timestampSchema,
@@ -755,9 +769,54 @@ export const agentRunSchema = z
     draftCheck: draftCheckSchema.nullable(),
     review: reviewStateSchema,
     proposal: plannerResponseSchema.options[0].nullable(),
+    memorySuggestions: z.array(memorySuggestionSchema),
     trace: z.array(traceEventSchema),
   })
   .strict();
+
+export const conversationMessageStatuses = [
+  "answered",
+  "drafted",
+  "needs_clarification",
+  "cannot_complete",
+  "failed",
+  "cancelled",
+] as const;
+
+export const conversationSchema = z
+  .object({
+    id: z.string().min(1),
+    title: z.string(),
+    createdAt: timestampSchema,
+    updatedAt: timestampSchema,
+    messageCount: z.number().int().nonnegative(),
+    preview: z.string().nullable(),
+  })
+  .strict();
+
+export const conversationMessageSchema = z
+  .object({
+    id: z.string().min(1),
+    threadId: z.string().min(1),
+    seq: z.number().int().positive(),
+    role: z.enum(["user", "assistant"]),
+    text: z.string(),
+    runId: z.string().nullable(),
+    runStatus: z.enum(conversationMessageStatuses).nullable(),
+    createdAt: timestampSchema,
+  })
+  .strict();
+
+export const conversationDetailSchema = z
+  .object({
+    thread: conversationSchema,
+    messages: z.array(conversationMessageSchema),
+  })
+  .strict();
+
+export type Conversation = z.infer<typeof conversationSchema>;
+export type ConversationMessage = z.infer<typeof conversationMessageSchema>;
+export type ConversationDetail = z.infer<typeof conversationDetailSchema>;
 
 const assistantStatusSchema = z
   .object({
@@ -1607,10 +1666,40 @@ export const api = {
    * Runs one request through the agent and resolves with the finished run. Its steps arrive
    * earlier, one by one, through `onAssistantStep` under the same `runKey`.
    */
-  async runAssistant(goal: string, timeZone: string, runKey: string) {
+  async runAssistant(
+    goal: string,
+    timeZone: string,
+    runKey: string,
+    threadId: string | null = null,
+  ) {
     return agentRunSchema.parse(
-      await invokeCommand("run_assistant", { goal, timeZone, runKey }),
+      await invokeCommand("run_assistant", {
+        goal,
+        timeZone,
+        runKey,
+        threadId,
+      }),
     );
+  },
+  /** Saved conversations, most recently used first. */
+  async listConversations() {
+    return z
+      .array(conversationSchema)
+      .parse(await invokeCommand("list_assistant_threads"));
+  },
+  async getConversation(threadId: string) {
+    return conversationDetailSchema.parse(
+      await invokeCommand("get_assistant_thread", { threadId }),
+    );
+  },
+  async renameConversation(threadId: string, title: string) {
+    return conversationSchema.parse(
+      await invokeCommand("rename_assistant_thread", { threadId, title }),
+    );
+  },
+  /** Deletes a conversation, its messages, and the runs it started. */
+  async deleteConversation(threadId: string) {
+    await invokeCommand("delete_assistant_thread", { threadId });
   },
   async cancelAssistantRun() {
     await invokeCommand("cancel_assistant_run");

@@ -1551,6 +1551,15 @@ pub enum MutationOperation {
         expected_revision: i64,
         workstream: Option<RecordRef>,
     },
+    /// Reserves a stretch of time on the schedule for an existing open task. The task itself is
+    /// unchanged; its revision makes sure time is planned for the task as it was when drafted.
+    CreateTaskBlock {
+        task_id: String,
+        expected_revision: i64,
+        start_at_utc: String,
+        time_zone: String,
+        duration_minutes: i64,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -1799,6 +1808,7 @@ pub struct AppliedProposal {
     pub milestone_ids: Vec<String>,
     pub task_ids: Vec<String>,
     pub workstream_ids: Vec<String>,
+    pub task_block_ids: Vec<String>,
 }
 
 /// The records the planner may reference for one request, chosen by relevance.
