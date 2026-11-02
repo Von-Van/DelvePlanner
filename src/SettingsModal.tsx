@@ -12,6 +12,7 @@ import {
 import { Glyph } from "./Geometry";
 import { useModalFocus } from "./useModalFocus";
 import { MemorySettings } from "./MemorySettings";
+import { HeadsUpSettings } from "./HeadsUpSettings";
 import { ModelPicker, TESTED_MODEL } from "./ModelPicker";
 import {
   KeyboardShortcutList,
@@ -369,6 +370,14 @@ export function SettingsModal({
 
           <SettingsBlock
             index="08"
+            title="Heads-ups"
+            subtitle="What the assistant brings up without being asked."
+          >
+            <HeadsUpSettings onMessage={onMessage} />
+          </SettingsBlock>
+
+          <SettingsBlock
+            index="09"
             title={`Delve Planner ${version}`}
             subtitle={updateState}
           >

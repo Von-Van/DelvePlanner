@@ -225,3 +225,7 @@
 .memory-problem {
   color: var(--danger);
 }
+.heads-up-settings {
+  display: grid;
+  gap: 12px;
+}

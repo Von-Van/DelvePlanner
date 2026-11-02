@@ -4765,6 +4765,17 @@ kbd.off {
 .worth-attention .text-button {
   grid-column: 2;
 }
+.worth-attention .heads-up-choices {
+  grid-column: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 14px;
+}
+.worth-attention .heads-up-choices .text-button.quiet {
+  color: var(--secondary);
+  font-size: 10px;
+}
 .review-queue .review-pending,
 .review-queue .review-empty {
   display: grid;

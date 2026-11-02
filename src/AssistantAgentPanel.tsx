@@ -50,10 +50,19 @@ import {
  * model and tool calls, tokens, the exact model). Nothing changes until the user applies it.
  */
 export function AssistantAgentPanel({
+  ask,
+  onAskTaken,
   onChanged,
   onMessage,
   onFallback,
 }: {
+  /**
+   * A request handed over from elsewhere (a heads-up's "Plan it"). Each new `key` runs it once,
+   * as a new conversation, so it starts from current planner data and nothing earlier.
+   */
+  ask?: { request: string; key: number } | null;
+  /** Called once a handed-over request has started, so it isn't run again on the next visit. */
+  onAskTaken?: () => void;
   /** Called after applied changes, so the rest of the app reloads. */
   onChanged: () => void;
   onMessage: (message: string) => void;
@@ -138,11 +147,32 @@ export function AssistantAgentPanel({
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    const request = goal.trim();
+    await runRequest(goal.trim(), threadId, true);
+  }
+
+  // A handed-over request runs once per key, in a new conversation.
+  const handledAsk = useRef<number | null>(null);
+  useEffect(() => {
+    if (!ask || handledAsk.current === ask.key || running) return;
+    handledAsk.current = ask.key;
+    onAskTaken?.();
+    setThreadId(null);
+    setHistory([]);
+    setSelectedKey(null);
+    void runRequest(ask.request, null, false);
+    // runRequest reads the latest state when it is called; only a new key should start a run.
+  }, [ask?.key, running]);
+
+  /** Runs one request; `typed` says it came from the box, which is emptied once it is sent. */
+  async function runRequest(
+    request: string,
+    threadId: string | null,
+    typed: boolean,
+  ) {
     if (!request || running) return;
     if (status && !status.available) {
       if (onFallback) {
-        setGoal("");
+        if (typed) setGoal("");
         onFallback(request, "it isn't included in this build");
       }
       return;
@@ -153,7 +183,7 @@ export function AssistantAgentPanel({
     try {
       const run = await api.runAssistant(request, localTimeZone, key, threadId);
       setRuns((current) => withRun(current, run));
-      setGoal("");
+      if (typed) setGoal("");
       if (run.threadId) {
         setThreadId(run.threadId);
         await loadConversation(run.threadId);
