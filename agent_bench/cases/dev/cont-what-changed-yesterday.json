@@ -60,7 +60,8 @@
     "get_project_context",
     "search_tasks",
     "get_capacity",
-    "get_recent_actions"
+    "get_recent_actions",
+    "get_memory"
   ],
   "goal": "What did we change yesterday?",
   "expected": {

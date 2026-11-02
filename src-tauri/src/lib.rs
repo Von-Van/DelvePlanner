@@ -4,6 +4,7 @@ pub mod capacity;
 pub mod db;
 pub mod error;
 pub mod evaluation;
+mod memory;
 pub mod model;
 pub mod recurrence;
 pub mod runtime;
@@ -1564,6 +1565,16 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            memory::get_memory_overview,
+            memory::update_memory_settings,
+            memory::set_project_memory,
+            memory::add_memory,
+            memory::confirm_memory,
+            memory::correct_memory,
+            memory::delete_memory,
+            memory::forget_project_memory,
+            memory::clear_memory,
+            memory::export_memory_file,
             evaluation::list_evaluation_runs,
             evaluation::get_evaluation_run,
             evaluation::get_evaluation_trace,
