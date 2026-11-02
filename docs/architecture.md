@@ -7,7 +7,7 @@ Delve Planner is a [Tauri 2](https://v2.tauri.app/) desktop app: a React and Typ
 ```mermaid
 flowchart TB
   subgraph renderer["Renderer — React + TypeScript (least trusted)"]
-    Views["Today, Week, Plans, Inbox, People, Calendars,<br/>planning sessions, What Delve Planner knows, Settings"]
+    Views["Assistant, Schedule (Today and Week), Projects, Inbox,<br/>People, Calendars, planning sessions, What Delve Planner knows,<br/>Model & Evaluation, Settings"]
     Pure["Pure planning helpers<br/>planning.ts · calendars.ts · proposals.ts · date.ts"]
     Client["api.ts — typed command client + strict Zod parsing"]
   end
@@ -64,12 +64,12 @@ flowchart TB
 
 ## Entry points
 
-| Entry point                                                                                       | What starts there                                                                                                                                                                                                                      |
-| ------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`src/main.tsx`](../src/main.tsx)                                                                 | Loads the bundled fonts and styles and renders `App`                                                                                                                                                                                   |
-| [`src/App.tsx`](../src/App.tsx)                                                                   | View routing, keyboard shortcuts, loading agenda/calendar/capacity data, the Today screen, and all modals                                                                                                                              |
-| [`src-tauri/src/main.rs`](../src-tauri/src/main.rs) → [`lib.rs`](../src-tauri/src/lib.rs) `run()` | Registers plugins (log, dialog, global shortcut, opener, notification, process, updater), builds `AppState`, registers a saved quick-capture shortcut, installs the tray, starts three background workers, and registers every command |
-| [`src-tauri/examples/eval_agent.rs`](../src-tauri/examples/eval_agent.rs)                         | The AI evaluation harness (`npm run eval`)                                                                                                                                                                                             |
+| Entry point                                                                                       | What starts there                                                                                                                                                                                                                     |
+| ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`src/main.tsx`](../src/main.tsx)                                                                 | Loads the bundled fonts and styles and renders `App`                                                                                                                                                                                  |
+| [`src/App.tsx`](../src/App.tsx)                                                                   | View routing, keyboard shortcuts, loading agenda/calendar/capacity data, the Today screen, and all modals                                                                                                                             |
+| [`src-tauri/src/main.rs`](../src-tauri/src/main.rs) → [`lib.rs`](../src-tauri/src/lib.rs) `run()` | Registers plugins (log, dialog, global shortcut, opener, notification, process, updater), builds `AppState`, registers a saved quick-capture shortcut, installs the tray, starts four background workers, and registers every command |
+| [`src-tauri/examples/eval_agent.rs`](../src-tauri/examples/eval_agent.rs)                         | The AI evaluation harness (`npm run eval`)                                                                                                                                                                                            |
 
 `AppState` holds the planner database (behind a mutex, with any startup error kept so commands and Settings can report it), the `CalendarService`, the `PlannerAgent`, the `OllamaRuntime`, a pending import awaiting confirmation, and where the quick-capture shortcut is saved.
 
@@ -77,11 +77,12 @@ The quick-capture shortcut, when one is recorded, is registered with the operati
 
 ### Background work
 
-| Worker                | Interval   | Job                                                                                                                |
-| --------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------ |
-| `reminder_worker`     | 15 seconds | Reconciles the reminder outbox and delivers due notifications                                                      |
-| `calendar_worker`     | 60 seconds | Refreshes due calendars one at a time, re-windows at midnight, and emits `calendars-changed` when anything changed |
-| `runtime_idle_worker` | 30 seconds | Stops the Ollama server after five minutes without a planner request                                               |
+| Worker                | Interval   | Job                                                                                                                                                                           |
+| --------------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `reminder_worker`     | 15 seconds | Reconciles the reminder outbox and delivers due notifications                                                                                                                 |
+| `calendar_worker`     | 60 seconds | Refreshes due calendars one at a time, re-windows at midnight, and emits `calendars-changed` when anything changed                                                            |
+| `runtime_idle_worker` | 30 seconds | Stops the Ollama server after five minutes without a planner request                                                                                                          |
+| `heads_up_worker`     | 5 minutes  | Runs the [heads-up](delveagent/heads-ups.md) rules, emits `heads-ups-changed` when what's shown changed, and sends at most two urgent notifications a day outside quiet hours |
 
 Closing the window hides it to the tray (so reminders keep working) and releases the model from memory. **Quit Delve Planner** exits, and the exit hook stops the Ollama server and its model runner.
 

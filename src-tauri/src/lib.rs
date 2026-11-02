@@ -6,6 +6,7 @@ mod conversations;
 pub mod db;
 pub mod error;
 pub mod evaluation;
+pub mod heads_up;
 mod memory;
 pub mod model;
 pub mod recurrence;
@@ -1831,6 +1832,7 @@ pub fn run() {
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(reminder_worker(handle.clone()));
             tauri::async_runtime::spawn(calendar_worker(handle.clone()));
+            tauri::async_runtime::spawn(heads_up::heads_up_worker(handle.clone()));
             tauri::async_runtime::spawn(runtime_idle_worker(handle));
             Ok(())
         })
@@ -1847,6 +1849,12 @@ pub fn run() {
             memory::export_memory_file,
             memory::remember_suggestion,
             memory::dismiss_suggestion,
+            heads_up::list_heads_ups,
+            heads_up::dismiss_heads_up,
+            heads_up::snooze_heads_up,
+            heads_up::act_on_heads_up,
+            heads_up::get_heads_up_settings,
+            heads_up::update_heads_up_settings,
             evaluation::list_evaluation_runs,
             evaluation::get_evaluation_run,
             evaluation::get_evaluation_trace,

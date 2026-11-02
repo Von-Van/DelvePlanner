@@ -244,7 +244,7 @@ A **task** is work that needs doing, kept separate from a **schedule event** (a 
 
 ## Agent storage
 
-The assistant's own records sit in the planner database next to planner data, but they are not planner data: exports leave them out, imports leave them alone, and every record can be deleted. The model never writes any of them; the app records them as the assistant works. Tables come from [`db/agent.rs`](../src-tauri/src/db/agent.rs) (schema 9) and [`db/conversation.rs`](../src-tauri/src/db/conversation.rs) (schema 11).
+The assistant's own records sit in the planner database next to planner data, but they are not planner data: exports leave them out, imports leave them alone, and every record can be deleted. The model never writes any of them; the app records them as the assistant works. Tables come from [`db/agent.rs`](../src-tauri/src/db/agent.rs) (schema 9) [`db/conversation.rs`](../src-tauri/src/db/conversation.rs) (schema 11), and [`db/heads_up.rs`](../src-tauri/src/db/heads_up.rs) (schema 12).
 
 ```mermaid
 erDiagram
@@ -256,15 +256,17 @@ erDiagram
   AGENT_MESSAGE }o--o| AGENT_RUN : "answered by"
 ```
 
-| Table                 | One row is                                                                                                                                                                                           |
-| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `experiment_run`      | One benchmark or regression run: benchmark version, config hash, model and digest, runtime, hardware, split, and where the full result files are                                                     |
-| `agent_run`           | One attempt at one request, either live in the Assistant or one benchmark case: model, budget, usage, final status, and for benchmark cases whether it passed or broke a safety rule                 |
-| `agent_step`          | One step of a run's trace (`seq`, `kind`, `at`, `durationMs`, a short summary, and capped `data`), in the shared trace shape                                                                         |
-| `agent_action_draft`  | A change the assistant proposed: exactly one planner operation with its target revision and a digest of the payload. It is `pending` until the person approves, rejects, or it expires or goes stale |
-| `agent_action_result` | What happened when an approved draft was carried out by the planner's own code: `applied`, `failed`, or `stale`                                                                                      |
-| `agent_thread`        | One conversation in the Assistant: its title (taken from the first message unless the person renames it) and when it was last used                                                                   |
-| `agent_message`       | One message in a conversation, from the person or the assistant, numbered in order. An assistant message can point at the run that produced it and says how that run ended                           |
+| Table                 | One row is                                                                                                                                                                                                                                     |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `experiment_run`      | One benchmark or regression run: benchmark version, config hash, model and digest, runtime, hardware, split, and where the full result files are                                                                                               |
+| `agent_run`           | One attempt at one request, either live in the Assistant or one benchmark case: model, budget, usage, final status, and for benchmark cases whether it passed or broke a safety rule                                                           |
+| `agent_step`          | One step of a run's trace (`seq`, `kind`, `at`, `durationMs`, a short summary, and capped `data`), in the shared trace shape                                                                                                                   |
+| `agent_action_draft`  | A change the assistant proposed: exactly one planner operation with its target revision and a digest of the payload. It is `pending` until the person approves, rejects, or it expires or goes stale                                           |
+| `agent_action_result` | What happened when an approved draft was carried out by the planner's own code: `applied`, `failed`, or `stale`                                                                                                                                |
+| `agent_thread`        | One conversation in the Assistant: its title (taken from the first message unless the person renames it) and when it was last used                                                                                                             |
+| `agent_message`       | One message in a conversation, from the person or the assistant, numbered in order. An assistant message can point at the run that produced it and says how that run ended                                                                     |
+| `agent_suggestion`    | One [heads-up](delveagent/heads-ups.md) the assistant brought up: what kind, its wording and facts, what it is about, the request its action sends, a dedupe key, and whether it is showing, snoozed, dismissed, acted on, cleared, or expired |
+| `heads_up_settings`   | One record: whether heads-ups are on, and whether urgent ones may send a system notification                                                                                                                                                   |
 
 - **Retention.** The newest 500 live runs are kept; older finished runs are forgotten. A message whose run was forgotten keeps its text and loses only the link. Benchmark runs are kept until their experiment is deleted. Conversations are kept until the person deletes them.
 - **Deleting.** Deleting a conversation deletes its messages and the runs it started, with their traces, drafts, and results, so nothing typed in it is left behind. **Clear agent history** removes every conversation, run, and experiment.
@@ -281,7 +283,7 @@ erDiagram
 
 ## Schema versions and migrations
 
-The planner database schema is version 11 (`CURRENT_SCHEMA_VERSION` in [`db.rs`](../src-tauri/src/db.rs), stored in SQLite's `user_version`). Opening an older database checkpoints it, copies it to `backups/`, and migrates it in one transaction; a newer, unknown version is refused rather than guessed at. Each step is covered by a test that migrates a database from the previous shape.
+The planner database schema is version 12 (`CURRENT_SCHEMA_VERSION` in [`db.rs`](../src-tauri/src/db.rs), stored in SQLite's `user_version`). Opening an older database checkpoints it, copies it to `backups/`, and migrates it in one transaction; a newer, unknown version is refused rather than guessed at. Each step is covered by a test that migrates a database from the previous shape.
 
 | Schema | Adds                                                                                                                                                           |
 | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -296,6 +298,7 @@ The planner database schema is version 11 (`CURRENT_SCHEMA_VERSION` in [`db.rs`]
 | 9      | [Agent storage](#agent-storage): `experiment_run`, `agent_run`, `agent_step`, `agent_action_draft`, and `agent_action_result`                                  |
 | 10     | Assistant memory: `agent_memory`, `memory_settings`, and `memory_project_setting` (see [memory](delveagent/memory.md))                                         |
 | 11     | Assistant conversations: `agent_thread` and `agent_message`                                                                                                    |
+| 12     | Heads-ups: `agent_suggestion` and `heads_up_settings` (see [heads-ups](delveagent/heads-ups.md))                                                               |
 
 The calendar cache has its own, independent version (`STORE_VERSION` in [`calendar/store.rs`](../src-tauri/src/calendar/store.rs)).
 

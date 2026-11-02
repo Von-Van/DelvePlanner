@@ -4,9 +4,29 @@ import {
   maxAttentionItems,
   worthAttention,
 } from "./AssistantView";
+import { HeadsUp } from "./headsUpApi";
 import { sectionShortcutKey, sectionShortcuts } from "./shortcuts";
 
+function headsUp(id: string, title: string): HeadsUp {
+  return {
+    id,
+    kind: "deadline",
+    title,
+    evidence: "No time is planned for it yet.",
+    target: null,
+    actionLabel: "Plan it",
+    actionRequest: `${title}. Plan time for it.`,
+    score: 90,
+    urgent: true,
+    status: "active",
+    surfacedAt: "2026-11-05T14:00:00.000Z",
+    expiresAt: "2026-11-07T05:00:00.000Z",
+    snoozedUntil: null,
+  };
+}
+
 const quiet: AttentionInput = {
+  headsUps: [],
   brokenCalendars: [],
   overCapacityBy: 0,
   unfinished: 0,
@@ -31,6 +51,7 @@ describe("worthAttention", () => {
 
   it("shows at most three, most pressing first", () => {
     const items = worthAttention({
+      headsUps: [],
       brokenCalendars: ["Work"],
       overCapacityBy: 90,
       unfinished: 3,
@@ -46,6 +67,27 @@ describe("worthAttention", () => {
     ]);
     expect(items[0].title).toBe("“Work” can't refresh");
     expect(items[1].evidence).toContain("1 h 30 min");
+  });
+
+  it("puts the assistant's heads-ups after a broken calendar and keeps the cap", () => {
+    const items = worthAttention({
+      ...quiet,
+      brokenCalendars: ["Work"],
+      unfinished: 1,
+      headsUps: [
+        headsUp("a", "“Venue deposit” is due tomorrow"),
+        headsUp("b", "Friday is overbooked by 2 h"),
+      ],
+    });
+    expect(items.map((item) => item.id)).toEqual([
+      "calendars",
+      "heads-up-a",
+      "heads-up-b",
+    ]);
+    expect(items[1]).toMatchObject({
+      headsUpId: "a",
+      action: { label: "Plan it", target: "assistant" },
+    });
   });
 
   it("sends planning sessions to their own flow", () => {
