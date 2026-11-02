@@ -95,8 +95,9 @@ def test_admission_order_matches_the_broker():
     tools = MockToolClient(make_case(permittedTools=["get_day_context", "get_memory"]))
     assert tools.call("update_task", {})["error"]["code"] == "invalid_arguments"  # no such tool
     assert tools.call("get_capacity", {"weekStart": "2026-11-02", "timeZone": TZ})["error"]["code"] == "permission_denied"
-    assert tools.call("get_memory", {})["error"]["code"] == "unavailable"  # reserved
-    assert [c.known for c in tools.calls] == [False, True, True]
+    assert tools.call("get_memory", {"limit": 0})["error"]["code"] == "invalid_arguments"  # permitted, bad args
+    assert tools.call("get_memory", {})["ok"] is True
+    assert [c.known for c in tools.calls] == [False, True, True, True]
 
 
 def test_refused_calls_do_not_use_the_budget():

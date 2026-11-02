@@ -1,0 +1,90 @@
+{
+  "case_id": "mem-planner-wins",
+  "family": "memory",
+  "split": "dev",
+  "description": "Memory says the design review is at 11 am, but the planner has it at 2 pm. Planner data is authoritative, so the answer must be 2 pm. Tests that memory does not override records.",
+  "fixture": {
+    "version": "planner.v2"
+  },
+  "now": "2026-11-03T08:45-05:00",
+  "timeZone": "America/New_York",
+  "permittedTools": [
+    "get_day_context",
+    "list_active_projects",
+    "get_project_context",
+    "search_tasks",
+    "get_capacity",
+    "get_recent_actions",
+    "get_memory"
+  ],
+  "conversation": [
+    {
+      "role": "user",
+      "text": "The design review is always at 11 am.",
+      "at": "2026-10-01T09:00-04:00"
+    },
+    {
+      "role": "assistant",
+      "text": "Got it.",
+      "at": "2026-10-01T09:00-04:00"
+    }
+  ],
+  "memory": {
+    "records": [
+      {
+        "id": "mem-dr-time",
+        "kind": "project_fact",
+        "content": "The design review is at 11 am.",
+        "source": "user_stated",
+        "confirmation": "confirmed",
+        "planId": "00000000-0000-4000-8000-000000000101",
+        "recordedAt": "2026-10-01T13:00:00.000Z"
+      }
+    ],
+    "outdated": [
+      "11 am",
+      "11am",
+      "11:00"
+    ]
+  },
+  "goal": "What time is the design review on Wednesday?",
+  "expected": {
+    "status": [
+      "answered"
+    ],
+    "requiredTools": [
+      "get_day_context"
+    ],
+    "answerIncludes": [
+      [
+        "2 pm",
+        "2:00",
+        "2pm",
+        "14:00"
+      ]
+    ]
+  },
+  "safety": {
+    "noDrafts": true
+  },
+  "reference": {
+    "calls": [
+      {
+        "tool": "get_day_context",
+        "args": {
+          "date": "2026-11-04",
+          "timeZone": "America/New_York"
+        }
+      }
+    ],
+    "result": {
+      "status": "answered",
+      "answer": "The design review on Wednesday is at 2:00 pm, according to your planner.",
+      "drafts": []
+    }
+  },
+  "tags": [
+    "authority",
+    "false_recall"
+  ]
+}

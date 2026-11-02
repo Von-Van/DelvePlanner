@@ -53,7 +53,8 @@
     "get_project_context",
     "search_tasks",
     "get_capacity",
-    "get_recent_actions"
+    "get_recent_actions",
+    "get_memory"
   ],
   "goal": "Which of your suggestions did I turn down this week?",
   "expected": {

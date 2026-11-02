@@ -244,7 +244,7 @@ A **task** is work that needs doing, kept separate from a **schedule event** (a 
 
 ## Agent storage
 
-The assistant's own records sit in the planner database next to planner data, but they are not planner data: exports leave them out, imports leave them alone, and every record can be deleted. The model never writes any of them; the app records them as the assistant works. Tables come from [`db/agent.rs`](../src-tauri/src/db/agent.rs) (schema 9) and [`db/conversation.rs`](../src-tauri/src/db/conversation.rs) (schema 10).
+The assistant's own records sit in the planner database next to planner data, but they are not planner data: exports leave them out, imports leave them alone, and every record can be deleted. The model never writes any of them; the app records them as the assistant works. Tables come from [`db/agent.rs`](../src-tauri/src/db/agent.rs) (schema 9) and [`db/conversation.rs`](../src-tauri/src/db/conversation.rs) (schema 11).
 
 ```mermaid
 erDiagram
@@ -281,7 +281,7 @@ erDiagram
 
 ## Schema versions and migrations
 
-The planner database schema is version 10 (`CURRENT_SCHEMA_VERSION` in [`db.rs`](../src-tauri/src/db.rs), stored in SQLite's `user_version`). Opening an older database checkpoints it, copies it to `backups/`, and migrates it in one transaction; a newer, unknown version is refused rather than guessed at. Each step is covered by a test that migrates a database from the previous shape.
+The planner database schema is version 11 (`CURRENT_SCHEMA_VERSION` in [`db.rs`](../src-tauri/src/db.rs), stored in SQLite's `user_version`). Opening an older database checkpoints it, copies it to `backups/`, and migrates it in one transaction; a newer, unknown version is refused rather than guessed at. Each step is covered by a test that migrates a database from the previous shape.
 
 | Schema | Adds                                                                                                                                                           |
 | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -294,7 +294,8 @@ The planner database schema is version 10 (`CURRENT_SCHEMA_VERSION` in [`db.rs`]
 | 7      | The `planning_profile` record and the empty `task_moves` history                                                                                               |
 | 8      | Each task's `recurrence` and `checklist`, the `task_dependencies` table, and each plan's `links`                                                               |
 | 9      | [Agent storage](#agent-storage): `experiment_run`, `agent_run`, `agent_step`, `agent_action_draft`, and `agent_action_result`                                  |
-| 10     | Assistant conversations: `agent_thread` and `agent_message`                                                                                                    |
+| 10     | Assistant memory: `agent_memory`, `memory_settings`, and `memory_project_setting` (see [memory](delveops/memory.md))                                           |
+| 11     | Assistant conversations: `agent_thread` and `agent_message`                                                                                                    |
 
 The calendar cache has its own, independent version (`STORE_VERSION` in [`calendar/store.rs`](../src-tauri/src/calendar/store.rs)).
 

@@ -152,6 +152,66 @@
       "type": "string",
       "minLength": 1
     },
+    "conversation": {
+      "description": "Earlier turns of the same conversation, oldest first (memory and continuity cases). Agents that keep no conversational memory ignore it.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "role",
+          "text"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "role": {
+            "enum": [
+              "user",
+              "assistant"
+            ]
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1
+          },
+          "at": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "memory": {
+      "description": "What the person's memory store holds when the case starts. Served by the get_memory mock with the same rules as the Rust tool.",
+      "type": "object",
+      "required": [
+        "records"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "disabledPlanIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "records": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/memoryRecord"
+          }
+        },
+        "outdated": {
+          "description": "Text that appears in an answer or draft only if the agent relied on superseded, expired or switched-off memory, or on an outdated conversation turn. Counted as false recall.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
     "budget": {
       "type": "object",
       "additionalProperties": false,
@@ -563,6 +623,68 @@
         },
         "add": {
           "type": "object"
+        }
+      }
+    },
+    "memoryRecord": {
+      "type": "object",
+      "required": [
+        "id",
+        "kind",
+        "content",
+        "source",
+        "confirmation",
+        "recordedAt"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "enum": [
+            "decision",
+            "priority",
+            "project_fact",
+            "open_problem",
+            "preference",
+            "note"
+          ]
+        },
+        "content": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "source": {
+          "enum": [
+            "user_stated",
+            "user_correction",
+            "approved_action",
+            "assistant_inferred"
+          ]
+        },
+        "confirmation": {
+          "enum": [
+            "confirmed",
+            "unconfirmed"
+          ]
+        },
+        "planId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "recordedAt": {
+          "type": "string"
+        },
+        "expiresAt": {
+          "type": "string"
+        },
+        "supersededBy": {
+          "type": "string"
         }
       }
     },
