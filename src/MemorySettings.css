@@ -6,13 +6,12 @@
 .memory-settings h4 {
   margin: 0 0 6px;
   color: var(--strong);
-  font: 600 11px var(--font-ui);
-  letter-spacing: 0.3px;
+  font: 600 13px var(--font-ui);
 }
 .memory-settings .memory-status {
   margin: 0;
   color: var(--strong);
-  font: 500 11.5px/1.5 var(--font-ui);
+  font: 500 13px/1.5 var(--font-ui);
 }
 .memory-toggle {
   display: flex;
@@ -30,11 +29,11 @@
 }
 .memory-toggle strong {
   color: var(--ink);
-  font: 600 12px var(--font-ui);
+  font: 600 13px var(--font-ui);
 }
 .memory-toggle small {
   color: var(--secondary);
-  font: 400 11px/1.5 var(--font-ui);
+  font: 400 12px/1.5 var(--font-ui);
 }
 .memory-fields {
   display: grid;
@@ -47,8 +46,9 @@
 .memory-add {
   display: grid;
   gap: 7px;
-  padding: 10px;
+  padding: 12px;
   border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
   background: var(--ground-soft);
 }
 .memory-add h4 {
@@ -59,12 +59,12 @@
   width: 100%;
   box-sizing: border-box;
   resize: vertical;
-  padding: 7px 9px;
+  padding: 8px 10px;
   border: 1px solid var(--control);
-  border-radius: 0;
+  border-radius: var(--radius);
   background: var(--ground);
   color: var(--ink);
-  font: 400 12px/1.45 var(--font-ui);
+  font: 400 13px/1.45 var(--font-ui);
 }
 .memory-add textarea:focus,
 .memory-item textarea:focus,
@@ -80,23 +80,27 @@
   align-items: center;
 }
 .memory-add-row select {
-  min-height: 30px;
+  min-height: 34px;
   min-width: 0;
   flex: 1 1 140px;
-  padding: 0 8px;
+  padding: 0 10px;
   border: 1px solid var(--control);
-  border-radius: 0;
+  border-radius: var(--radius);
   background: var(--ground);
   color: var(--ink);
-  font: 400 11.5px var(--font-ui);
+  font: 400 13px var(--font-ui);
 }
 .memory-add-row button {
-  min-height: 30px;
-  padding: 0 12px;
-  border: 1px solid var(--blue);
-  background: linear-gradient(var(--blue-top), var(--blue-bottom));
-  color: #fff;
-  font: 500 10.5px var(--font-ui);
+  min-height: 34px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--primary-fill);
+  color: var(--primary-ink);
+  font: 600 13px var(--font-ui);
+}
+.memory-add-row button:hover:not(:disabled) {
+  background: var(--primary-fill-hover);
 }
 .memory-add-row button:disabled {
   opacity: 0.55;
@@ -104,22 +108,23 @@
 .memory-list,
 .memory-projects {
   display: grid;
-  gap: 6px;
+  gap: 8px;
   margin: 0;
   padding: 0;
   list-style: none;
 }
+/* Confirmed memories are plain white cards; ones still waiting for you are amber; old versions are grey. */
 .memory-item {
-  padding: 9px 10px;
+  padding: 12px 14px;
   border: 1px solid var(--hairline);
-  border-left: 3px solid var(--blue-frame);
+  border-radius: var(--radius-md);
   background: var(--ground);
 }
 .memory-item.is-unconfirmed {
-  border-left-color: var(--warning-dot);
+  border-color: #f0dcae;
+  background: var(--warning-wash);
 }
 .memory-item.is-history {
-  border-left-color: var(--rule);
   background: var(--ground-muted);
 }
 .memory-item.is-history .memory-content {
@@ -129,7 +134,7 @@
 .memory-settings .memory-content {
   margin: 0;
   color: var(--ink);
-  font: 400 12px/1.45 var(--font-ui);
+  font: 400 13.5px/1.5 var(--font-ui);
   overflow-wrap: anywhere;
 }
 .memory-settings .memory-meta {
@@ -139,13 +144,17 @@
   align-items: center;
   margin: 4px 0 0;
   color: var(--muted);
-  font: 400 10.5px/1.4 var(--font-ui);
+  font: 400 12px/1.4 var(--font-ui);
 }
 .memory-badge {
-  padding: 1px 6px;
+  padding: 2px 9px;
+  border-radius: var(--radius-pill);
   background: var(--warning-wash);
   color: var(--warning-text);
-  font: 500 10px var(--font-ui);
+  font: 600 11px var(--font-ui);
+}
+.memory-item.is-unconfirmed .memory-badge {
+  background: var(--ground);
 }
 .memory-badge.is-off {
   background: var(--ground-muted);
@@ -192,12 +201,13 @@
   font: 400 10.5px var(--font-ui);
 }
 .memory-projects button {
-  min-height: 26px;
-  padding: 0 9px;
+  min-height: 30px;
+  padding: 0 12px;
   border: 1px solid var(--control);
+  border-radius: var(--radius);
   background: var(--ground);
   color: var(--strong);
-  font: 500 10.5px var(--font-ui);
+  font: 500 12px var(--font-ui);
 }
 .memory-settings .settings-actions .danger-action {
   border-color: var(--danger-frame);

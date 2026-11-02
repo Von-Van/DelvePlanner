@@ -113,32 +113,15 @@
 
 .conversation-history {
   display: grid;
-  gap: 8px;
-  margin: 0 18px 12px;
+  gap: 10px;
+  margin: 0 18px 10px;
   padding: 0;
   list-style: none;
 }
-.conversation-turn {
-  max-width: 85%;
-  padding: 8px 12px;
-  border-radius: var(--radius-lg, 10px);
+.conversation-history .chat-reply-body {
+  gap: 4px;
 }
-.conversation-turn p {
-  margin: 2px 0 0;
-  color: var(--strong);
-  font-size: 13px;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-.conversation-turn.from-user {
-  justify-self: end;
-  background: var(--ground-soft);
-}
-.conversation-turn.from-agent {
-  justify-self: start;
-  border: 1px solid var(--hairline);
-}
-.conversation-turn-who {
+.conversation-turn-status {
   color: var(--muted);
   font-size: 11px;
 }

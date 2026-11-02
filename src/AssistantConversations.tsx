@@ -37,7 +37,10 @@ export function conversationDateLabel(at: string, now = new Date()) {
   return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-/** The earlier turns of the open conversation, oldest first. */
+/**
+ * The earlier turns of the open conversation, oldest first, in the same request-and-reply
+ * bubbles as the run below them.
+ */
 export function ConversationHistory({
   messages,
 }: {
@@ -49,24 +52,27 @@ export function ConversationHistory({
       className="conversation-history"
       aria-label="Earlier in this conversation"
     >
-      {messages.map((message) => (
-        <li
-          key={message.id}
-          className={
-            message.role === "user"
-              ? "conversation-turn from-user"
-              : "conversation-turn from-agent"
-          }
-        >
-          <span className="conversation-turn-who">
-            {message.role === "user" ? "You" : "Agent"}
-            {message.role === "assistant" && message.runStatus && (
-              <> · {replyStatusLabel(message.runStatus)}</>
-            )}
-          </span>
-          <p>{message.text}</p>
-        </li>
-      ))}
+      {messages.map((message) =>
+        message.role === "user" ? (
+          <li key={message.id} className="chat-request">
+            {message.text}
+          </li>
+        ) : (
+          <li key={message.id} className="chat-reply">
+            <span className="chat-avatar" aria-hidden="true">
+              D
+            </span>
+            <div className="chat-reply-body">
+              {message.runStatus && (
+                <span className="conversation-turn-status">
+                  {replyStatusLabel(message.runStatus)}
+                </span>
+              )}
+              <p className="agent-answer">{message.text}</p>
+            </div>
+          </li>
+        ),
+      )}
     </ol>
   );
 }

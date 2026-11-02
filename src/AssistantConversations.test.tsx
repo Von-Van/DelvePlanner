@@ -53,7 +53,9 @@ describe("ConversationHistory", () => {
     expect(html.indexOf("Move gym to 6 pm today")).toBeLessThan(
       html.indexOf("Move Gym to 6:00 PM."),
     );
-    expect(html).toContain("Agent · Changes proposed");
+    expect(html).toContain("Changes proposed");
+    expect(html).toContain("chat-request");
+    expect(html).toContain("chat-reply");
   });
 
   it("shows nothing for a new conversation", () => {

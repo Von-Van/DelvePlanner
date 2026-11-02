@@ -25,7 +25,11 @@ import {
 } from "./AssistantRuns";
 import { localTimeZone } from "./date";
 import { Glyph, Mark, Spinner } from "./Geometry";
-import { acceptedOperations, describeProposal } from "./proposals";
+import {
+  acceptedOperations,
+  describeProposal,
+  OperationTone,
+} from "./proposals";
 import {
   commandAriaShortcut,
   commandShortcutText,
@@ -266,8 +270,11 @@ export function AssistantAgentPanel({
           disabled={running || (!available && !onFallback)}
         />
         <div>
-          <span>
-            <Glyph>⌘</Glyph> It reads your planner; it can't change it.
+          <span className="assistant-chips">
+            <span className="assistant-chip read">Reads your planner</span>
+            <span className="assistant-chip draft">
+              Drafts only · you approve every change
+            </span>
           </span>
           {running ? (
             <button
@@ -296,8 +303,16 @@ export function AssistantAgentPanel({
       <div aria-live="polite">
         {live && (
           <div className="agent-run">
-            <p className="proposal-kicker">WORKING · STEP BY STEP</p>
-            <AgentTrace events={live.steps} live compact />
+            {goal.trim() && <p className="chat-request">{goal.trim()}</p>}
+            <div className="chat-reply">
+              <span className="chat-avatar" aria-hidden="true">
+                D
+              </span>
+              <div className="chat-reply-body">
+                <p className="proposal-kicker">WORKING · STEP BY STEP</p>
+                <AgentTrace events={live.steps} live compact />
+              </div>
+            </div>
           </div>
         )}
         {!live && selected && (
@@ -347,86 +362,93 @@ function RunView({
   const measures = useMemo(() => runMeasures(run), [run]);
   return (
     <div className="agent-run">
-      <div className="agent-run-head">
-        <span className={`agent-status ${runTone(run)}`}>
-          {run.cancelled ? "Stopped" : runStatusLabels[run.status]}
+      <p className="chat-request">{run.goal}</p>
+      <div className="chat-reply">
+        <span className="chat-avatar" aria-hidden="true">
+          D
         </span>
-        <small className="agent-run-goal">{run.goal}</small>
-      </div>
-
-      {run.answer && run.status !== "drafted" && (
-        <p className="agent-answer">{run.answer}</p>
-      )}
-      {run.status === "needs_clarification" && (
-        <p className="agent-note">
-          Add the missing detail to your request and ask again.
-        </p>
-      )}
-      {run.error && <p className="agent-note problem">{run.error}</p>}
-
-      {run.draftCheck && run.draftCheck.problems.length > 0 && (
-        <div className="agent-note problem">
-          The agent proposed changes the app couldn't verify, so none are
-          offered:
-          <ul>
-            {run.draftCheck.problems.map((problem) => (
-              <li key={problem}>{problem}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {run.proposal && (
-        <ChangeReview
-          proposal={run.proposal}
-          onChanged={onChanged}
-          onMessage={onMessage}
-          onRefresh={onRefresh}
-        />
-      )}
-      {run.review.state === "applied" && (
-        <p className="agent-note good">
-          Applied {run.review.changes} change
-          {run.review.changes === 1 ? "" : "s"}.
-        </p>
-      )}
-      {run.review.state === "discarded" && (
-        <p className="agent-note">Proposed changes discarded.</p>
-      )}
-      {run.review.state === "expired" && (
-        <p className="agent-note">
-          These proposed changes expired. Ask again for fresh ones.
-        </p>
-      )}
-      {run.review.state === "failed" && (
-        <p className="agent-note problem">{run.review.message}</p>
-      )}
-
-      <dl className="agent-measures" aria-label="Run measurements">
-        {measures.map((measure) => (
-          <div key={measure.label} title={measure.hint}>
-            <dt>{measure.label}</dt>
-            <dd>{measure.value}</dd>
+        <div className="chat-reply-body">
+          <div className="agent-run-head">
+            <span className={`agent-status ${runTone(run)}`}>
+              {run.cancelled ? "Stopped" : runStatusLabels[run.status]}
+            </span>
           </div>
-        ))}
-      </dl>
 
-      <button
-        className="text-button"
-        onClick={() => setShowSteps((open) => !open)}
-        aria-expanded={showSteps}
-      >
-        {showSteps ? "Hide" : "Show"} the {run.trace.length} steps{" "}
-        <Glyph>{showSteps ? "↑" : "↓"}</Glyph>
-      </button>
-      {showSteps && (
-        <AgentTrace
-          events={run.trace}
-          status={run.cancelled ? "cancelled" : run.status}
-          compact
-          emptyText="This run stopped before its first step."
-        />
-      )}
+          {run.answer && run.status !== "drafted" && (
+            <p className="agent-answer">{run.answer}</p>
+          )}
+          {run.status === "needs_clarification" && (
+            <p className="agent-note">
+              Add the missing detail to your request and ask again.
+            </p>
+          )}
+          {run.error && <p className="agent-note problem">{run.error}</p>}
+
+          {run.draftCheck && run.draftCheck.problems.length > 0 && (
+            <div className="agent-note problem">
+              The agent proposed changes the app couldn't verify, so none are
+              offered:
+              <ul>
+                {run.draftCheck.problems.map((problem) => (
+                  <li key={problem}>{problem}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {run.proposal && (
+            <ChangeReview
+              proposal={run.proposal}
+              onChanged={onChanged}
+              onMessage={onMessage}
+              onRefresh={onRefresh}
+            />
+          )}
+          {run.review.state === "applied" && (
+            <p className="agent-note good">
+              Applied {run.review.changes} change
+              {run.review.changes === 1 ? "" : "s"}.
+            </p>
+          )}
+          {run.review.state === "discarded" && (
+            <p className="agent-note">Proposed changes discarded.</p>
+          )}
+          {run.review.state === "expired" && (
+            <p className="agent-note">
+              These proposed changes expired. Ask again for fresh ones.
+            </p>
+          )}
+          {run.review.state === "failed" && (
+            <p className="agent-note problem">{run.review.message}</p>
+          )}
+
+          <dl className="agent-measures" aria-label="Run measurements">
+            {measures.map((measure) => (
+              <div key={measure.label} title={measure.hint}>
+                <dt>{measure.label}</dt>
+                <dd>{measure.value}</dd>
+              </div>
+            ))}
+          </dl>
+
+          <button
+            className="text-button"
+            onClick={() => setShowSteps((open) => !open)}
+            aria-expanded={showSteps}
+          >
+            {showSteps ? "Hide" : "Show"} the {run.trace.length} steps{" "}
+            <Glyph>{showSteps ? "↑" : "↓"}</Glyph>
+          </button>
+          {showSteps && (
+            <AgentTrace
+              events={run.trace}
+              status={run.cancelled ? "cancelled" : run.status}
+              compact
+              emptyText="This run stopped before its first step."
+            />
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -482,40 +504,69 @@ function ChangeReview({
     }
   }
 
+  const rejectedCount = previews.length - accepted.length;
   return (
-    <div className="proposal">
-      <p className="proposal-kicker">REVIEW BEFORE APPLYING</p>
-      <strong>{proposal.summary}</strong>
+    <section className="change-review" aria-label="Changes to review">
+      <div className="change-review-head">
+        <h3>
+          {previews.length} change{previews.length === 1 ? "" : "s"} to review
+        </h3>
+        <span>Nothing is saved until you apply.</span>
+      </div>
+      <p className="change-review-summary">{proposal.summary}</p>
       <ul>
-        {previews.map((preview) => (
-          <li
-            key={preview.id}
-            className={kept.has(preview.id) ? "" : "rejected"}
-          >
-            <label>
-              <input
-                type="checkbox"
-                checked={kept.has(preview.id)}
-                onChange={() => toggle(preview.id)}
-                aria-label={`Accept: ${preview.title}`}
-              />
+        {previews.map((preview) => {
+          const isKept = kept.has(preview.id);
+          return (
+            <li key={preview.id} className={isKept ? "kept" : "rejected"}>
               <i
                 className={`operation-mark ${preview.tone}`}
                 aria-hidden="true"
               />
-              <span>
-                {preview.title}
+              <div className="change-text">
+                <span className="change-op">{toneLabels[preview.tone]}</span>
+                <strong>{preview.title}</strong>
                 {preview.details.length > 0 && (
                   <small>{preview.details.join(" · ")}</small>
                 )}
-              </span>
-            </label>
-          </li>
-        ))}
+                {preview.reason && (
+                  <small className="change-reason">{preview.reason}</small>
+                )}
+              </div>
+              <div
+                className="change-choice"
+                role="group"
+                aria-label={`Accept or reject: ${preview.title}`}
+              >
+                <button
+                  type="button"
+                  className="change-accept"
+                  aria-pressed={isKept}
+                  onClick={() => isKept || toggle(preview.id)}
+                  disabled={busy}
+                >
+                  {isKept ? "Accepted" : "Accept"}
+                </button>
+                <button
+                  type="button"
+                  className="change-reject"
+                  aria-pressed={!isKept}
+                  onClick={() => isKept && toggle(preview.id)}
+                  disabled={busy}
+                >
+                  {isKept ? "Reject" : "Rejected"}
+                </button>
+              </div>
+            </li>
+          );
+        })}
       </ul>
-      <div className="proposal-actions">
+      <div className="change-review-foot">
+        <span>
+          {accepted.length} accepted · {rejectedCount} rejected
+        </span>
         <button className="secondary-button" onClick={discard} disabled={busy}>
-          Discard
+          Discard all
         </button>
         <button
           className="primary-button small"
@@ -526,9 +577,16 @@ function ChangeReview({
           Apply {accepted.length} change{accepted.length === 1 ? "" : "s"}
         </button>
       </div>
-    </div>
+    </section>
   );
 }
+
+const toneLabels: Record<OperationTone, string> = {
+  create: "Add",
+  change: "Change",
+  move: "Move",
+  delete: "Remove",
+};
 
 function messageOf(cause: unknown) {
   if (cause instanceof DelvePlannerError) return cause.message;
