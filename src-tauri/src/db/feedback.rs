@@ -33,6 +33,9 @@ pub const MAX_FEEDBACK_ABOUT_CHARS: usize = 200;
 pub const MAX_FEEDBACK_PER_RUN: i64 = 20;
 /// The longest reason quoted back to the assistant in a conversation.
 const NOTE_REASON_CHARS: usize = 200;
+/// The longest change description quoted back with it, so the note stays short enough to keep
+/// whole when the conversation window shortens a long reply.
+const NOTE_ABOUT_CHARS: usize = 80;
 
 pub(super) fn ensure_feedback_schema(connection: &Connection) -> AppResult<()> {
     connection.execute_batch(
@@ -326,7 +329,7 @@ pub(super) fn feedback_note(feedback: &[AgentFeedback]) -> Option<String> {
             let about = item
                 .about
                 .as_deref()
-                .map(|about| format!(" about \"{}\"", clip(about, MAX_FEEDBACK_ABOUT_CHARS)))
+                .map(|about| format!(" about \"{}\"", clip(about, NOTE_ABOUT_CHARS)))
                 .unwrap_or_default();
             match (item.rating, item.reason.as_deref()) {
                 (FeedbackRating::Helpful, _) => {

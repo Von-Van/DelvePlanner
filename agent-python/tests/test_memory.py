@@ -160,8 +160,20 @@ def test_a_long_reply_keeps_the_person_s_feedback_note():
     assert len(clipped.text) <= MAX_TURN_CHARS
     assert clipped.text.endswith(note)
     assert "…" in clipped.text
-    # A bracket that is mostly the reply itself is clipped like any other text.
-    (plain,) = recent_window([Turn("assistant", "[" + "x" * 5000 + "]")], 1)
+    # A note longer than half the budget (a long change description and reason) is still kept.
+    long_note = (
+        " [The person turned down the drafted change. " + "y" * 300 + " This applies to this conversation only.]"
+    )
+    (kept,) = recent_window([Turn("assistant", "Drafted: " + "z" * 2000 + long_note)], 1)
+    assert len(kept.text) <= MAX_TURN_CHARS and kept.text.endswith(long_note)
+    assert kept.text.startswith("Drafted: z")
+    # A note that can't fit keeps its end, where the newest feedback is, and some of the reply.
+    huge = " [" + "old feedback " * 80 + "newest: no deep work after 4.]"
+    (cut,) = recent_window([Turn("assistant", "Drafted: " + "z" * 2000 + huge)], 1)
+    assert len(cut.text) <= MAX_TURN_CHARS
+    assert cut.text.startswith("Drafted: z") and cut.text.endswith("newest: no deep work after 4.]")
+    # Text with no closing note is clipped at the end as before.
+    (plain,) = recent_window([Turn("assistant", "x" * 5000)], 1)
     assert len(plain.text) <= MAX_TURN_CHARS and plain.text.endswith("…")
 
 
