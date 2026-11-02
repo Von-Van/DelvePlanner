@@ -1,0 +1,92 @@
+{
+  "case_id": "mem-sync-day-corrected",
+  "family": "memory",
+  "split": "dev",
+  "description": "Don't use a superseded memory: an older conversation says the launch sync is on Tuesdays; the person later corrected it to Thursdays, which superseded the old memory. The answer must say Thursday.",
+  "fixture": {
+    "version": "planner.v2"
+  },
+  "now": "2026-11-02T09:30-05:00",
+  "timeZone": "America/New_York",
+  "permittedTools": [
+    "get_day_context",
+    "list_active_projects",
+    "get_project_context",
+    "search_tasks",
+    "get_capacity",
+    "get_recent_actions",
+    "get_memory"
+  ],
+  "conversation": [
+    {
+      "role": "user",
+      "text": "Remember that the weekly launch sync is on Tuesdays at 10.",
+      "at": "2026-10-20T09:00-04:00"
+    },
+    {
+      "role": "assistant",
+      "text": "Noted: weekly launch sync, Tuesdays at 10 am.",
+      "at": "2026-10-20T09:00-04:00"
+    }
+  ],
+  "memory": {
+    "records": [
+      {
+        "id": "mem-sync-old",
+        "kind": "project_fact",
+        "content": "The weekly launch sync is on Tuesdays at 10 am.",
+        "source": "user_stated",
+        "confirmation": "confirmed",
+        "planId": "00000000-0000-4000-8000-000000000101",
+        "recordedAt": "2026-10-20T13:00:00.000Z",
+        "supersededBy": "mem-sync-new"
+      },
+      {
+        "id": "mem-sync-new",
+        "kind": "project_fact",
+        "content": "The weekly launch sync moved to Thursdays at 10 am.",
+        "source": "user_correction",
+        "confirmation": "confirmed",
+        "planId": "00000000-0000-4000-8000-000000000101",
+        "recordedAt": "2026-10-28T15:00:00.000Z"
+      }
+    ],
+    "outdated": [
+      "Tuesday"
+    ]
+  },
+  "goal": "Which day is the weekly launch sync on now?",
+  "expected": {
+    "status": [
+      "answered"
+    ],
+    "answerIncludes": [
+      [
+        "Thursday"
+      ]
+    ]
+  },
+  "safety": {
+    "noDrafts": true
+  },
+  "reference": {
+    "calls": [
+      {
+        "tool": "get_memory",
+        "args": {
+          "query": "weekly launch sync"
+        }
+      }
+    ],
+    "result": {
+      "status": "answered",
+      "answer": "Thursdays at 10 am (you changed it from the earlier day on Oct 28).",
+      "drafts": []
+    }
+  },
+  "tags": [
+    "correction",
+    "supersession",
+    "false_recall"
+  ]
+}

@@ -1,0 +1,101 @@
+{
+  "case_id": "cont-push-to-friday",
+  "family": "continuity",
+  "split": "dev",
+  "description": "The previous turn asked about the landlord call; 'push it to Friday at the same time' means the Call with landlord, Thursday 4 pm -> Friday 4 pm. Nothing about it is in memory, so only the recent conversation can resolve 'it'.",
+  "fixture": {
+    "version": "planner.v2"
+  },
+  "now": "2026-11-03T10:20-05:00",
+  "timeZone": "America/New_York",
+  "permittedTools": [
+    "get_day_context",
+    "list_active_projects",
+    "get_project_context",
+    "search_tasks",
+    "get_capacity",
+    "get_recent_actions",
+    "get_memory"
+  ],
+  "conversation": [
+    {
+      "role": "user",
+      "text": "When is my call with the landlord?",
+      "at": "2026-11-03T10:15-05:00"
+    },
+    {
+      "role": "assistant",
+      "text": "Your Call with landlord is on Thursday, Nov 5 at 4:00 pm.",
+      "at": "2026-11-03T10:15-05:00"
+    }
+  ],
+  "memory": {
+    "records": [
+      {
+        "id": "mem-pref-mornings",
+        "kind": "preference",
+        "content": "Prefers deep work in the mornings.",
+        "source": "user_stated",
+        "confirmation": "confirmed",
+        "planId": null,
+        "recordedAt": "2026-10-12T15:00:00.000Z"
+      }
+    ]
+  },
+  "goal": "Push it to Friday at the same time.",
+  "expected": {
+    "status": [
+      "drafted"
+    ],
+    "drafts": [
+      {
+        "op": "reschedule_event",
+        "target": {
+          "id": "00000000-0000-4000-8000-000000000506",
+          "revision": 1
+        },
+        "payload": {
+          "startAtUtc": "2026-11-06T21:00:00.000Z"
+        }
+      }
+    ]
+  },
+  "reference": {
+    "calls": [
+      {
+        "tool": "get_day_context",
+        "args": {
+          "date": "2026-11-05",
+          "timeZone": "America/New_York"
+        }
+      }
+    ],
+    "result": {
+      "status": "drafted",
+      "answer": "Drafted: move Call with landlord to Friday, Nov 6 at 4:00 pm.",
+      "drafts": [
+        {
+          "op": "reschedule_event",
+          "target": {
+            "id": "00000000-0000-4000-8000-000000000506",
+            "revision": 1
+          },
+          "payload": {
+            "startAtUtc": "2026-11-06T21:00:00.000Z",
+            "timeZone": "America/New_York",
+            "reminderChange": {
+              "action": "unchanged"
+            }
+          },
+          "evidence": [
+            "1"
+          ]
+        }
+      ]
+    }
+  },
+  "tags": [
+    "follow_up",
+    "conversation_only"
+  ]
+}

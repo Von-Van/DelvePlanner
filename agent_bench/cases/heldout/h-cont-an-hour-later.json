@@ -1,0 +1,117 @@
+{
+  "case_id": "h-cont-an-hour-later",
+  "family": "continuity",
+  "split": "heldout",
+  "description": "Lunch with Sam was just moved to 12:30 (now revision 3). 'Make it an hour later' means 1:30 pm, not 2:00 pm (an hour after the original 1 pm).",
+  "fixture": {
+    "version": "planner.v2",
+    "overrides": [
+      {
+        "entity": "events",
+        "id": "00000000-0000-4000-8000-000000000503",
+        "fields": {
+          "revision": 3,
+          "startAtUtc": "2026-11-03T17:30:00.000Z"
+        }
+      }
+    ]
+  },
+  "now": "2026-11-03T09:40-05:00",
+  "timeZone": "America/New_York",
+  "permittedTools": [
+    "get_day_context",
+    "list_active_projects",
+    "get_project_context",
+    "search_tasks",
+    "get_capacity",
+    "get_recent_actions",
+    "get_memory"
+  ],
+  "conversation": [
+    {
+      "role": "user",
+      "text": "Move lunch with Sam to 12:30 today.",
+      "at": "2026-11-03T09:30-05:00"
+    },
+    {
+      "role": "assistant",
+      "text": "Drafted: move Lunch with Sam to 12:30 pm today. You approved it.",
+      "at": "2026-11-03T09:31-05:00"
+    }
+  ],
+  "memory": {
+    "records": [
+      {
+        "id": "mem-lunch-move",
+        "kind": "decision",
+        "content": "Lunch with Sam today moved from 1:00 pm to 12:30 pm (approved change).",
+        "source": "approved_action",
+        "confirmation": "confirmed",
+        "planId": null,
+        "recordedAt": "2026-11-03T14:31:00.000Z"
+      }
+    ],
+    "outdated": [
+      "2026-11-03T19:00:00",
+      "2:00 pm",
+      "2 pm"
+    ]
+  },
+  "goal": "Actually, make it an hour later.",
+  "expected": {
+    "status": [
+      "drafted"
+    ],
+    "drafts": [
+      {
+        "op": "reschedule_event",
+        "target": {
+          "id": "00000000-0000-4000-8000-000000000503",
+          "revision": 3
+        },
+        "payload": {
+          "startAtUtc": "2026-11-03T18:30:00.000Z"
+        }
+      }
+    ]
+  },
+  "reference": {
+    "calls": [
+      {
+        "tool": "get_day_context",
+        "args": {
+          "date": "2026-11-03",
+          "timeZone": "America/New_York"
+        }
+      }
+    ],
+    "result": {
+      "status": "drafted",
+      "answer": "Drafted: move Lunch with Sam to 1:30 pm today.",
+      "drafts": [
+        {
+          "op": "reschedule_event",
+          "target": {
+            "id": "00000000-0000-4000-8000-000000000503",
+            "revision": 3
+          },
+          "payload": {
+            "startAtUtc": "2026-11-03T18:30:00.000Z",
+            "timeZone": "America/New_York",
+            "reminderChange": {
+              "action": "unchanged"
+            }
+          },
+          "evidence": [
+            "1"
+          ]
+        }
+      ]
+    }
+  },
+  "tags": [
+    "follow_up",
+    "relative_time",
+    "regression_weak_spot"
+  ]
+}
