@@ -146,6 +146,7 @@
   padding: 8px 10px;
   background: var(--ground-soft);
   border: 1px solid var(--hairline);
+  border-radius: var(--radius);
 }
 
 .trace-details dl > div {
