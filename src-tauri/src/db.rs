@@ -2,6 +2,7 @@ mod agent;
 mod availability;
 mod capture;
 mod conversation;
+mod heads_up;
 mod horizons;
 mod memory;
 mod planning;
@@ -27,6 +28,7 @@ use chrono::{
     TimeZone, Utc,
 };
 use conversation::ensure_conversation_schema;
+use heads_up::ensure_heads_up_schema;
 use memory::ensure_memory_schema;
 use planning::{
     ensure_plan_exists, milestone_plan_mismatch, validate_milestone_shape, validate_plan_shape,
@@ -58,6 +60,11 @@ pub use conversation::{
     AgentMessage, AgentThread, AgentThreadDetail, ConversationContext, ConversationTurn,
     MessageRole, MessageRunStatus, NewAgentMessage, DEFAULT_THREAD_TITLE,
 };
+pub use heads_up::{
+    HeadsUp, HeadsUpKind, HeadsUpRefresh, HeadsUpSettings, HeadsUpStatus, HeadsUpTarget,
+    HeadsUpTargetKind, NewHeadsUp, PlannerHeadsUpFacts, PushedTask, QuietPlan, UpcomingBlock,
+    MAX_NEW_HEADS_UPS_PER_DAY, MAX_NOTIFICATIONS_PER_DAY, MAX_SHOWN_HEADS_UPS, PUSHED_BACK_MOVES,
+};
 pub use memory::{
     Confirmation, ImportedMemorySettings, MemoryExport, MemoryFilter, MemoryImport, MemoryKind,
     MemoryRecord, MemorySettings, MemorySource, NewMemory, UpdateMemorySettings,
@@ -68,7 +75,7 @@ pub use proposals::{
 };
 pub(crate) use proposals::{fold, planning_tokens, title_matches};
 
-pub const CURRENT_SCHEMA_VERSION: u32 = 11;
+pub const CURRENT_SCHEMA_VERSION: u32 = 12;
 pub const EXPORT_FORMAT_VERSION: u32 = 7;
 const BACKUP_RETENTION: usize = 5;
 const REMINDER_DELIVERY_GRACE_MINUTES: i64 = 15;
@@ -1058,6 +1065,7 @@ fn migrate(connection: &Connection, from_version: u32) -> AppResult<()> {
         ensure_agent_schema(connection)?;
         ensure_memory_schema(connection)?;
         ensure_conversation_schema(connection)?;
+        ensure_heads_up_schema(connection)?;
         connection.pragma_update(None, "user_version", CURRENT_SCHEMA_VERSION)?;
         Ok::<(), AppError>(())
     })();
