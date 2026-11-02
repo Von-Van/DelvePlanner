@@ -71,10 +71,10 @@ class A1BenchAgent:
 
     architecture_id = "A1"
 
-    def __init__(self, debug_trace: bool = False) -> None:
+    def __init__(self, debug_trace: bool = False, **agent_options: Any) -> None:
         agent_mod = _submodule("agent")
         self._types = _submodule("types")
-        self.agent = agent_mod.A1Agent(debug_trace=debug_trace)
+        self.agent = agent_mod.A1Agent(debug_trace=debug_trace, **agent_options)
         self.prompt_version = _submodule("prompts").PROMPT_VERSION
 
     def run(self, task: Any, tools: Any, model: Any, budget: Any) -> dict[str, Any]:

@@ -93,8 +93,8 @@ def test_grounded_draft_is_returned_not_applied():
         "dueDate": {"action": "unchanged"},
         "plannedWeek": {"action": "unchanged"},
     }
-    # Only read tools were ever invoked; drafting did not call anything.
-    assert [name for name, _ in tools.calls] == ["search_tasks"]
+    # Only read tools were ever invoked: the search, then the self-check's re-read of the task's project.
+    assert [name for name, _ in tools.calls] == ["search_tasks", "get_project_context"]
 
 
 def test_create_draft_needs_no_target():
@@ -365,7 +365,18 @@ def test_crashing_tool_client_is_a_tool_error_not_a_crash():
 def test_trace_shape_and_order():
     result, _, _ = run([search(), SCHEDULE_DRAFT])
     kinds = [e["kind"] for e in result.trace]
-    assert kinds == ["plan", "model_call", "tool_call", "tool_result", "model_call", "draft", "final"]
+    reread = ["tool_call", "tool_result", "verify"]  # the self-check re-reads the target, then passes the drafts
+    assert kinds == [
+        "plan",
+        "model_call",
+        "tool_call",
+        "tool_result",
+        "model_call",
+        *reread,
+        "verify",
+        "draft",
+        "final",
+    ]
     assert [e["seq"] for e in result.trace] == list(range(1, len(kinds) + 1))
     for event in result.trace:
         assert (
