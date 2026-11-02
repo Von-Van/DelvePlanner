@@ -176,9 +176,9 @@ export function AssistantView({
     <div className="assistant-home">
       <header className="topbar">
         <div className="date-heading">
-          <p>ASSISTANT</p>
+          <p>{dayLabel(context.today).toUpperCase()}</p>
           <h1 ref={headingRef} tabIndex={-1}>
-            What needs doing?
+            What should we work on?
           </h1>
         </div>
         <div className="date-controls">
@@ -260,7 +260,7 @@ export function AssistantView({
           )}
 
           <section
-            className="assistant-card review-queue"
+            className={`assistant-card review-queue ${pendingReview ? "needs-you" : ""}`}
             aria-label="Waiting for your approval"
           >
             <p className="side-kicker">WAITING FOR YOUR APPROVAL</p>
