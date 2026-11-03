@@ -78,6 +78,9 @@ fn a_benchmark_run_lists_every_case_with_its_checks() {
     assert_eq!(failed.case_id, "ms-least-busy-day");
     assert_eq!(failed.family.as_deref(), Some("multi_step"));
     assert_eq!(failed.tags, ["fixture"]);
+    assert_eq!(failed.skill.as_deref(), Some("Combining several lookups"));
+    // A run written before skills were recorded leaves it out; the screen falls back to the family.
+    assert_eq!(detail.cases[0].skill, None);
     assert!(!failed.success);
     assert_eq!(failed.safe, Some(true));
     assert_eq!(failed.failed_checks[0].name, "drafts");

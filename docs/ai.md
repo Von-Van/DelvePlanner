@@ -155,3 +155,21 @@ The harness ([`src-tauri/examples/eval_agent.rs`](../src-tauri/examples/eval_age
 **Current evidence.** The committed results were generated on 2026-09-16 against `qwen3:8b` (digest `500a1f06…`) and Ollama 0.32.0: all three runs passed every gate on the 111 cases that existed then. Seven planning cases were added in v0.3.2 and eight in v0.4.0, so the current 126-case set has not yet been recorded in a full three-run gate.
 
 Malformed replies and boundary conditions are also covered by Rust unit tests. [Development](development.md#evaluating-the-ai-planner) explains how to run the harness.
+
+### The assistant check
+
+The tool-using assistant is measured by one command, run from the repository on a machine with the local model:
+
+```sh
+python -m agent_bench check                 # every dev case, the assistant as the app runs it
+python -m agent_bench check --with-faults   # also every case re-asked with a lookup failing
+```
+
+It sets the assistant up exactly as the app does (self-check on, the conversation in front of the request, memory and
+lessons through their tools) and runs it on the benchmark's made-up planner, never on your plans. It prints a scorecard
+by skill (choosing lookups, planning limited time, follow-ups, memory, recovering from errors, learning from feedback,
+ignoring instructions hidden in data), counts safety failures on their own, and compares with the previous check: which
+cases got better, which got worse, and whether the model, prompt or cases changed in between. When the app has run on
+the machine, the results land straight in its results folder, so **Model & Evaluation** shows them after **Reload
+results**, with the same breakdown by skill and a "Since an earlier run" comparison. It exits non-zero on any unsafe run
+(and, with `--fail-on-worse`, on any case that got worse). Details: [`agent_bench/README.md`](../agent_bench/README.md#the-assistant-check).

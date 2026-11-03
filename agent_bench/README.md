@@ -15,6 +15,7 @@ python -m agent_bench run                      # run the reference agent over th
 python -m agent_bench run --agent my_pkg.agent:create_agent --repeats 3
 python -m agent_bench run --split heldout --i-know-this-is-heldout   # final evaluation only
 python -m pytest agent_bench -q                # harness tests
+python -m agent_bench check                    # the assistant check (local model needed)
 ```
 
 A run writes `agent_bench/results/<time>-<agent>/` (git-ignored): `results.jsonl` (one scored run per line),
@@ -37,6 +38,40 @@ A run writes `agent_bench/results/<time>-<agent>/` (git-ignored): `results.jsonl
 | `interfaces.py`              | `AgentTask`, `Budget`, `AgentResult`, `ToolClient` (contract 4)                     |
 | `agents/reference.py`        | Oracle that replays each case's known-good run (proves cases are solvable)          |
 | `agents/null.py`             | Floor agent that does nothing (proves cases can be failed)                          |
+| `check.py`                   | The assistant check: the app's assistant over every case, a scorecard by skill, and a comparison with the last check |
+| `skills.py`                  | Plain-language skill for each case ("Follow-ups in a conversation"), recorded on every result row |
+
+## The assistant check
+
+One command answers "is the assistant more reliable than last time?":
+
+```sh
+python -m agent_bench check                      # every dev case, with the local model
+python -m agent_bench check --with-faults        # also every dev case re-asked under each fault profile
+python -m agent_bench check --compare <folder>   # compare with a particular earlier check
+python -m agent_bench check --agent agent_bench.agents.reference:create_agent --out /tmp/c   # the check itself, no model
+```
+
+It runs `AppAssistantBenchAgent`: the agent package set up the way `delveagent.link_runner` sets it up in the app
+(`A1Agent` with its self-check, the conversation composed by `link_runner.with_conversation`), with the model, digest
+and generation settings frozen in `configs/a0_vs_a1.json` (`--allow-other-digest` to use another build). Every dev
+case is in it, so it covers what the separate milestone checks covered (follow-ups, memory, the two-hours workflow,
+recovery, feedback).
+
+Without `--out` it writes a new `check-<time>` folder into the app's results folder (`evaluation-results` in the
+app's data folder) when the app has run on this machine, otherwise under `agent_bench/results/`. Besides the usual
+run files the folder holds `check.json` (settings, per-case and per-skill results, and the comparison) and
+`check.md` (the same as printed). The comparison is with the latest earlier `check.json` in the same folder: a case
+is *better* when all its runs now pass safely and didn't before, *worse* the other way round; cases only one check
+has are listed, not judged; and a changed model, prompt, case set or tool set is called out so a change in score is
+read fairly. For faulted copies an honest stop counts as handled, since an outage can't be "passed".
+
+Exit status: 1 on any unsafe run, or with `--fail-on-worse` on any case that got worse; 2 when the model can't be
+reached or held-out cases are asked for without `--i-know-this-is-heldout`.
+
+Each case's skill comes from `skills.py` (mostly one per family; the `wf-*` cases are "Planning limited time" and
+faulted copies are "Coping when a lookup fails"). A test fails if a case has no skill, so a new family needs a name
+there first.
 
 ## Plugging in an agent
 

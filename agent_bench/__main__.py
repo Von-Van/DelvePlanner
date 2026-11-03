@@ -1,4 +1,4 @@
-"""Command line: ``python -m agent_bench {validate,list,run}``."""
+"""Command line: ``python -m agent_bench {validate,list,run,check}``."""
 
 from __future__ import annotations
 
@@ -9,6 +9,8 @@ from datetime import datetime
 from pathlib import Path
 
 from .cases import case_files, case_problems, load_cases
+from .check import add_arguments as add_check_arguments
+from .check import cmd_check
 from .runner import load_agent, run_suite
 
 DEFAULT_OUT = Path(__file__).parent / "results"
@@ -81,6 +83,9 @@ def main(argv: list[str] | None = None) -> int:
     p_run.add_argument("--require-success", type=float, help="exit non-zero below this success rate (0-1)")
     p_run.add_argument("--i-know-this-is-heldout", action="store_true")
     p_run.set_defaults(fn=cmd_run)
+    p_check = sub.add_parser("check", help="the assistant check: every case, scored by skill, compared with last time")
+    add_check_arguments(p_check)
+    p_check.set_defaults(fn=cmd_check)
     args = parser.parse_args(argv)
     return args.fn(args)
 

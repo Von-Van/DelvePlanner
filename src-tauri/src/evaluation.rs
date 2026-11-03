@@ -86,6 +86,9 @@ pub struct EvaluationCase {
     pub key: String,
     pub case_id: String,
     pub family: Option<String>,
+    /// What the case checks, in plain words ("Follow-ups in a conversation"). Benchmark runs written
+    /// since the assistant check record it per case; older runs and other sources leave it out.
+    pub skill: Option<String>,
     pub split: Option<String>,
     pub tags: Vec<String>,
     pub repeat: u32,
@@ -550,6 +553,7 @@ fn benchmark_case(row: &Value, folder: &Path) -> EvaluationCase {
     EvaluationCase {
         key: format!("{case_id}#{repeat}"),
         family: str_of(row, "family"),
+        skill: str_of(row, "skill"),
         split: str_of(row, "split"),
         tags,
         repeat,
@@ -605,6 +609,7 @@ fn load_regression(
                 key: format!("{case_id}#{repeat}"),
                 case_id,
                 family: None,
+                skill: None,
                 split: None,
                 tags: Vec::new(),
                 repeat,
@@ -1031,6 +1036,7 @@ fn recorded_detail(database: &Path, name: &str) -> Result<EvaluationRunDetail, E
             EvaluationCase {
                 key: row.id.clone(),
                 family: row.family.clone(),
+                skill: None,
                 split: None,
                 tags: row
                     .tags

@@ -43,6 +43,8 @@ export const evaluationCaseSchema = z.object({
   key: z.string().min(1),
   caseId: z.string(),
   family: z.string().nullable(),
+  /** What the case checks, in plain words. Older runs and regression reports leave it out. */
+  skill: z.string().nullable(),
   split: z.string().nullable(),
   tags: z.array(z.string()),
   repeat: countSchema,
@@ -139,4 +141,110 @@ export function dateLabel(iso: string | null) {
     hour: "numeric",
     minute: "2-digit",
   });
+}
+
+// ---------------------------------------------------------------------------------------------
+// Skills and comparisons: how a run reads to someone asking "is the assistant getting better?"
+
+/** The case's plain-language skill, or its family for runs saved before skills were recorded. */
+export function skillOf(testCase: EvaluationCase) {
+  return testCase.skill ?? testCase.family;
+}
+
+export type SkillLine = {
+  skill: string;
+  runs: number;
+  passed: number;
+  unsafe: number;
+};
+
+/** One line per skill: skills with a failure first, then the rest, each group alphabetical. */
+export function skillBreakdown(cases: EvaluationCase[]): SkillLine[] {
+  const lines = new Map<string, SkillLine>();
+  for (const testCase of cases) {
+    const skill = skillOf(testCase) ?? "Other";
+    const line = lines.get(skill) ?? { skill, runs: 0, passed: 0, unsafe: 0 };
+    line.runs += 1;
+    if (testCase.success) line.passed += 1;
+    if (testCase.safe === false) line.unsafe += 1;
+    lines.set(skill, line);
+  }
+  const clean = (line: SkillLine) =>
+    line.passed === line.runs && line.unsafe === 0;
+  return [...lines.values()].sort(
+    (a, b) =>
+      Number(clean(a)) - Number(clean(b)) || a.skill.localeCompare(b.skill),
+  );
+}
+
+export type RunComparison = {
+  better: string[];
+  worse: string[];
+  stillFailing: string[];
+  newCases: string[];
+  droppedCases: string[];
+};
+
+/**
+ * Case by case, what changed between an earlier run and this one. A case is clean when every one
+ * of its runs passed safely; "better" became clean, "worse" stopped being clean. Cases only one run
+ * has are listed, not judged.
+ */
+export function compareRuns(
+  current: EvaluationCase[],
+  previous: EvaluationCase[],
+): RunComparison {
+  const cleanByCase = (cases: EvaluationCase[]) => {
+    const out = new Map<string, boolean>();
+    for (const c of cases) {
+      const ok = c.success && c.safe !== false;
+      out.set(c.caseId, (out.get(c.caseId) ?? true) && ok);
+    }
+    return out;
+  };
+  const now = cleanByCase(current);
+  const then = cleanByCase(previous);
+  const sorted = (ids: Iterable<string>) => [...ids].sort();
+  const shared = sorted([...now.keys()].filter((id) => then.has(id)));
+  return {
+    better: shared.filter((id) => now.get(id) && !then.get(id)),
+    worse: shared.filter((id) => !now.get(id) && then.get(id)),
+    stillFailing: shared.filter((id) => !now.get(id) && !then.get(id)),
+    newCases: sorted([...now.keys()].filter((id) => !then.has(id))),
+    droppedCases: sorted([...then.keys()].filter((id) => !now.has(id))),
+  };
+}
+
+/** Earlier benchmark runs this one can be compared with, newest first. */
+export function earlierRuns(runs: EvaluationRun[], run: EvaluationRun) {
+  if (run.source !== "benchmark" || !run.startedAt) return [];
+  const started = run.startedAt;
+  return runs
+    .filter(
+      (other) =>
+        other.id !== run.id &&
+        other.source === "benchmark" &&
+        other.startedAt !== null &&
+        other.startedAt < started,
+    )
+    .sort((a, b) => (b.startedAt ?? "").localeCompare(a.startedAt ?? ""));
+}
+
+/** The run to compare with unless the person picks another: the latest earlier run of the same design. */
+export function defaultComparison(
+  candidates: EvaluationRun[],
+  run: EvaluationRun,
+) {
+  return (
+    candidates.find((other) => other.architecture === run.architecture) ?? null
+  );
+}
+
+/** Whether two runs differ in something that changes how their scores compare. */
+export function settingsDiffer(a: EvaluationRun, b: EvaluationRun) {
+  return (
+    a.label !== b.label ||
+    a.modelName !== b.modelName ||
+    a.modelDigest !== b.modelDigest
+  );
 }
