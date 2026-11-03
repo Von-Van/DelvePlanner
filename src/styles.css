@@ -4784,6 +4784,35 @@ kbd.off {
   color: var(--secondary);
   font-size: 10px;
 }
+.worth-attention .heads-up-dismiss {
+  grid-column: 2;
+  margin-top: 4px;
+  border-radius: var(--radius-md);
+}
+.worth-attention .heads-up-dismiss.feedback-form,
+.worth-attention .heads-up-dismiss .lesson-card {
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+}
+.worth-attention .heads-up-dismiss .lesson-field {
+  grid-template-columns: auto minmax(0, 1fr);
+}
+.worth-attention .heads-up-dismiss .lesson-card .proposal-actions {
+  grid-template-columns: minmax(0, 1fr);
+}
+.worth-attention .heads-up-dismiss .lesson-card .proposal-actions > button {
+  width: 100%;
+}
+.feedback-form label.heads-up-stop {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  color: var(--strong);
+}
+.heads-up-stop input {
+  margin-top: 2px;
+}
 /* "Waiting for your approval": each proposal on its own row, reviewed on the Assistant. */
 .review-queue {
   gap: 12px;

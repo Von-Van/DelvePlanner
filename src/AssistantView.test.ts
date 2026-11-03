@@ -86,6 +86,7 @@ describe("worthAttention", () => {
     ]);
     expect(items[1]).toMatchObject({
       headsUpId: "a",
+      headsUpKind: "deadline",
       action: { label: "Plan it", target: "assistant" },
     });
   });

@@ -6,6 +6,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { z } from "zod";
+import { feedbackReceiptSchema } from "./feedbackApi";
 
 export const headsUpKinds = [
   "deadline",
@@ -16,6 +17,16 @@ export const headsUpKinds = [
   "quiet_project",
 ] as const;
 export type HeadsUpKind = (typeof headsUpKinds)[number];
+
+/** Each kind in plain words, as "stop showing …" and Settings name it. */
+export const headsUpKindLabels: Record<HeadsUpKind, string> = {
+  deadline: "deadlines with no time planned",
+  clash: "clashes",
+  focus_window: "free focus time",
+  overloaded: "overbooked days",
+  pushed_back: "work that keeps slipping",
+  quiet_project: "quiet projects",
+};
 
 export const headsUpSchema = z.object({
   id: z.string().min(1),
@@ -52,8 +63,21 @@ export type HeadsUp = z.infer<typeof headsUpSchema>;
 export const headsUpSettingsSchema = z.object({
   enabled: z.boolean(),
   notify: z.boolean(),
+  /** Kinds the person asked to stop. */
+  mutedKinds: z.array(z.enum(headsUpKinds)),
 });
 export type HeadsUpSettings = z.infer<typeof headsUpSettingsSchema>;
+
+/** What the person said when dismissing: stop the whole kind, and why it wasn't useful. */
+export type HeadsUpDismissal = { stopKind: boolean; reason: string | null };
+
+export const dismissReceiptSchema = z.object({
+  headsUp: headsUpSchema,
+  mutedKind: z.enum(headsUpKinds).nullable(),
+  /** Set when a reason was given: the lesson on offer waits for the person's choice. */
+  feedback: feedbackReceiptSchema.nullable(),
+});
+export type DismissReceipt = z.infer<typeof dismissReceiptSchema>;
 
 const commandErrorSchema = z.object({ message: z.string() });
 
@@ -80,8 +104,12 @@ export const headsUpApi = {
   /** The heads-ups to show now (at most three). `refresh` checks again first. */
   list: (refresh: boolean) =>
     call(z.array(headsUpSchema), "list_heads_ups", { refresh }),
-  /** Don't show it again. */
-  dismiss: (id: string) => call(z.null(), "dismiss_heads_up", { id }),
+  /** Don't show it again; optionally stop its kind and say why. */
+  dismiss: (id: string, dismissal?: HeadsUpDismissal) =>
+    call(dismissReceiptSchema, "dismiss_heads_up", {
+      id,
+      dismissal: dismissal ?? null,
+    }),
   /** Not now: hidden until tomorrow's working hours start, then back if still true. */
   snooze: (id: string) => call(headsUpSchema, "snooze_heads_up", { id }),
   /** Hands it to the assistant; resolves with its request. */
@@ -93,3 +121,4 @@ export const headsUpApi = {
   onChanged: (handler: () => void): Promise<UnlistenFn> =>
     listen("heads-ups-changed", () => handler()),
 };
+export type HeadsUpApi = typeof headsUpApi;

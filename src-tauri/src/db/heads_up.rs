@@ -8,12 +8,16 @@
 //!   again. One that stops being true is cleared on the next check.
 //! - `heads_up_settings`: whether heads-ups are on, and whether urgent ones may send a system
 //!   notification.
+//! - `heads_up_muted_kind` (schema 14): kinds of heads-up the person asked to stop ("don't tell
+//!   me about free focus time"). The rules still run; what they find of a stopped kind is never
+//!   stored, so turning the kind back on brings up whatever is true then.
 //!
 //! Like the assistant's other records, none of this is planner data: it is never exported and
 //! imports leave it alone. The model never writes it.
 
+use super::feedback::feedback_reason;
 use super::planning::{task_from_row, TASK_SELECT};
-use super::{collect, utc_string, PlannerDatabase};
+use super::{collect, utc_string, AgentFeedback, PlannerDatabase};
 use crate::error::{AppError, AppResult};
 use crate::model::Task;
 use chrono::{DateTime, Duration, NaiveDate, Utc};
@@ -74,7 +78,14 @@ pub(super) fn ensure_heads_up_schema(connection: &Connection) -> AppResult<()> {
              enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0, 1)),
              notify INTEGER NOT NULL DEFAULT 1 CHECK(notify IN (0, 1))
          );
-         INSERT OR IGNORE INTO heads_up_settings (id) VALUES (1);",
+         INSERT OR IGNORE INTO heads_up_settings (id) VALUES (1);
+
+         CREATE TABLE IF NOT EXISTS heads_up_muted_kind (
+             kind TEXT PRIMARY KEY NOT NULL
+                 CHECK(kind IN ('deadline', 'clash', 'focus_window', 'overloaded',
+                               'pushed_back', 'quiet_project')),
+             muted_at TEXT NOT NULL
+         );",
     )?;
     Ok(())
 }
@@ -101,6 +112,15 @@ pub enum HeadsUpKind {
 }
 
 impl HeadsUpKind {
+    pub const ALL: [Self; 6] = [
+        Self::Deadline,
+        Self::Clash,
+        Self::FocusWindow,
+        Self::Overloaded,
+        Self::PushedBack,
+        Self::QuietProject,
+    ];
+
     /// How many of this kind may show (or be snoozed) at once. A rule may find more; the rest
     /// wait, so dismissing one lets the next come through instead of hiding them all.
     pub fn max_showing(self) -> usize {
@@ -258,13 +278,38 @@ pub struct HeadsUp {
     pub snoozed_until: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct HeadsUpSettings {
     /// Whether the assistant looks for heads-ups at all.
     pub enabled: bool,
     /// Whether urgent heads-ups may also send a system notification.
     pub notify: bool,
+    /// Kinds the person asked to stop, in the rules' order. Left out, none are stopped.
+    #[serde(default)]
+    pub muted_kinds: Vec<HeadsUpKind>,
+}
+
+/// What the person said when dismissing a heads-up. Both parts are optional: an empty
+/// dismissal is the plain "don't show this again".
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct HeadsUpDismissal {
+    /// Stop bringing up this kind of heads-up at all, until turned back on in Settings.
+    #[serde(default)]
+    pub stop_kind: bool,
+    /// Why it wasn't useful, in the person's words. Kept as feedback and offered as a lesson.
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+/// A dismissed heads-up, the kind it stopped (if asked), and the feedback recorded (if a reason
+/// was given), which waits for "just this once" or "remember for next time".
+#[derive(Debug, Clone, PartialEq)]
+pub struct HeadsUpDismissed {
+    pub heads_up: HeadsUp,
+    pub muted_kind: Option<HeadsUpKind>,
+    pub feedback: Option<AgentFeedback>,
 }
 
 /// What one check changed.
@@ -470,19 +515,25 @@ const HEADS_UP_SELECT: &str = "SELECT id, kind, title, evidence, target_kind, ta
 
 impl PlannerDatabase {
     pub fn heads_up_settings(&self) -> AppResult<HeadsUpSettings> {
-        Ok(self.connection.query_row(
+        let (enabled, notify) = self.connection.query_row(
             "SELECT enabled, notify FROM heads_up_settings WHERE id = 1",
             [],
-            |row| {
-                Ok(HeadsUpSettings {
-                    enabled: row.get::<_, i64>(0)? == 1,
-                    notify: row.get::<_, i64>(1)? == 1,
-                })
-            },
-        )?)
+            |row| Ok((row.get::<_, i64>(0)? == 1, row.get::<_, i64>(1)? == 1)),
+        )?;
+        let muted = muted_kinds(&self.connection)?;
+        Ok(HeadsUpSettings {
+            enabled,
+            notify,
+            muted_kinds: HeadsUpKind::ALL
+                .into_iter()
+                .filter(|kind| muted.contains(kind))
+                .collect(),
+        })
     }
 
-    /// Saves the settings. Turning heads-ups off clears the ones on screen; dismissals are kept.
+    /// Saves the settings. Turning heads-ups off, or stopping a kind, clears what is on screen
+    /// (of that kind); dismissals are kept. Turning a kind back on brings up whatever is true of
+    /// it on the next check.
     pub fn update_heads_up_settings(
         &mut self,
         settings: HeadsUpSettings,
@@ -495,6 +546,17 @@ impl PlannerDatabase {
             "UPDATE heads_up_settings SET enabled = ?1, notify = ?2 WHERE id = 1",
             params![i64::from(settings.enabled), i64::from(settings.notify)],
         )?;
+        let wanted: HashSet<HeadsUpKind> = settings.muted_kinds.iter().copied().collect();
+        for kind in HeadsUpKind::ALL {
+            if wanted.contains(&kind) {
+                mute_kind(&transaction, kind, now)?;
+            } else {
+                transaction.execute(
+                    "DELETE FROM heads_up_muted_kind WHERE kind = ?1",
+                    params![kind.as_str()],
+                )?;
+            }
+        }
         if !settings.enabled {
             transaction.execute(
                 "UPDATE agent_suggestion
@@ -529,6 +591,12 @@ impl PlannerDatabase {
             changed: tidy(&transaction, now)?,
             ..HeadsUpRefresh::default()
         };
+        // A stopped kind is never stored; one still showing is cleared below as no longer found.
+        let muted = muted_kinds(&transaction)?;
+        let found: Vec<&NewHeadsUp> = found
+            .iter()
+            .filter(|heads_up| !muted.contains(&heads_up.kind))
+            .collect();
         let mut surfaced_today: i64 = transaction.query_row(
             "SELECT COUNT(*) FROM agent_suggestion WHERE surfaced_at >= ?1",
             params![utc_string(day_start)],
@@ -536,6 +604,7 @@ impl PlannerDatabase {
         )?;
         let mut ordered: Vec<&NewHeadsUp> = found
             .iter()
+            .copied()
             .filter(|heads_up| heads_up.expires_at > now)
             .collect();
         ordered.sort_by(|a, b| b.score.cmp(&a.score).then_with(|| a.key.cmp(&b.key)));
@@ -762,8 +831,40 @@ impl PlannerDatabase {
 
     /// "Don't show this again." The same key is never brought up again.
     pub fn dismiss_heads_up(&mut self, id: &str, now: DateTime<Utc>) -> AppResult<()> {
-        self.resolve_heads_up(id, HeadsUpStatus::Dismissed, now)
+        self.dismiss_heads_up_because(id, HeadsUpDismissal::default(), now)
             .map(|_| ())
+    }
+
+    /// "Not useful": dismisses the heads-up for good and, if asked, stops its whole kind and
+    /// records why. A reason is checked before anything changes, so a refused one leaves the
+    /// heads-up where it was.
+    pub fn dismiss_heads_up_because(
+        &mut self,
+        id: &str,
+        dismissal: HeadsUpDismissal,
+        now: DateTime<Utc>,
+    ) -> AppResult<HeadsUpDismissed> {
+        let reason = feedback_reason(dismissal.reason)?;
+        let heads_up = self.resolve_heads_up(id, HeadsUpStatus::Dismissed, now)?;
+        let muted_kind = if dismissal.stop_kind {
+            let transaction = self
+                .connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)?;
+            mute_kind(&transaction, heads_up.kind, now)?;
+            transaction.commit()?;
+            Some(heads_up.kind)
+        } else {
+            None
+        };
+        let feedback = match reason {
+            Some(reason) => Some(self.record_heads_up_feedback(id, &heads_up.title, &reason)?),
+            None => None,
+        };
+        Ok(HeadsUpDismissed {
+            heads_up,
+            muted_kind,
+            feedback,
+        })
     }
 
     /// "Not now." Hidden until `until`, then shown again if it is still true.
@@ -855,6 +956,31 @@ impl PlannerDatabase {
         )?;
         Ok(())
     }
+}
+
+fn muted_kinds(connection: &Connection) -> AppResult<HashSet<HeadsUpKind>> {
+    let mut statement = connection.prepare("SELECT kind FROM heads_up_muted_kind")?;
+    let kinds = statement
+        .query_map([], |row| HeadsUpKind::parse(&row.get::<_, String>(0)?))?
+        .collect::<rusqlite::Result<HashSet<_>>>()?;
+    Ok(kinds)
+}
+
+/// Stops a kind (keeping when it was first stopped) and clears what of it is on screen or
+/// snoozed, so it returns, once the kind is back on, only if it is still true.
+fn mute_kind(connection: &Connection, kind: HeadsUpKind, now: DateTime<Utc>) -> AppResult<()> {
+    let now_text = utc_string(now);
+    connection.execute(
+        "INSERT OR IGNORE INTO heads_up_muted_kind (kind, muted_at) VALUES (?1, ?2)",
+        params![kind.as_str(), now_text],
+    )?;
+    connection.execute(
+        "UPDATE agent_suggestion
+         SET status = 'cleared', snoozed_until = NULL, resolved_at = ?2
+         WHERE kind = ?1 AND status IN ('active', 'snoozed')",
+        params![kind.as_str(), now_text],
+    )?;
+    Ok(())
 }
 
 /// Wakes snoozed heads-ups whose time has come, expires showing ones whose subject is over, and forgets

@@ -1385,6 +1385,8 @@ export default function App() {
               onReview={reviewApproval}
               onOpenTasks={() => navigate({ kind: "tasks" })}
               onHeadsUp={(id, choice) => void chooseHeadsUp(id, choice)}
+              onHeadsUpDismissed={() => void refreshHeadsUps(false)}
+              onMessage={setError}
               onOpenSchedule={() => navigate({ kind: scheduleView })}
               onOpenProjects={() =>
                 navigate({ kind: "plans", archived: false })

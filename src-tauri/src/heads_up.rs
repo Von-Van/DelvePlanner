@@ -22,15 +22,18 @@
 use crate::calendar::{system_zone, DayRange};
 use crate::capacity;
 use crate::db::{
-    HeadsUp, HeadsUpKind, HeadsUpRefresh, HeadsUpSettings, HeadsUpTarget, HeadsUpTargetKind,
-    NewHeadsUp, PlannerDatabase, PushedTask, QuietPlan, UpcomingBlock, MAX_SHOWN_HEADS_UPS,
+    HeadsUp, HeadsUpDismissal, HeadsUpKind, HeadsUpRefresh, HeadsUpSettings, HeadsUpTarget,
+    HeadsUpTargetKind, NewHeadsUp, PlannerDatabase, PushedTask, QuietPlan, UpcomingBlock,
+    MAX_SHOWN_HEADS_UPS,
 };
 use crate::error::{AppResult, CommandError};
+use crate::feedback::{receipts, FeedbackReceipt};
 use crate::model::{Capacity, ExternalEvent, PlanningProfile, ScheduleEvent, Task, TaskPriority};
 use crate::tools::BusySource;
 use crate::{with_database, AppState};
 use chrono::{DateTime, Datelike, Duration, NaiveDate, Timelike, Utc};
 use chrono_tz::Tz;
+use serde::Serialize;
 use std::collections::HashSet;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_notification::NotificationExt;
@@ -823,10 +826,37 @@ pub(crate) fn list_heads_ups(
     })
 }
 
+/// A dismissed heads-up, with the kind it stopped and the feedback (and lesson on offer) when
+/// the person said why.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HeadsUpDismissReceipt {
+    pub heads_up: HeadsUp,
+    pub muted_kind: Option<HeadsUpKind>,
+    pub feedback: Option<FeedbackReceipt>,
+}
+
+/// "Don't show this again", optionally "and stop this kind" and "because …". A reason becomes
+/// feedback that waits for "just this once" or "remember for next time".
+///
+/// No change event here, even when a kind is stopped: the window that dismissed reloads the list
+/// itself once any lesson on offer is settled. An event would reload it at once and take the
+/// lesson prompt away with the dismissed heads-up.
 #[tauri::command]
-pub(crate) fn dismiss_heads_up(state: State<'_, AppState>, id: String) -> Result<(), CommandError> {
-    with_database(&state, |database| {
-        database.dismiss_heads_up(&id, Utc::now())
+pub(crate) fn dismiss_heads_up(
+    state: State<'_, AppState>,
+    id: String,
+    dismissal: Option<HeadsUpDismissal>,
+) -> Result<HeadsUpDismissReceipt, CommandError> {
+    let dismissed = with_database(&state, |database| {
+        database.dismiss_heads_up_because(&id, dismissal.unwrap_or_default(), Utc::now())
+    })?;
+    Ok(HeadsUpDismissReceipt {
+        heads_up: dismissed.heads_up,
+        muted_kind: dismissed.muted_kind,
+        feedback: dismissed
+            .feedback
+            .map(|feedback| receipts(vec![feedback]).remove(0)),
     })
 }
 
