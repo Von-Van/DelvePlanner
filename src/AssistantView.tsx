@@ -26,6 +26,20 @@ export type AttentionItem = {
 
 export type HeadsUpChoice = "act" | "snooze" | "dismiss";
 
+/** Proposed changes that wait for the person's decision, from the agent or the planner. */
+export type Approval = {
+  id: string;
+  /** What was asked, or the planner's own summary of its proposal. */
+  title: string;
+  /** The proposal's one-line summary, when it adds to the title. */
+  summary: string | null;
+  changes: number;
+  from: "agent" | "planner";
+};
+
+/** A question the assistant asked that nothing has answered yet. */
+export type WaitingQuestion = { id: string; request: string; question: string };
+
 export type AttentionInput = {
   /** Heads-ups from the assistant's fixed rules, most worth saying first. */
   headsUps: HeadsUp[];
@@ -158,9 +172,12 @@ export function AssistantView({
   onSurface,
   fallbackNote,
   attention,
-  pendingReview,
+  approvals,
+  questions = [],
   inboxCount,
   onAttention,
+  onReview,
+  onOpenTasks,
   onHeadsUp,
   onOpenSchedule,
   onOpenProjects,
@@ -179,10 +196,16 @@ export function AssistantView({
   /** Why the planner is answering a request the agent couldn't run, or null. */
   fallbackNote?: string | null;
   attention: AttentionItem[];
-  /** How many changes in the open proposal wait for approval, or null when none is open. */
-  pendingReview: { summary: string; changes: number } | null;
+  /** Every proposal waiting for approval, newest first. */
+  approvals: Approval[];
+  /** Questions the assistant is waiting on. */
+  questions?: WaitingQuestion[];
   inboxCount: number;
   onAttention: (target: AttentionTarget) => void;
+  /** Opens a proposal for review, with its changes one by one. */
+  onReview: (approval: Approval) => void;
+  /** Opens the Tasks board, where questions are answered. */
+  onOpenTasks?: () => void;
   /** The person's choice on a heads-up: hand it to the assistant, not now, or don't show again. */
   onHeadsUp?: (id: string, choice: HeadsUpChoice) => void;
   onOpenSchedule: () => void;
@@ -313,19 +336,70 @@ export function AssistantView({
             </section>
           )}
 
+          {questions.length > 0 && (
+            <section
+              className="assistant-card question-waiting"
+              aria-label="Questions waiting"
+            >
+              <h2>
+                {questions.length === 1
+                  ? "1 question waiting"
+                  : `${questions.length} questions waiting`}
+              </h2>
+              <p>
+                “{questions[0].request}”: {questions[0].question}
+              </p>
+              {onOpenTasks && (
+                <button className="text-button" onClick={onOpenTasks}>
+                  Answer in Tasks <Glyph>→</Glyph>
+                </button>
+              )}
+            </section>
+          )}
+
           <section
-            className={`assistant-card review-queue ${pendingReview ? "needs-you" : ""}`}
+            className={`assistant-card review-queue ${approvals.length > 0 ? "needs-you" : ""}`}
             aria-label="Waiting for your approval"
           >
-            <p className="side-kicker">WAITING FOR YOUR APPROVAL</p>
-            {pendingReview ? (
-              <p className="review-pending">
-                <strong>{pendingReview.summary}</strong>
-                <small>
-                  {plural(pendingReview.changes, "proposed change")} to review
-                  in the conversation. Nothing changes until you apply it.
-                </small>
-              </p>
+            <div className="review-queue-heading">
+              <h2>Waiting for your approval</h2>
+              {approvals.length > 0 && (
+                <span className="review-count">{approvals.length}</span>
+              )}
+            </div>
+            {approvals.length > 0 ? (
+              <>
+                <ul className="review-list">
+                  {approvals.map((approval) => (
+                    <li key={approval.id}>
+                      <span
+                        className={`review-dot ${approval.from}`}
+                        aria-hidden="true"
+                      />
+                      <div>
+                        <strong>{approval.title}</strong>
+                        {approval.summary && <small>{approval.summary}</small>}
+                        <small className="review-meta">
+                          {plural(approval.changes, "change")} ready
+                          {approval.from === "planner"
+                            ? " · from the planner"
+                            : ""}
+                        </small>
+                      </div>
+                      <button
+                        className="secondary-button small"
+                        onClick={() => onReview(approval)}
+                        aria-label={`Review ${plural(approval.changes, "change")}: ${approval.title}`}
+                      >
+                        Review
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+                <p className="review-note">
+                  Nothing changes until you apply it.
+                </p>
+              </>
             ) : (
               <p className="review-empty">
                 Nothing to approve. The assistant only proposes changes; you

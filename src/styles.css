@@ -242,6 +242,19 @@ select:focus-visible,
 .primary-button .mark {
   --mark-color: var(--primary-ink);
 }
+.secondary-button.small {
+  height: 34px;
+  padding: 0 14px;
+  font-size: 13px;
+}
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
 .secondary-button,
 .icon-button {
   height: 40px;
@@ -317,7 +330,6 @@ select:focus-visible,
 .settings-index {
   border-radius: var(--radius);
 }
-.brand-mark,
 .check-box,
 .block-check,
 kbd {
@@ -383,28 +395,19 @@ kbd {
 }
 .brand {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 0 10px;
-}
-.brand-mark {
-  width: 26px;
-  height: 26px;
-  display: grid;
-  place-items: center;
-  border: 1px solid var(--blue-frame);
-  background: var(--ground);
-}
-.brand-mark i {
-  width: 7px;
-  height: 7px;
-  background: var(--blue);
-  transform: rotate(45deg);
+  align-items: baseline;
+  gap: 8px;
+  padding: 0 12px;
 }
 .brand-name {
   color: var(--ink);
-  font: 600 22px/1.05 var(--font-display);
-  letter-spacing: 0.04em;
+  font: 600 32px/1 var(--font-display);
+}
+.brand-tagline {
+  color: var(--muted);
+  font: 500 11px/1 var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 .rail-date {
   margin: 32px 10px 22px;
@@ -469,6 +472,11 @@ kbd {
 }
 .rail-link.active .rail-count {
   color: var(--blue-deep);
+}
+.rail-count.attention,
+.rail-link.active .rail-count.attention {
+  background: var(--warning-wash);
+  color: var(--warning);
 }
 .rail-plans {
   display: grid;
@@ -4776,27 +4784,102 @@ kbd.off {
   color: var(--secondary);
   font-size: 10px;
 }
-.review-queue .review-pending,
-.review-queue .review-empty {
-  display: grid;
-  gap: 4px;
+/* "Waiting for your approval": each proposal on its own row, reviewed on the Assistant. */
+.review-queue {
+  gap: 12px;
 }
-.review-pending strong {
+.review-queue-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.review-queue-heading h2,
+.question-waiting h2 {
+  margin: 0;
   color: var(--ink);
-  font: 600 12px/1.35 var(--font-ui);
+  font: 600 15px/1.3 var(--font-ui);
 }
-.review-pending small {
+.review-count {
+  margin-left: auto;
+  padding: 3px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--warning-wash);
+  color: var(--warning);
+  font: 500 12px/1 var(--font-mono);
+}
+.review-list {
+  margin: 0;
+  padding: 0;
+  display: grid;
+  list-style: none;
+}
+.review-list li {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 0;
+  border-top: 1px solid var(--hairline);
+}
+.review-list li:first-child {
+  border-top: 0;
+  padding-top: 2px;
+}
+.review-list li > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.review-list strong {
+  color: var(--ink);
+  font: 600 13px/1.35 var(--font-ui);
+  overflow-wrap: anywhere;
+}
+.review-list small {
   color: var(--secondary);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.4;
 }
+.review-list .review-meta {
+  color: var(--blue-deep);
+  font-weight: 500;
+}
+.review-dot {
+  align-self: start;
+  margin-top: 4px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #8fb5e6;
+}
+.review-dot.planner {
+  background: #f2b29b;
+}
+.review-queue .review-empty,
+.review-queue .review-note {
+  margin: 0;
+  color: var(--secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.review-queue .review-note {
+  font-size: 12px;
+}
 .review-queue.needs-you {
+  border-color: var(--frame);
+}
+.assistant-card.question-waiting {
+  gap: 8px;
   border-color: #f0dcae;
   background: var(--warning-wash);
+  box-shadow: none;
 }
-.review-queue.needs-you .side-kicker,
-.review-queue.needs-you .review-pending strong,
-.review-queue.needs-you .review-pending small {
+.question-waiting h2,
+.assistant-card.question-waiting > p:not(.side-kicker),
+.question-waiting .text-button {
+  color: #5c4210;
+}
+.question-waiting .text-button:hover:not(:disabled) {
   color: var(--warning);
 }
 

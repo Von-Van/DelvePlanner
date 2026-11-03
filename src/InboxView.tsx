@@ -1,3 +1,4 @@
+import { appName } from "./brand";
 import { FormEvent, RefObject, useRef, useState } from "react";
 import { api, InboxItem, messageFor } from "./api";
 import { dateTimeFields } from "./date";
@@ -64,7 +65,7 @@ export function InboxView({
           </h1>
         </div>
         <p className="topbar-note">
-          {captureShortcut} captures from anywhere in Delve Planner
+          {captureShortcut} captures from anywhere in {appName}
         </p>
       </header>
       <p className="page-intro">
@@ -89,8 +90,8 @@ export function InboxView({
           <i className="empty-mark" aria-hidden="true" />
           <p>The Inbox is clear.</p>
           <small className="empty-note">
-            {commandShortcutText("I")} captures from anywhere in Delve Planner.
-            A shortcut in Settings captures from any app.
+            {commandShortcutText("I")} captures from anywhere in {appName}. A
+            shortcut in Settings captures from any app.
           </small>
         </div>
       ) : (

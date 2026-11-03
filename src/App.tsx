@@ -60,6 +60,7 @@ import {
   weekStartsOn,
 } from "./date";
 import {
+  Approval,
   AssistantView,
   AttentionTarget,
   HeadsUpChoice,
@@ -67,6 +68,16 @@ import {
   worthAttention,
 } from "./AssistantView";
 import { AssistantAgentPanel } from "./AssistantAgentPanel";
+import { newRunKey } from "./AssistantRuns";
+import {
+  asksQuestion,
+  assistantBoard,
+  awaitsApproval,
+  needsYouCount,
+} from "./assistantTasks";
+import { appName, appTagline } from "./brand";
+import { TasksView } from "./TasksView";
+import { useAssistantActivity } from "./useAssistantActivity";
 import { HeadsUp, headsUpApi } from "./headsUpApi";
 import { EventEditor } from "./EventEditor";
 import { ensureNotificationPermission, reminderShortLabel } from "./events";
@@ -115,6 +126,7 @@ import { WeekView } from "./WeekView";
 
 type View =
   | { kind: "assistant" }
+  | { kind: "tasks" }
   | { kind: "inbox" }
   | { kind: "calendars" }
   | { kind: "knowledge" }
@@ -128,12 +140,14 @@ type View =
   | { kind: "people" };
 
 /** The three main areas; every view belongs to one, or to the secondary places below them. */
-type Area = "assistant" | "schedule" | "projects" | "other";
+type Area = "assistant" | "tasks" | "schedule" | "projects" | "other";
 
 function areaOf(view: View): Area {
   switch (view.kind) {
     case "assistant":
       return "assistant";
+    case "tasks":
+      return "tasks";
     case "today":
     case "week":
     case "plan-today":
@@ -249,6 +263,12 @@ export default function App() {
     request: string;
     key: number;
   } | null>(null);
+  // A run to show on the Assistant, from the Tasks board or the approval card.
+  const [assistantOpen, setAssistantOpen] = useState<{
+    runKey: string;
+    key: number;
+  } | null>(null);
+  const activity = useAssistantActivity();
   const [openTaskList, setOpenTaskList] = useState<TaskReference[]>([]);
   const [dataVersion, setDataVersion] = useState(0);
   const [converting, setConverting] = useState<{
@@ -301,6 +321,7 @@ export default function App() {
   const calendarsHeading = useRef<HTMLHeadingElement>(null);
   const knowledgeHeading = useRef<HTMLHeadingElement>(null);
   const evaluationHeading = useRef<HTMLHeadingElement>(null);
+  const tasksHeading = useRef<HTMLHeadingElement>(null);
   const weekStart = weekStartDay(day, weekStartsOn);
   const today = todayDay();
   const currentWeekStart = weekStartDay(today, weekStartsOn);
@@ -316,6 +337,7 @@ export default function App() {
   useHeadingFocus(todayHeading, focusToken, view.kind === "today");
   useHeadingFocus(weekHeading, focusToken, view.kind === "week");
   useHeadingFocus(inboxHeading, focusToken, view.kind === "inbox");
+  useHeadingFocus(tasksHeading, focusToken, view.kind === "tasks");
 
   // Calendar and capacity trouble never blocks the planner's own data from showing.
   const refreshCalendarDay = useCallback(async () => {
@@ -890,6 +912,86 @@ export default function App() {
           changes: agentResponse.operations.length,
         }
       : null;
+  // Everything waiting for a decision: the agent's drafts, newest first, then the planner's.
+  const approvals: Approval[] = [
+    ...activity.runs
+      .filter((run) => awaitsApproval(run))
+      .map((run) => ({
+        id: run.runKey,
+        title: run.goal.trim() || run.proposal?.summary || "Proposed changes",
+        summary: run.goal.trim() ? (run.proposal?.summary ?? null) : null,
+        changes: run.proposal?.operations.length ?? 0,
+        from: "agent" as const,
+      })),
+    ...(pendingReview
+      ? [
+          {
+            id: "planner",
+            title: pendingReview.summary,
+            summary: null,
+            changes: pendingReview.changes,
+            from: "planner" as const,
+          },
+        ]
+      : []),
+  ];
+  const waitingQuestions = activity.runs
+    .filter((run) => asksQuestion(run, activity.runs))
+    .map((run) => ({
+      id: run.runKey,
+      request: run.goal.trim(),
+      question: run.answer?.trim() || "It needs a little more detail.",
+    }));
+  const tasksNeedingYou = needsYouCount(activity.runs);
+  const taskBoard = assistantBoard(activity.runs, activity.live);
+
+  /** Shows one of this session's runs on the Assistant, with its conversation. */
+  function openRun(runKey: string) {
+    setAssistantSurface("agent");
+    setAssistantOpen({ runKey, key: Date.now() });
+    if (view.kind !== "assistant") navigate({ kind: "assistant" });
+  }
+
+  function reviewApproval(approval: Approval) {
+    if (approval.from === "planner") setAssistantSurface("planner");
+    else openRun(approval.id);
+  }
+
+  /** Hands a request to the assistant from the Tasks board, without leaving the board. */
+  async function startTask(request: string) {
+    const status = await api.assistantStatus().catch(() => null);
+    if (!status?.available) {
+      // The Assistant hands requests the agent can't run to the planner.
+      setAssistantSurface("agent");
+      setAssistantAsk({ request, key: Date.now() });
+      navigate({ kind: "assistant" });
+      return;
+    }
+    const key = newRunKey();
+    activity.started(key, request);
+    try {
+      await api.runAssistant(request, localTimeZone, key, null);
+    } catch (cause) {
+      setError(messageFor(cause));
+    } finally {
+      await activity.ended(key);
+    }
+  }
+
+  /** Asks again in a fresh conversation, on the Assistant, which can fall back to the planner. */
+  function retryTask(request: string) {
+    setAssistantSurface("agent");
+    setAssistantAsk({ request, key: Date.now() });
+    navigate({ kind: "assistant" });
+  }
+
+  async function stopTask() {
+    try {
+      await api.cancelAssistantRun();
+    } catch (cause) {
+      setError(messageFor(cause));
+    }
+  }
 
   // The Assistant sees the whole day: the plan filter belongs to Schedule.
   const assistantItems = agendaItems(
@@ -1062,6 +1164,8 @@ export default function App() {
       shortcut?: string;
       count?: number;
       countLabel?: string;
+      /** The count is something waiting on the person, so it's shown in amber. */
+      attention?: boolean;
     },
   ) => (
     <button
@@ -1086,7 +1190,7 @@ export default function App() {
       {label}
       {options.count ? (
         <span
-          className="rail-count"
+          className={`rail-count ${options.attention ? "attention" : ""}`}
           title={
             options.countLabel
               ? `${options.count} ${options.countLabel}`
@@ -1104,10 +1208,8 @@ export default function App() {
       <main className="app-shell">
         <aside className="rail">
           <div className="brand">
-            <span className="brand-mark" aria-hidden="true">
-              <i />
-            </span>
-            <span className="brand-name">DELVE PLANNER</span>
+            <span className="brand-name">{appName}</span>
+            <span className="brand-tagline">{appTagline}</span>
           </div>
           <div className="rail-date">
             <span>LOCAL AGENDA</span>
@@ -1124,6 +1226,17 @@ export default function App() {
                 shortcut: sectionShortcutKey("assistant"),
                 count: pendingReview ? 1 : undefined,
                 countLabel: "proposal waiting for approval",
+              },
+            )}
+            {navLink(
+              { kind: "tasks" },
+              "Tasks",
+              { shape: "ring", size: 7 },
+              {
+                active: area === "tasks",
+                count: tasksNeedingYou || undefined,
+                countLabel: tasksNeedingYou === 1 ? "needs you" : "need you",
+                attention: tasksNeedingYou > 0,
               },
             )}
             {navLink(
@@ -1232,9 +1345,9 @@ export default function App() {
             </div>
           </section>
           <div className="rail-footer">
-            DELVE PLANNER / DESKTOP
+            {appName.toUpperCase()} / DESKTOP
             <br />
-            LOCAL-FIRST PLANNER
+            LOCAL-FIRST ASSISTANT
           </div>
         </aside>
 
@@ -1251,6 +1364,10 @@ export default function App() {
                 <AssistantAgentPanel
                   ask={assistantAsk}
                   onAskTaken={() => setAssistantAsk(null)}
+                  open={assistantOpen}
+                  onOpenTaken={() => setAssistantOpen(null)}
+                  onStarted={activity.started}
+                  onRunsChange={activity.report}
                   onChanged={dataChanged}
                   onMessage={setError}
                   onFallback={fallBackToPlanner}
@@ -1260,9 +1377,12 @@ export default function App() {
               onSurface={setAssistantSurface}
               fallbackNote={plannerFallback}
               attention={assistantAttention}
-              pendingReview={pendingReview}
+              approvals={approvals}
+              questions={waitingQuestions}
               inboxCount={inbox.length}
               onAttention={followAttention}
+              onReview={reviewApproval}
+              onOpenTasks={() => navigate({ kind: "tasks" })}
               onHeadsUp={(id, choice) => void chooseHeadsUp(id, choice)}
               onOpenSchedule={() => navigate({ kind: scheduleView })}
               onOpenProjects={() =>
@@ -1270,6 +1390,18 @@ export default function App() {
               }
               onOpenInbox={() => navigate({ kind: "inbox" })}
               onBackToToday={() => setDay(today)}
+            />
+          )}
+          {view.kind === "tasks" && (
+            <TasksView
+              board={taskBoard}
+              headingRef={tasksHeading}
+              canStart={activity.live.length === 0}
+              onStart={(request) => void startTask(request)}
+              onReview={openRun}
+              onAnswer={openRun}
+              onRetry={retryTask}
+              onStop={() => void stopTask()}
             />
           )}
           {(view.kind === "today" || view.kind === "week") && scheduleTabs}

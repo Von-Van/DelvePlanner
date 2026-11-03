@@ -1,3 +1,4 @@
+import { appName } from "./brand";
 import { FormEvent, useRef, useState } from "react";
 import { submitOnCommandEnter } from "./shortcuts";
 import {
@@ -233,7 +234,7 @@ export function EventEditor({
             ))}
           </select>
           <span>
-            Delve Planner must remain running in the tray to deliver desktop
+            {appName} must remain running in the tray to deliver desktop
             reminders.
           </span>
         </label>

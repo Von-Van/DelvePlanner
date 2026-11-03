@@ -1,3 +1,4 @@
+import { appName } from "./brand";
 import { useEffect, useRef, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
@@ -105,17 +106,17 @@ export function Onboarding({
       </span>
       <p>STEP 2 OF 3</p>
       <h2 ref={headingRef} tabIndex={-1}>
-        Your private AI runs inside Delve Planner.
+        Your private AI runs inside {appName}.
       </h2>
       <div className={`setup-status ${ready ? "ready" : ""}`}>
         <span />
         {ready
-          ? "Ready. Delve Planner starts the model only while it answers you."
-          : "Choose a local model, or download the one Delve Planner is tested against."}
+          ? `Ready. ${appName} starts the model only while it answers you.`
+          : `Choose a local model, or download the one ${appName} is tested against.`}
       </div>
       <p className="onboarding-model-note">
-        The Ollama runtime is included. Delve Planner uses models you already
-        have, and reads your Ollama folder without changing anything in it.
+        The Ollama runtime is included. {appName} uses models you already have,
+        and reads your Ollama folder without changing anything in it.
       </p>
       <ModelPicker
         status={status}
@@ -149,8 +150,8 @@ export function Onboarding({
       <div className="onboarding-copy">
         <Mark size={6} />
         <span>
-          Delve Planner asks for OS permission only when you enable a reminder.
-          The app must remain running in the tray to deliver one.
+          {appName} asks for OS permission only when you enable a reminder. The
+          app must remain running in the tray to deliver one.
         </span>
       </div>
       {permission === "granted" ? (
@@ -167,7 +168,7 @@ export function Onboarding({
         </button>
       )}
       <button className="primary-button onboarding-next" onClick={finish}>
-        Open Delve Planner <Glyph>→</Glyph>
+        Open {appName} <Glyph>→</Glyph>
       </button>
     </div>,
   ];
@@ -178,15 +179,10 @@ export function Onboarding({
         tabIndex={-1}
         role="dialog"
         aria-modal="true"
-        aria-label="Welcome to Delve Planner"
+        aria-label={`Welcome to ${appName}`}
         className="onboarding-card"
       >
-        <div className="onboarding-brand">
-          <span className="brand-mark" aria-hidden="true">
-            <i />
-          </span>
-          DELVE PLANNER
-        </div>
+        <div className="onboarding-brand">{appName}</div>
         {panels[step]}
         <div className="onboarding-dots" aria-hidden="true">
           {[0, 1, 2].map((index) => (

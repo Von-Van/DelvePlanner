@@ -1,3 +1,4 @@
+import { appName } from "./brand";
 import { useCallback, useEffect, useState } from "react";
 import {
   api,
@@ -103,8 +104,8 @@ export function KnowledgeView({
   async function forget(what: "profile" | "history") {
     const question =
       what === "profile"
-        ? "Forget everything you've told Delve Planner about how you plan? Your schedule isn't affected."
-        : "Forget the history Delve Planner learns from? The observations drawn from it go too, and it starts collecting again from today.";
+        ? `Forget everything you've told ${appName} about how you plan? Your schedule isn't affected.`
+        : `Forget the history ${appName} learns from? The observations drawn from it go too, and it starts collecting again from today.`;
     if (!window.confirm(question)) return;
     setBusy(true);
     try {
@@ -150,15 +151,15 @@ export function KnowledgeView({
         <div className="date-heading">
           <p>ON THIS DEVICE</p>
           <h1 ref={headingRef} tabIndex={-1}>
-            What Delve Planner knows
+            What {appName} knows
           </h1>
         </div>
       </header>
       <p className="page-intro">
         Everything here stays on this device and none of it is exported. What
-        you tell Delve Planner shapes capacity and the planner&rsquo;s
-        suggestions; what Delve Planner noticed is worked out from your own
-        records, and says what it rests on.
+        you tell {appName} shapes capacity and the planner&rsquo;s suggestions;
+        what {appName} noticed is worked out from your own records, and says
+        what it rests on.
       </p>
 
       <section className="knowledge-block">
@@ -332,7 +333,7 @@ export function KnowledgeView({
         <h2>What it noticed</h2>
         {observations.length === 0 ? (
           <p className="knowledge-empty">
-            Nothing yet. Delve Planner says something only once there is enough
+            Nothing yet. {appName} says something only once there is enough
             behind it, and it only ever looks at records already on this device.
           </p>
         ) : (
