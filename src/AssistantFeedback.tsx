@@ -190,11 +190,14 @@ export function LessonCard({
   api,
   onSettled,
   onMessage,
+  explanation,
 }: {
   receipt: FeedbackReceipt;
   api: Pick<FeedbackApi, "learn" | "keepOneOff">;
   onSettled: (next: FeedbackReceipt) => void;
   onMessage: (message: string) => void;
+  /** What each choice means here; the default is for feedback on a reply. */
+  explanation?: string;
 }) {
   const { feedback, lesson } = receipt;
   const [content, setContent] = useState(lesson?.content ?? "");
@@ -221,7 +224,7 @@ export function LessonCard({
     <div className="memory-suggestion lesson-card">
       <p className="proposal-kicker">LEARN FROM THIS?</p>
       <small>
-        You said{feedback.about ? ` about “${feedback.about}”` : ""}: “
+        You said{feedback.about ? ` about ${quoted(feedback.about)}` : ""}: “
         {feedback.reason}”
       </small>
       <label className="lesson-field">
@@ -247,9 +250,8 @@ export function LessonCard({
       />
       {problem && <small className="change-reason">{problem}</small>}
       <small>
-        Remember: the assistant follows it in every later plan, and you can
-        change or delete it in Settings › Memory. Just this once: it only counts
-        in this conversation.
+        {explanation ??
+          "Remember: the assistant follows it in every later plan, and you can change or delete it in Settings › Memory. Just this once: it only counts in this conversation."}
       </small>
       <div className="proposal-actions">
         <button
@@ -270,6 +272,11 @@ export function LessonCard({
       </div>
     </div>
   );
+}
+
+/** A title in quotes, unless it already opens with one (a heads-up's title often does). */
+function quoted(text: string) {
+  return /^[“"]/.test(text) ? text : `“${text}”`;
 }
 
 function messageOf(cause: unknown) {

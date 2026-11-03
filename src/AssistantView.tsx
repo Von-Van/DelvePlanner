@@ -1,4 +1,4 @@
-import { ReactNode, RefObject } from "react";
+import { ReactNode, RefObject, useState } from "react";
 import {
   AgendaItem,
   agendaItemEnd,
@@ -7,7 +7,8 @@ import {
 } from "./calendars";
 import { dayLabel } from "./date";
 import { Glyph, LoadingLine, Mark } from "./Geometry";
-import { HeadsUp } from "./headsUpApi";
+import { HeadsUp, HeadsUpKind } from "./headsUpApi";
+import { HeadsUpDismiss } from "./HeadsUpDismiss";
 import { plural } from "./planning";
 
 /** Where a "Worth attention" item sends the user to deal with it. */
@@ -22,6 +23,7 @@ export type AttentionItem = {
   action: { label: string; target: AttentionTarget | "assistant" };
   /** Set for a heads-up the assistant brought up, which can be acted on, snoozed or dismissed. */
   headsUpId?: string;
+  headsUpKind?: HeadsUpKind;
 };
 
 export type HeadsUpChoice = "act" | "snooze" | "dismiss";
@@ -70,6 +72,7 @@ export function worthAttention(input: AttentionInput): AttentionItem[] {
       evidence: headsUp.evidence,
       action: { label: headsUp.actionLabel, target: "assistant" },
       headsUpId: headsUp.id,
+      headsUpKind: headsUp.kind,
     });
   if (input.overCapacityBy > 0)
     items.push({
@@ -162,6 +165,8 @@ export function AssistantView({
   inboxCount,
   onAttention,
   onHeadsUp,
+  onHeadsUpDismissed,
+  onMessage,
   onOpenSchedule,
   onOpenProjects,
   onOpenInbox,
@@ -185,6 +190,9 @@ export function AssistantView({
   onAttention: (target: AttentionTarget) => void;
   /** The person's choice on a heads-up: hand it to the assistant, not now, or don't show again. */
   onHeadsUp?: (id: string, choice: HeadsUpChoice) => void;
+  /** A heads-up was dismissed (with any reason and lesson settled): reload the list. */
+  onHeadsUpDismissed?: () => void;
+  onMessage?: (message: string) => void;
   onOpenSchedule: () => void;
   onOpenProjects: () => void;
   onOpenInbox: () => void;
@@ -192,6 +200,8 @@ export function AssistantView({
 }) {
   const isToday = context.day === context.today;
   const showAgent = agent != null && surface === "agent";
+  // The heads-up whose "Dismiss" is open, so the person can say why or stop its kind.
+  const [dismissing, setDismissing] = useState<string | null>(null);
   return (
     <div className="assistant-home">
       <header className="topbar">
@@ -297,15 +307,33 @@ export function AssistantView({
                           </button>
                           <button
                             className="text-button quiet"
-                            onClick={() => onHeadsUp?.(headsUpId, "dismiss")}
+                            onClick={() => setDismissing(headsUpId)}
                             aria-label={`Don't show again: ${item.title}`}
+                            aria-expanded={dismissing === headsUpId}
                           >
-                            Dismiss
+                            Dismiss…
                           </button>
                         </span>
                       ) : (
                         action
                       )}
+                      {headsUpId &&
+                        item.headsUpKind &&
+                        dismissing === headsUpId && (
+                          <HeadsUpDismiss
+                            headsUp={{
+                              id: headsUpId,
+                              title: item.title,
+                              kind: item.headsUpKind,
+                            }}
+                            onCancel={() => setDismissing(null)}
+                            onDone={() => {
+                              setDismissing(null);
+                              onHeadsUpDismissed?.();
+                            }}
+                            onMessage={(message) => onMessage?.(message)}
+                          />
+                        )}
                     </li>
                   );
                 })}

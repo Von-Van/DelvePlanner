@@ -67,9 +67,10 @@ pub use feedback::{
     NewFeedback, MAX_FEEDBACK_ABOUT_CHARS, MAX_FEEDBACK_REASON_CHARS,
 };
 pub use heads_up::{
-    HeadsUp, HeadsUpKind, HeadsUpRefresh, HeadsUpSettings, HeadsUpStatus, HeadsUpTarget,
-    HeadsUpTargetKind, NewHeadsUp, PlannerHeadsUpFacts, PushedTask, QuietPlan, UpcomingBlock,
-    MAX_NEW_HEADS_UPS_PER_DAY, MAX_NOTIFICATIONS_PER_DAY, MAX_SHOWN_HEADS_UPS, PUSHED_BACK_MOVES,
+    HeadsUp, HeadsUpDismissal, HeadsUpDismissed, HeadsUpKind, HeadsUpRefresh, HeadsUpSettings,
+    HeadsUpStatus, HeadsUpTarget, HeadsUpTargetKind, NewHeadsUp, PlannerHeadsUpFacts, PushedTask,
+    QuietPlan, UpcomingBlock, MAX_NEW_HEADS_UPS_PER_DAY, MAX_NOTIFICATIONS_PER_DAY,
+    MAX_SHOWN_HEADS_UPS, PUSHED_BACK_MOVES,
 };
 pub use memory::{
     Confirmation, ImportedMemorySettings, MemoryExport, MemoryFilter, MemoryImport, MemoryKind,
@@ -81,7 +82,7 @@ pub use proposals::{
 };
 pub(crate) use proposals::{fold, planning_tokens, title_matches};
 
-pub const CURRENT_SCHEMA_VERSION: u32 = 13;
+pub const CURRENT_SCHEMA_VERSION: u32 = 14;
 pub const EXPORT_FORMAT_VERSION: u32 = 7;
 const BACKUP_RETENTION: usize = 5;
 const REMINDER_DELIVERY_GRACE_MINUTES: i64 = 15;

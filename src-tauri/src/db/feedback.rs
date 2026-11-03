@@ -3,8 +3,8 @@
 //!
 //! One record kind lives here, `agent_feedback`: "helpful" or "not helpful because …" on one
 //! assistant run, about its answer or one of its proposed changes. It points at the `agent_run`,
-//! so the feedback sits next to the run's full trace and is deleted with it. (The table can also
-//! hold feedback on a heads-up, with `suggestion_id` instead of a run; nothing records that yet.)
+//! so the feedback sits next to the run's full trace and is deleted with it. Feedback on a
+//! heads-up ("not useful because …" when dismissing it) uses `suggestion_id` instead of a run.
 //!
 //! Feedback alone never changes what the assistant does later. A "not helpful" with a reason is
 //! offered back to the person as a lesson they can keep, in their own words:
@@ -128,6 +128,8 @@ pub struct AgentFeedback {
     pub id: String,
     /// The run the feedback is about; null only for feedback on a heads-up.
     pub run_id: Option<String>,
+    /// The heads-up the feedback is about; null for feedback on a run.
+    pub suggestion_id: Option<String>,
     pub target: FeedbackTarget,
     pub about: Option<String>,
     pub rating: FeedbackRating,
@@ -221,6 +223,27 @@ impl PlannerDatabase {
         self.agent_feedback(&id)
     }
 
+    /// "Not useful because …" on a heads-up the person dismissed. It waits, like a correction
+    /// on a reply, for "just this once" or "remember for next time". `about` is the heads-up's
+    /// title as it was shown; the heads-up itself is forgotten after a while, the feedback isn't.
+    pub(super) fn record_heads_up_feedback(
+        &mut self,
+        suggestion_id: &str,
+        about: &str,
+        reason: &str,
+    ) -> AppResult<AgentFeedback> {
+        let about = clip(about, MAX_FEEDBACK_ABOUT_CHARS);
+        let id = Uuid::new_v4().to_string();
+        let at = now();
+        self.connection.execute(
+            "INSERT INTO agent_feedback (id, suggestion_id, target, about, rating, reason, scope,
+                 created_at, updated_at)
+             VALUES (?1, ?2, 'suggestion', ?3, 'not_helpful', ?4, 'pending', ?5, ?5)",
+            params![id, suggestion_id, about, reason, at],
+        )?;
+        self.agent_feedback(&id)
+    }
+
     /// "Just this once": nothing from this feedback is remembered.
     pub fn keep_feedback_one_off(&mut self, id: &str) -> AppResult<AgentFeedback> {
         let feedback = self.agent_feedback(id)?;
@@ -269,9 +292,12 @@ impl PlannerDatabase {
             kind,
             content: content.to_string(),
             source: MemorySource::UserStated,
-            source_ref: Some(match &feedback.run_id {
-                Some(run) => format!("feedback {} on assistant run {run}", feedback.id),
-                None => format!("feedback {}", feedback.id),
+            source_ref: Some(match (&feedback.run_id, &feedback.suggestion_id) {
+                (Some(run), _) => format!("feedback {} on assistant run {run}", feedback.id),
+                (None, Some(heads_up)) => {
+                    format!("feedback {} on heads-up {heads_up}", feedback.id)
+                }
+                (None, None) => format!("feedback {}", feedback.id),
             }),
             plan_id: None,
         });
@@ -397,7 +423,7 @@ const LEAD_INS: &[&str] = &[
 ];
 
 const FEEDBACK_SELECT: &str = "SELECT id, run_id, target, about, rating, reason, scope, memory_id,
-        created_at, updated_at
+        created_at, updated_at, suggestion_id
      FROM agent_feedback";
 
 fn feedback_from_row(row: &Row<'_>) -> rusqlite::Result<AgentFeedback> {
@@ -426,7 +452,13 @@ fn feedback_from_row(row: &Row<'_>) -> rusqlite::Result<AgentFeedback> {
         memory_id: row.get(7)?,
         created_at: row.get(8)?,
         updated_at: row.get(9)?,
+        suggestion_id: row.get(10)?,
     })
+}
+
+/// A reason as stored: trimmed, `None` when blank, refused when too long.
+pub(super) fn feedback_reason(value: Option<String>) -> AppResult<Option<String>> {
+    optional_text(value, MAX_FEEDBACK_REASON_CHARS, "The reason")
 }
 
 fn optional_text(value: Option<String>, max: usize, what: &str) -> AppResult<Option<String>> {
