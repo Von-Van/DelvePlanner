@@ -68,8 +68,9 @@ facts, open problems and preferences) and you can see, correct and delete all of
   this once" stores nothing and is carried only in its own conversation; deleting the lesson erases its words.
   `agent_bench/cases/*/*fb-*`: a kept lesson keeps every block before 3 pm, a one-off correction steers the retry
   in its conversation, and (held out) a lunch rule is kept while an unconfirmed guess is not treated as a rule.
-- **Real model on a Mac:** `python -m agent_bench.configs.memory_check --out agent_bench/results/memory` prints the
-  success rate, the recall rate on memory cases and the false-recall rate (which should be zero).
+- **Real model on a Mac:** `python -m agent_bench check` runs these cases with every other one and scores them by
+  skill. `python -m agent_bench.configs.memory_check --out agent_bench/results/memory` still prints the memory-only
+  numbers: success rate, recall rate on memory cases and false-recall rate (which should be zero).
 
 ## Not yet
 

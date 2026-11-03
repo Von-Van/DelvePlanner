@@ -236,6 +236,84 @@ button.evaluation-run:focus-visible {
   color: var(--secondary);
 }
 
+.evaluation-section-heading {
+  margin: 6px 0 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.evaluation-skills,
+.evaluation-compare {
+  display: grid;
+  gap: 8px;
+}
+
+.evaluation-skills .evaluation-cases {
+  max-width: 560px;
+}
+
+.evaluation-compare-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px 16px;
+}
+
+.evaluation-compare-heading label {
+  font-size: 13px;
+  color: var(--secondary);
+}
+
+.evaluation-compare-heading select {
+  max-width: 100%;
+  margin-left: 4px;
+  padding: 4px 8px;
+  border: 1px solid var(--frame);
+  background: var(--ground);
+  color: var(--ink);
+  font: inherit;
+  border-radius: var(--radius-sm);
+}
+
+.evaluation-changes {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--frame);
+  background: var(--ground-soft);
+  border-radius: var(--radius-md);
+}
+
+.evaluation-change {
+  display: grid;
+  grid-template-columns: minmax(130px, auto) minmax(0, 1fr);
+  gap: 12px;
+  font-size: 13px;
+}
+
+.evaluation-change dt {
+  color: var(--strong);
+}
+
+.evaluation-change dt small {
+  margin-left: 4px;
+  font-family: var(--font-mono);
+  color: var(--muted);
+}
+
+.evaluation-change dd {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--secondary);
+  overflow-wrap: anywhere;
+}
+
 .evaluation-filter {
   display: inline-flex;
   width: fit-content;
@@ -409,5 +487,10 @@ button.evaluation-run:focus-visible {
 
   .evaluation-cases tbody th {
     grid-column: 1 / -1;
+  }
+
+  .evaluation-change {
+    grid-template-columns: 1fr;
+    gap: 2px;
   }
 }

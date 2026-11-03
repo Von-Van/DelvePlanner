@@ -18,6 +18,7 @@ from .cases import case_set_hash
 from .interfaces import AgentResult, AgentTask, Budget, coerce_result
 from .mock_tools import CONTRACT_PATH, MockToolClient
 from .scoring import score_run
+from .skills import skill_label
 from .trace import TraceRecorder, utc_now, validate_events
 
 RESULT_SCHEMA_VERSION = "agent_bench.result.v1"
@@ -77,7 +78,9 @@ def run_case(case: dict, agent: Any, model: Any = None, *, repeat: int = 0, debu
         "runId": run_id,
         "caseId": case["case_id"],
         "family": case["family"],
+        "skill": skill_label(case["case_id"], case["family"]),
         "split": case["split"],
+        "tags": list(case.get("tags", [])),
         "repeat": repeat,
         "status": result.status,
         "success": score["success"],

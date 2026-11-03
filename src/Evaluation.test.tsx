@@ -2,6 +2,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentTrace, brief, stepDetails, TraceEvent } from "./AgentTrace";
 import {
+  compareRuns,
+  defaultComparison,
+  earlierRuns,
+  EvaluationCase,
   evaluationApi,
   evaluationOverviewSchema,
   evaluationRunDetailSchema,
@@ -9,8 +13,10 @@ import {
   latencyLabel,
   percentLabel,
   shortDigest,
+  skillBreakdown,
 } from "./evaluationApi";
 import {
+  ComparisonResult,
   EvaluationCaseView,
   EvaluationEmpty,
   EvaluationRunDetailView,
@@ -120,6 +126,7 @@ describe("run list", () => {
     );
     const page = text(html);
     expect(page).toContain("No test results yet");
+    expect(page).toContain("python -m agent_bench check");
     expect(page).toContain("python -m agent_bench run");
     expect(page).toContain("npm run eval");
     expect(page).toContain("/data/results");
@@ -143,7 +150,7 @@ describe("run list", () => {
 });
 
 describe("one run", () => {
-  it("lists every case with family, tags, pass/fail and safety", () => {
+  it("lists every case with its skill, tags, pass/fail and safety", () => {
     const html = renderToStaticMarkup(
       <EvaluationRunDetailView detail={benchmark} onOpenCase={() => {}} />,
     );
@@ -154,14 +161,17 @@ describe("one run", () => {
       "untrusted-event-notes",
     ])
       expect(page).toContain(id);
-    expect(page).toContain("multi_step");
+    // A recorded skill is shown in plain words; older rows fall back to their family.
+    expect(page).toContain("Combining several lookups");
     expect(page).toContain("untrusted_input");
+    expect(html).toContain('title="multi_step"');
     expect(page).toContain("fixture");
     expect(page.match(/\bPass\b/g)).toHaveLength(1);
     expect(page.match(/\bFail\b/g)).toHaveLength(2);
     expect(page).toContain("Unsafe");
     expect(page).toContain("1 case run broke a safety rule");
-    expect(html.match(/<tr class="unsafe">/g)).toHaveLength(1);
+    // One row in the skill breakdown, one in the case list.
+    expect(html.match(/<tr class="unsafe">/g)).toHaveLength(2);
   });
 
   it("can show only the safety failures", () => {
@@ -190,6 +200,179 @@ describe("one run", () => {
     expect(page).toContain("Not recorded");
     expect(page).not.toMatch(/\bOK\b/);
     expect(page).not.toContain("broke a safety rule");
+    // Regression reports carry no skills and list only failures, so there is no breakdown.
+    expect(page).not.toContain("By skill");
+  });
+});
+
+describe("skills and comparisons", () => {
+  const make = (
+    caseId: string,
+    success: boolean,
+    overrides: Partial<EvaluationCase> = {},
+  ): EvaluationCase => ({
+    key: `${caseId}#${overrides.repeat ?? 0}`,
+    caseId,
+    family: "memory",
+    skill: "Remembering what matters",
+    split: "dev",
+    tags: [],
+    repeat: 0,
+    status: success ? "answered" : "cannot_complete",
+    success,
+    safe: true,
+    failedChecks: [],
+    safetyViolations: [],
+    latencyMs: 10,
+    hasTrace: false,
+    ...overrides,
+  });
+
+  it("groups cases by skill, failing skills first", () => {
+    const lines = skillBreakdown([
+      make("mem-a", true),
+      make("mem-b", false),
+      make("cont-a", true, { skill: "Follow-ups in a conversation" }),
+      make("old-row", true, { skill: null, family: "tool_choice" }),
+      make("bad", false, {
+        skill: "Ignoring instructions in your data",
+        safe: false,
+      }),
+    ]);
+    expect(lines.map((l) => l.skill)).toEqual([
+      "Ignoring instructions in your data",
+      "Remembering what matters",
+      "Follow-ups in a conversation",
+      "tool_choice",
+    ]);
+    expect(lines[0]).toMatchObject({ runs: 1, passed: 0, unsafe: 1 });
+    expect(lines[1]).toMatchObject({ runs: 2, passed: 1, unsafe: 0 });
+  });
+
+  it("shows the skill breakdown on a run", () => {
+    const page = text(
+      renderToStaticMarkup(
+        <EvaluationRunDetailView detail={benchmark} onOpenCase={() => {}} />,
+      ),
+    );
+    expect(page).toContain("By skill");
+    expect(page).toContain("Combining several lookups 0/1");
+    expect(page).toContain("untrusted_input 0/1 1 unsafe");
+    expect(page).toContain("tool_choice 1/1 OK");
+  });
+
+  it("names cases that got better, worse, or still fail across repeats", () => {
+    const before = [
+      make("a", true),
+      make("b", false),
+      make("c", true),
+      make("c", true, { repeat: 1 }),
+      make("d", false),
+      make("gone", true),
+    ];
+    const after = [
+      make("a", false),
+      make("b", true),
+      make("c", true),
+      make("c", false, { repeat: 1 }),
+      make("d", false),
+      make("new", true),
+    ];
+    expect(compareRuns(after, before)).toEqual({
+      better: ["b"],
+      worse: ["a", "c"],
+      stillFailing: ["d"],
+      newCases: ["new"],
+      droppedCases: ["gone"],
+    });
+    // An unsafe pass is not clean.
+    expect(
+      compareRuns([make("a", true, { safe: false })], [make("a", true)]).worse,
+    ).toEqual(["a"]);
+  });
+
+  it("compares with the latest earlier benchmark run of the same design", () => {
+    const run = overview.runs[0];
+    const at = (
+      id: string,
+      startedAt: string,
+      architecture = run.architecture,
+    ) => ({
+      ...run,
+      id,
+      startedAt,
+      architecture,
+    });
+    const runs = [
+      run,
+      at("benchmark:older", "2000-01-01T00:00:00Z"),
+      at("benchmark:newer-other", "2000-01-03T00:00:00Z", "A0"),
+      at("benchmark:future", "2999-01-01T00:00:00Z"),
+      overview.runs[1],
+    ];
+    const candidates = earlierRuns(runs, run);
+    expect(candidates.map((r) => r.id)).toEqual([
+      "benchmark:newer-other",
+      "benchmark:older",
+    ]);
+    expect(defaultComparison(candidates, run)?.id).toBe("benchmark:older");
+    expect(earlierRuns(runs, overview.runs[1])).toEqual([]);
+  });
+
+  it("reads the comparison plainly and warns when the setup changed", () => {
+    const earlier = { ...benchmark.run, label: "assistant (a1-v4)" };
+    const page = text(
+      renderToStaticMarkup(
+        <ComparisonResult
+          run={benchmark.run}
+          earlier={earlier}
+          cases={benchmark.cases}
+          previousCases={benchmark.cases.map((c) => ({
+            ...c,
+            success: true,
+            safe: true,
+          }))}
+        />,
+      ),
+    );
+    expect(page).toContain("setup or the model changed");
+    expect(page).toContain(
+      "Worse now 2 ms-least-busy-day, untrusted-event-notes",
+    );
+    expect(page).toContain("Better now 0 None");
+    const same = text(
+      renderToStaticMarkup(
+        <ComparisonResult
+          run={benchmark.run}
+          earlier={benchmark.run}
+          cases={benchmark.cases}
+          previousCases={benchmark.cases}
+        />,
+      ),
+    );
+    expect(same).not.toContain("changed between");
+    expect(same).toContain("Still not passing 2");
+  });
+
+  it("offers a choice of earlier runs on the run page", () => {
+    const html = renderToStaticMarkup(
+      <EvaluationRunDetailView
+        detail={benchmark}
+        onOpenCase={() => {}}
+        comparison={{
+          candidates: [
+            { ...benchmark.run, id: "benchmark:older", label: "Older run" },
+          ],
+          selectedId: null,
+          onSelect: () => {},
+          previous: null,
+        }}
+      />,
+    );
+    const page = text(html);
+    expect(page).toContain("Since an earlier run");
+    expect(page).toContain("Older run");
+    expect(page).toContain("Pick an earlier run");
   });
 });
 

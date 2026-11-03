@@ -6,7 +6,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { AgentTrace } from "./AgentTrace";
 import {
+  compareRuns,
   dateLabel,
+  defaultComparison,
+  earlierRuns,
   evaluationApi,
   EvaluationApi,
   EvaluationCase,
@@ -16,7 +19,10 @@ import {
   EvaluationTrace,
   latencyLabel,
   percentLabel,
+  settingsDiffer,
   shortDigest,
+  skillBreakdown,
+  skillOf,
   sourceLabels,
 } from "./evaluationApi";
 import { Glyph, LoadingLine } from "./Geometry";
@@ -51,6 +57,12 @@ export function EvaluationView({
   );
   const [caseKey, setCaseKey] = useState<string | null>(null);
   const [trace, setTrace] = useState<Loadable<EvaluationTrace> | null>(null);
+  // undefined: compare with the default earlier run; null: compare with nothing.
+  const [compareChoice, setCompareChoice] = useState<string | null | undefined>(
+    undefined,
+  );
+  const [previous, setPrevious] =
+    useState<Loadable<EvaluationRunDetail> | null>(null);
 
   useHeadingFocus(headingRef, focusToken);
 
@@ -103,10 +115,38 @@ export function EvaluationView({
 
   const openRun = (id: string | null) => {
     setCaseKey(null);
+    setCompareChoice(undefined);
     setRunId(id);
   };
 
   const run = detail?.state === "ready" ? detail.value : null;
+  const candidates =
+    run && overview.state === "ready"
+      ? earlierRuns(overview.value.runs, run.run)
+      : [];
+  const compareId =
+    compareChoice === undefined
+      ? run
+        ? (defaultComparison(candidates, run.run)?.id ?? null)
+        : null
+      : compareChoice;
+
+  useEffect(() => {
+    if (compareId === null) {
+      setPrevious(null);
+      return;
+    }
+    let current = true;
+    setPrevious({ state: "loading" });
+    api.getRun(compareId).then(
+      (value) => current && setPrevious({ state: "ready", value }),
+      (cause) =>
+        current && setPrevious({ state: "failed", message: messageOf(cause) }),
+    );
+    return () => {
+      current = false;
+    };
+  }, [api, compareId]);
   const selectedCase =
     run && caseKey ? run.cases.find((c) => c.key === caseKey) : undefined;
 
@@ -187,6 +227,12 @@ export function EvaluationView({
         <EvaluationRunDetailView
           detail={detail.value}
           onOpenCase={setCaseKey}
+          comparison={{
+            candidates,
+            selectedId: compareId,
+            onSelect: setCompareChoice,
+            previous,
+          }}
         />
       ) : (
         <EvaluationCaseView
@@ -213,7 +259,13 @@ export function EvaluationEmpty({ resultsFolder }: { resultsFolder: string }) {
       </p>
       <ol>
         <li>
-          <strong>Assistant benchmark.</strong> From the repository, run{" "}
+          <strong>Assistant check.</strong> From the repository, with the local
+          model running, run <code>python -m agent_bench check</code>. It tests
+          the assistant the way the app runs it and saves the results straight
+          into this device&rsquo;s results folder.
+        </li>
+        <li>
+          <strong>Assistant benchmark.</strong> Run{" "}
           <code>python -m agent_bench run --out &lt;folder&gt;/my-run</code>, or
           copy a run folder from <code>agent_bench/results/</code>.
         </li>
@@ -332,14 +384,24 @@ function RunMetrics({ run }: { run: EvaluationRun }) {
 
 type CaseFilter = "all" | "failed" | "unsafe";
 
+export type ComparisonState = {
+  /** Earlier benchmark runs, newest first. */
+  candidates: EvaluationRun[];
+  selectedId: string | null;
+  onSelect: (runId: string | null) => void;
+  previous: Loadable<EvaluationRunDetail> | null;
+};
+
 export function EvaluationRunDetailView({
   detail,
   onOpenCase,
   initialFilter = "all",
+  comparison,
 }: {
   detail: EvaluationRunDetail;
   onOpenCase: (caseKey: string) => void;
   initialFilter?: CaseFilter;
+  comparison?: ComparisonState;
 }) {
   const [filter, setFilter] = useState<CaseFilter>(initialFilter);
   const { run, cases } = detail;
@@ -369,6 +431,12 @@ export function EvaluationRunDetailView({
       )}
       {detail.note && <p className="evaluation-note">{detail.note}</p>}
 
+      {run.source === "benchmark" && <SkillBreakdown cases={cases} />}
+      {comparison && comparison.candidates.length > 0 && (
+        <RunComparisonView run={run} cases={cases} comparison={comparison} />
+      )}
+
+      <h3 className="evaluation-section-heading">Every case</h3>
       <div className="evaluation-filter" role="group" aria-label="Show">
         {(
           [
@@ -398,7 +466,7 @@ export function EvaluationRunDetailView({
           <thead>
             <tr>
               <th scope="col">Case</th>
-              <th scope="col">Family</th>
+              <th scope="col">Skill</th>
               <th scope="col">Result</th>
               <th scope="col">Safety</th>
               <th scope="col">Time</th>
@@ -417,6 +485,152 @@ export function EvaluationRunDetailView({
         </table>
       )}
     </section>
+  );
+}
+
+function SkillBreakdown({ cases }: { cases: EvaluationCase[] }) {
+  const lines = skillBreakdown(cases);
+  if (lines.length === 0) return null;
+  return (
+    <section className="evaluation-skills" aria-label="By skill">
+      <h3 className="evaluation-section-heading">By skill</h3>
+      <table className="evaluation-cases">
+        <thead>
+          <tr>
+            <th scope="col">Skill</th>
+            <th scope="col">Passed</th>
+            <th scope="col">Safety</th>
+          </tr>
+        </thead>
+        <tbody>
+          {lines.map((line) => (
+            <tr
+              key={line.skill}
+              className={line.unsafe > 0 ? "unsafe" : undefined}
+            >
+              <th scope="row">{line.skill}</th>
+              <td>
+                <span
+                  className={`evaluation-result ${line.passed === line.runs ? "pass" : "fail"}`}
+                >
+                  {line.passed}/{line.runs}
+                </span>
+              </td>
+              <td>
+                {line.unsafe > 0 ? (
+                  <span className="evaluation-result unsafe">
+                    {line.unsafe} unsafe
+                  </span>
+                ) : (
+                  <span className="evaluation-muted">OK</span>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
+  );
+}
+
+function CaseList({ label, ids }: { label: string; ids: string[] }) {
+  return (
+    <div className="evaluation-change">
+      <dt>
+        {label} <small>{ids.length}</small>
+      </dt>
+      <dd>{ids.length === 0 ? "None" : ids.join(", ")}</dd>
+    </div>
+  );
+}
+
+function RunComparisonView({
+  run,
+  cases,
+  comparison,
+}: {
+  run: EvaluationRun;
+  cases: EvaluationCase[];
+  comparison: ComparisonState;
+}) {
+  const { candidates, selectedId, onSelect, previous } = comparison;
+  const earlier = candidates.find((other) => other.id === selectedId) ?? null;
+  return (
+    <section className="evaluation-compare" aria-label="Since an earlier run">
+      <div className="evaluation-compare-heading">
+        <h3 className="evaluation-section-heading">Since an earlier run</h3>
+        <label>
+          Compare with{" "}
+          <select
+            value={selectedId ?? ""}
+            onChange={(event) => onSelect(event.target.value || null)}
+          >
+            <option value="">Nothing</option>
+            {candidates.map((other) => (
+              <option key={other.id} value={other.id}>
+                {other.label} · {dateLabel(other.startedAt)}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      {selectedId === null || previous === null ? (
+        <p className="evaluation-note">
+          Pick an earlier run to see which cases got better or worse.
+        </p>
+      ) : previous.state === "loading" ? (
+        <LoadingLine label="Opening the earlier run" />
+      ) : previous.state === "failed" ? (
+        <p className="evaluation-error" role="alert">
+          {previous.message}
+        </p>
+      ) : (
+        <ComparisonResult
+          run={run}
+          earlier={earlier ?? previous.value.run}
+          cases={cases}
+          previousCases={previous.value.cases}
+        />
+      )}
+    </section>
+  );
+}
+
+export function ComparisonResult({
+  run,
+  earlier,
+  cases,
+  previousCases,
+}: {
+  run: EvaluationRun;
+  earlier: EvaluationRun;
+  cases: EvaluationCase[];
+  previousCases: EvaluationCase[];
+}) {
+  const result = compareRuns(cases, previousCases);
+  return (
+    <>
+      {settingsDiffer(run, earlier) && (
+        <p className="evaluation-note">
+          The assistant&rsquo;s setup or the model changed between these runs (
+          {earlier.label}
+          {earlier.modelName ? `, ${earlier.modelName}` : ""} then; {run.label}
+          {run.modelName ? `, ${run.modelName}` : ""} now). Read the difference
+          with that in mind.
+        </p>
+      )}
+      <dl className="evaluation-changes">
+        <CaseList label="Better now" ids={result.better} />
+        <CaseList label="Worse now" ids={result.worse} />
+        <CaseList label="Still not passing" ids={result.stillFailing} />
+        {result.newCases.length > 0 && (
+          <CaseList label="New this time" ids={result.newCases} />
+        )}
+        {result.droppedCases.length > 0 && (
+          <CaseList label="No longer tested" ids={result.droppedCases} />
+        )}
+      </dl>
+    </>
   );
 }
 
@@ -446,7 +660,7 @@ function CaseRow({
           </span>
         )}
       </th>
-      <td>{testCase.family ?? "—"}</td>
+      <td title={testCase.family ?? undefined}>{skillOf(testCase) ?? "—"}</td>
       <td>
         <span
           className={`evaluation-result ${testCase.success ? "pass" : "fail"}`}
@@ -491,6 +705,7 @@ export function EvaluationCaseView({
         <h2>{testCase.caseId}</h2>
         <p>
           {[
+            testCase.skill,
             testCase.family,
             testCase.split,
             run.repeats > 1 ? `run ${testCase.repeat}` : null,
