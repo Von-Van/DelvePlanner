@@ -1,3 +1,4 @@
+import { appName } from "./brand";
 import { KeyboardEvent, useEffect, useState } from "react";
 import { api, messageFor } from "./api";
 import {
@@ -40,7 +41,7 @@ export function WeekStartSetting({
           if (
             !saveWeekStart(value === "" ? null : (Number(value) as WeekStart))
           )
-            return onMessage("Delve Planner couldn't save that preference.");
+            return onMessage(`${appName} couldn't save that preference.`);
           window.location.reload();
         }}
       >
@@ -168,7 +169,7 @@ export function QuickCaptureSetting({
         </p>
       )}
       <p>
-        Opens the capture box even while Delve Planner is in the background or
+        Opens the capture box even while {appName} is in the background or
         closed to the tray. Use two modifier keys, such as {example}, so it
         doesn't take a shortcut other apps rely on.
       </p>

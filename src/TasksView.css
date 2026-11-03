@@ -1,0 +1,218 @@
+/* The Tasks board: three soft columns of white cards, as in the redesign. */
+.tasks-board {
+  display: grid;
+  gap: 28px;
+}
+.tasks-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  align-items: flex-end;
+  justify-content: space-between;
+}
+.tasks-header h1 {
+  margin: 0;
+  color: var(--ink);
+  font: 600 46px/1.05 var(--font-display);
+}
+.tasks-header h1:focus {
+  outline: none;
+}
+.tasks-header p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 15px;
+}
+.tasks-new {
+  flex: 0 1 460px;
+  min-width: 0;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 6px 6px 14px;
+  border: 1px solid var(--frame);
+  border-radius: 14px;
+  background: var(--ground);
+}
+.tasks-new:focus-within {
+  border-color: var(--blue-frame);
+  box-shadow: 0 0 0 3px var(--blue-glow);
+}
+.tasks-new input {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 40px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: 400 15px var(--font-ui);
+  outline: none;
+}
+.tasks-new .primary-button {
+  border-radius: var(--radius);
+}
+
+.tasks-columns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px;
+  align-items: flex-start;
+}
+.tasks-column {
+  flex: 1 1 280px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 18px;
+  background: var(--ground-soft);
+}
+.tasks-column-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 4px 0;
+}
+.tasks-column-heading h2 {
+  margin: 0;
+  color: var(--ink);
+  font: 600 15px var(--font-ui);
+}
+.tasks-column-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+.tasks-column.needs .tasks-column-dot {
+  background: #e6be6e;
+}
+.tasks-column.working .tasks-column-dot {
+  background: #8fb5e6;
+}
+.tasks-column.done .tasks-column-dot {
+  background: #7cc39a;
+}
+.tasks-column-count {
+  margin-left: auto;
+  color: var(--muted);
+  font: 500 12px/1 var(--font-mono);
+}
+.tasks-empty,
+.tasks-footnote {
+  margin: 0;
+  padding: 4px 4px 8px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.task-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+  background: var(--ground);
+}
+.task-card.done {
+  gap: 8px;
+}
+.task-card h3 {
+  margin: 0;
+  color: var(--ink);
+  font: 600 15px/1.35 var(--font-ui);
+  overflow-wrap: anywhere;
+}
+.task-card p {
+  margin: 0;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.task-card .task-answer {
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.task-card p.task-step {
+  color: var(--muted);
+  font-size: 13px;
+}
+.task-card > button {
+  align-self: flex-start;
+}
+.task-card-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+}
+.task-card-top time {
+  color: var(--muted);
+  font: 400 12px/1 var(--font-mono);
+  white-space: nowrap;
+}
+.task-tag {
+  padding: 4px 10px;
+  border-radius: var(--radius-pill);
+  font-size: 12px;
+  font-weight: 600;
+}
+.task-tag.question {
+  color: var(--lavender);
+  background: var(--lavender-wash);
+}
+.task-tag.ready {
+  color: var(--blue-deep);
+  background: var(--blue-wash);
+}
+.task-tag.good {
+  color: var(--success);
+  background: var(--success-wash);
+}
+.task-tag.attention {
+  color: var(--warning);
+  background: var(--warning-wash);
+}
+.task-tag.neutral {
+  color: var(--secondary);
+  background: var(--ground-muted);
+}
+.task-tag.problem {
+  color: var(--danger);
+  background: var(--danger-wash);
+}
+
+/* No percentage is known while the assistant works, so the bar drifts instead of filling. */
+.task-progress {
+  position: relative;
+  height: 6px;
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: var(--track);
+}
+.task-progress i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 40%;
+  border-radius: var(--radius-pill);
+  background: #8fb5e6;
+  animation: task-progress 1.8s ease-in-out infinite alternate;
+}
+@keyframes task-progress {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(150%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .task-progress i {
+    animation: none;
+  }
+}

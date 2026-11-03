@@ -1,3 +1,4 @@
+import { appName } from "./brand";
 import {
   CSSProperties,
   FormEvent,
@@ -149,7 +150,7 @@ export function CalendarsView({
         onSelect: () => {
           if (
             !window.confirm(
-              `Disconnect ${account.label}? Its ${plural(account.calendarCount, "calendar")} and their events leave Delve Planner, and the sign-in is withdrawn. Your calendars aren't changed.`,
+              `Disconnect ${account.label}? Its ${plural(account.calendarCount, "calendar")} and their events leave ${appName}, and the sign-in is withdrawn. Your calendars aren't changed.`,
             )
           )
             return;
@@ -216,7 +217,7 @@ export function CalendarsView({
       onSelect: () => {
         if (
           !window.confirm(
-            `Remove “${calendar.name}”? Its events leave Delve Planner${
+            `Remove “${calendar.name}”? Its events leave ${appName}${
               calendar.kind === "ics_link"
                 ? " and its link is deleted from your keychain"
                 : account
@@ -244,8 +245,8 @@ export function CalendarsView({
       </header>
       <p className="page-intro">
         See your Google, Outlook, and other calendars beside your plans. They
-        stay read-only: Delve Planner never changes them, and their events
-        aren't exported or backed up with your planner data.
+        stay read-only: {appName} never changes them, and their events aren't
+        exported or backed up with your planner data.
       </p>
       <div className="calendars-grid">
         <section aria-labelledby="calendar-list">
@@ -400,8 +401,8 @@ export function CalendarsView({
             <p className="side-kicker">CONNECT AN ACCOUNT</p>
             <h3>Google or Outlook</h3>
             <p>
-              Sign in once in your browser, then choose which calendars Delve
-              Planner shows. Delve Planner asks for read-only access: it can see
+              Sign in once in your browser, then choose which calendars
+              {appName} shows. {appName} asks for read-only access: it can see
               when you're busy and never changes, creates, or deletes anything.
             </p>
             <div className="connect-buttons">
@@ -427,7 +428,7 @@ export function CalendarsView({
             {connecting && (
               <p className="editor-hint">
                 Finish signing in to {providerLabel(connecting)} in your
-                browser. Delve Planner waits five minutes.
+                browser. {appName} waits five minutes.
               </p>
             )}
           </section>
@@ -547,7 +548,7 @@ function CalendarPicker({
     <EditorShell
       label="Choose calendars"
       kicker={`${providerLabel(account.provider).toUpperCase()} · ${account.label}`}
-      heading="Which calendars should Delve Planner show?"
+      heading={`Which calendars should ${appName} show?`}
       busy={saving}
       onClose={onClose}
       onSubmit={(form) => {
@@ -603,8 +604,8 @@ function CalendarPicker({
         </ul>
       )}
       <p className="editor-hint">
-        Delve Planner only reads these calendars. You can hide or remove any of
-        them later.
+        {appName} only reads these calendars. You can hide or remove any of them
+        later.
       </p>
     </EditorShell>
   );
@@ -691,9 +692,9 @@ function SubscribeCard({
           <dd>Look for a public or private iCal (.ics) or webcal link.</dd>
         </dl>
         <p>
-          Anyone with a private link can read that calendar, so Delve Planner
+          Anyone with a private link can read that calendar, so {appName}
           keeps it in your system keychain and never shows it again. It checks
-          the calendar every 30 minutes while Delve Planner is running.
+          the calendar every 30 minutes while {appName} is running.
         </p>
       </details>
     </form>
@@ -939,7 +940,7 @@ function LinkEditor({
           maxLength={1200}
         />
         <span>
-          Delve Planner checks the link first. The old link is replaced in your
+          {appName} checks the link first. The old link is replaced in your
           keychain only if the new one works.
         </span>
       </label>

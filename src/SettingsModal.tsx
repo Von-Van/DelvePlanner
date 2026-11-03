@@ -1,3 +1,4 @@
+import { appName } from "./brand";
 import { useEffect, useRef, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { relaunch } from "@tauri-apps/plugin-process";
@@ -93,7 +94,7 @@ export function SettingsModal({
   async function restore(name: string) {
     if (
       !window.confirm(
-        "Restore this backup? Delve Planner creates a backup of the current database first.",
+        `Restore this backup? ${appName} creates a backup of the current database first.`,
       )
     )
       return;
@@ -111,8 +112,8 @@ export function SettingsModal({
       setUpdate(next);
       setUpdateState(
         next
-          ? `Delve Planner ${next.version} is available.`
-          : "Delve Planner is up to date.",
+          ? `${appName} ${next.version} is available.`
+          : `${appName} is up to date.`,
       );
     });
   }
@@ -121,7 +122,7 @@ export function SettingsModal({
     if (
       !update ||
       !window.confirm(
-        `Install Delve Planner ${update.version}? The signed package will be downloaded, installed, and Delve Planner will restart.`,
+        `Install ${appName} ${update.version}? The signed package will be downloaded, installed, and ${appName} will restart.`,
       )
     )
       return;
@@ -150,7 +151,7 @@ export function SettingsModal({
       >
         <header>
           <div>
-            <p>DELVE PLANNER / LOCAL DESKTOP</p>
+            <p>{appName.toUpperCase()} / LOCAL DESKTOP</p>
             <h2 id="settings-title">Settings & recovery</h2>
           </div>
           <button onClick={onClose} aria-label="Close settings">
@@ -164,7 +165,7 @@ export function SettingsModal({
             title="Local model"
             subtitle={
               status?.phase === "stopped"
-                ? "Idle. Delve Planner starts the model only while it answers you."
+                ? `Idle. ${appName} starts the model only while it answers you.`
                 : (status?.detail ?? "Checking the local runtime…")
             }
           >
@@ -205,7 +206,7 @@ export function SettingsModal({
                   onClick={() => {
                     if (
                       !window.confirm(
-                        `Remove ${TESTED_MODEL} and all model data Delve Planner downloaded? Models in your own Ollama folder and your schedule are not affected.`,
+                        `Remove ${TESTED_MODEL} and all model data ${appName} downloaded? Models in your own Ollama folder and your schedule are not affected.`,
                       )
                     )
                       return;
@@ -255,8 +256,8 @@ export function SettingsModal({
           >
             <p>
               Permission is requested only when a reminder is first enabled.
-              Keep Delve Planner running in the tray; choosing Quit stops
-              reminder delivery.
+              Keep {appName} running in the tray; choosing Quit stops reminder
+              delivery.
             </p>
           </SettingsBlock>
 
@@ -378,7 +379,7 @@ export function SettingsModal({
 
           <SettingsBlock
             index="09"
-            title={`Delve Planner ${version}`}
+            title={`${appName} ${version}`}
             subtitle={updateState}
           >
             {update?.body && (

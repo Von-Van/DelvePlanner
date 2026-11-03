@@ -53,6 +53,11 @@ import {
 export function AssistantAgentPanel({
   ask,
   onAskTaken,
+  open,
+  onOpenTaken,
+  onStarted,
+  onEnded,
+  onRunsChange,
   onChanged,
   onMessage,
   onFallback,
@@ -64,6 +69,19 @@ export function AssistantAgentPanel({
   ask?: { request: string; key: number } | null;
   /** Called once a handed-over request has started, so it isn't run again on the next visit. */
   onAskTaken?: () => void;
+  /**
+   * A run to show, from the Tasks board or the approval card. Each new `key` opens it once, with
+   * its conversation, so its question can be answered or its changes reviewed.
+   */
+  open?: { runKey: string; key: number } | null;
+  /** Called once a requested run is showing, so it isn't opened again on the next visit. */
+  onOpenTaken?: () => void;
+  /** Called as a request starts, so the rest of the app can show it as working. */
+  onStarted?: (runKey: string, request: string) => void;
+  /** Called when a request is over, however it ended, even if it never produced a run. */
+  onEnded?: (runKey: string) => void;
+  /** Called with this session's runs whenever they change, so other screens stay current. */
+  onRunsChange?: (runs: AgentRun[]) => void;
   /** Called after applied changes, so the rest of the app reloads. */
   onChanged: () => void;
   onMessage: (message: string) => void;
@@ -93,6 +111,12 @@ export function AssistantAgentPanel({
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [history, setHistory] = useState<ConversationMessage[]>([]);
 
+  // Runs are reported only once they've loaded, so an empty first render doesn't erase them.
+  const runsLoaded = useRef(false);
+  useEffect(() => {
+    if (runsLoaded.current) onRunsChange?.(runs);
+  }, [runs]);
+
   useEffect(() => {
     api
       .assistantStatus()
@@ -101,6 +125,7 @@ export function AssistantAgentPanel({
     api
       .listAssistantRuns()
       .then((list) => {
+        runsLoaded.current = true;
         setRuns(list);
         setSelectedKey(list[0]?.runKey ?? null);
       })
@@ -164,6 +189,29 @@ export function AssistantAgentPanel({
     // runRequest reads the latest state when it is called; only a new key should start a run.
   }, [ask?.key, running]);
 
+  // A requested run opens once per key, once this session's runs have loaded. One that finished
+  // elsewhere after these runs loaded (a task started on the board) is fetched once.
+  const handledOpen = useRef<number | null>(null);
+  const fetchedForOpen = useRef<number | null>(null);
+  useEffect(() => {
+    if (!open || handledOpen.current === open.key || running) return;
+    const run = runs.find((item) => item.runKey === open.runKey);
+    if (!run) {
+      if (runsLoaded.current && fetchedForOpen.current !== open.key) {
+        fetchedForOpen.current = open.key;
+        void refreshRuns();
+      }
+      return;
+    }
+    handledOpen.current = open.key;
+    onOpenTaken?.();
+    setThreadId(run.threadId);
+    setHistory([]);
+    setSelectedKey(run.runKey);
+    if (run.threadId) void loadConversation(run.threadId);
+    // loadConversation reads the latest state; only a new key or newly loaded runs matter.
+  }, [open?.key, runs, running]);
+
   /** Runs one request; `typed` says it came from the box, which is emptied once it is sent. */
   async function runRequest(
     request: string,
@@ -181,6 +229,7 @@ export function AssistantAgentPanel({
     const key = newRunKey();
     setLive({ key, steps: [] });
     setSelectedKey(key);
+    onStarted?.(key, request);
     try {
       const run = await api.runAssistant(request, localTimeZone, key, threadId);
       setRuns((current) => withRun(current, run));
@@ -206,6 +255,7 @@ export function AssistantAgentPanel({
     } finally {
       setLive(null);
       setCancelling(false);
+      onEnded?.(key);
     }
   }
 
