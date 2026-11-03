@@ -838,9 +838,12 @@ pub struct HeadsUpDismissReceipt {
 
 /// "Don't show this again", optionally "and stop this kind" and "because …". A reason becomes
 /// feedback that waits for "just this once" or "remember for next time".
+///
+/// No change event here, even when a kind is stopped: the window that dismissed reloads the list
+/// itself once any lesson on offer is settled. An event would reload it at once and take the
+/// lesson prompt away with the dismissed heads-up.
 #[tauri::command]
 pub(crate) fn dismiss_heads_up(
-    app: AppHandle,
     state: State<'_, AppState>,
     id: String,
     dismissal: Option<HeadsUpDismissal>,
@@ -848,9 +851,6 @@ pub(crate) fn dismiss_heads_up(
     let dismissed = with_database(&state, |database| {
         database.dismiss_heads_up_because(&id, dismissal.unwrap_or_default(), Utc::now())
     })?;
-    if dismissed.muted_kind.is_some() {
-        let _ = app.emit(HEADS_UPS_CHANGED, ());
-    }
     Ok(HeadsUpDismissReceipt {
         heads_up: dismissed.heads_up,
         muted_kind: dismissed.muted_kind,
