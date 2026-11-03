@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from conftest import FakeOllama
 
-from delveops_agent.model import ModelError, ModelRequest, NonLoopbackEndpoint, OllamaModelClient, require_loopback
+from delveagent.model import ModelError, ModelRequest, NonLoopbackEndpoint, OllamaModelClient, require_loopback
 
 
 @pytest.mark.parametrize(

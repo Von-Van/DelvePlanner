@@ -13,7 +13,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from delveops_agent.model import ModelError, ModelRequest, ModelResponse  # noqa: E402
+from delveagent.model import ModelError, ModelRequest, ModelResponse  # noqa: E402
 
 
 @dataclass

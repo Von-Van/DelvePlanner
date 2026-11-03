@@ -1,6 +1,6 @@
 # The Python sidecar link and packaging gate
 
-DelveOps piece D. This is how the desktop app runs the Python agent, how the two talk, how the agent reaches the
+DelveAgent piece D. This is how the desktop app runs the Python agent, how the two talk, how the agent reaches the
 local model, and whether shipping Python inside the app is practical on macOS and Windows.
 
 **In one paragraph:** the app starts the Python agent as a helper program only when it's needed. They talk by passing
@@ -19,7 +19,7 @@ trying if it keeps crashing), and cuts it off if it sends anything malformed or 
 | `src-tauri/src/sidecar/supervisor.rs`     | `Sidecar`: start, handshake, run, timeouts, cancel, restart, idle stop     |
 | `src-tauri/src/sidecar/broker.rs`         | `ModelBroker`: `model_call` → bundled Ollama, labelled with name/digest    |
 | `src-tauri/src/runtime.rs`                | `OllamaRuntime::model_identity()` (read-only addition): name, digest, ver. |
-| `agent-python/delveops_agent/protocol/`   | The Python end: `envelope.py`, `link.py`, `__main__.py`, `diagnostic.py`   |
+| `agent-python/delveagent/protocol/`       | The Python end: `envelope.py`, `link.py`, `__main__.py`, `diagnostic.py`   |
 | `src-tauri/examples/sidecar_probe.rs`     | Drives a packaged or source agent through every scenario, prints timings   |
 | `.github/workflows/sidecar-packaging.yml` | Builds and probes the agent on macOS and Windows                           |
 
@@ -103,7 +103,7 @@ job (`runtime.ensure_started(&agent)` before the run), which keeps `runtime.rs` 
 **From Rust (piece I):**
 
 ```rust
-let sidecar = Sidecar::new(SidecarCommand::frozen(agent_exe, "delveops_agent.agents.a1:run"), SidecarLimits::default());
+let sidecar = Sidecar::new(SidecarCommand::frozen(agent_exe, "delveagent.agents.a1:run"), SidecarLimits::default());
 runtime.ensure_started(&planner_agent).await?;
 let broker = ModelBroker::new(runtime.endpoint(), runtime.model_identity().ok_or(…)?)?;
 // `host` implements SidecarHost: call_tool → C's ToolSession::call(...) serialized, call_model → broker.call(...),
@@ -116,12 +116,12 @@ returns the result or raises `ToolError` (with `.code`, `.retryable`, `.call_id`
 a draft cites as evidence. `ctx.model.chat(messages, format=…, options=…)` returns the broker result.
 `ctx.trace(kind, summary, data)` emits a trace event. `ctx.check_cancelled()` raises `Cancelled` once the app has
 cancelled; long loops should call it. Start it with
-`python -m delveops_agent.protocol --runner package.module:run`. The `delveops_agent` folder deliberately has no
+`python -m delveagent.protocol --runner package.module:run`. The `delveagent` folder deliberately has no
 `__init__.py` from D, so E can own it.
 
 **Tests:** `cargo test sidecar` (Rust, drives the real Python package when a Python 3.10+ is on `PATH` or in
-`DELVEOPS_PYTHON`, otherwise skips) and, from `agent-python/`,
-`python -m unittest discover -s delveops_agent/protocol/tests -t .`.
+`DELVEAGENT_TEST_PYTHON`, otherwise skips) and, from `agent-python/`,
+`python -m unittest discover -s delveagent/protocol/tests -t .`.
 
 ## Packaging prototype
 
@@ -129,10 +129,10 @@ Two ways to ship the agent inside the app were built and driven through the real
 `sidecar_probe` (handshake, tool and model round trips, traces, stray stdout, 20 warm runs, cancel, crash and
 restart, oversized message, environment isolation):
 
-- **A. PyInstaller, one-folder build.** A single `delveops-agent` executable plus its folder of libraries. The
+- **A. PyInstaller, one-folder build.** A single `delveagent` executable plus its folder of libraries. The
   agent's code is frozen in; nothing else is needed on the user's machine.
 - **B. Embedded interpreter** (`python-build-standalone`, the relocatable CPython builds `uv` uses) with the agent
-  shipped as plain source next to it, started as `python -s -m delveops_agent.protocol`.
+  shipped as plain source next to it, started as `python -s -m delveagent.protocol`.
 
 ### Results
 

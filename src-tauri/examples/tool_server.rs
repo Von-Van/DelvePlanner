@@ -1,4 +1,4 @@
-//! Serves the DelveOps read tools over newline-delimited JSON on stdin/stdout, against a copy of
+//! Serves the DelveAgent read tools over newline-delimited JSON on stdin/stdout, against a copy of
 //! a planner database, so benchmarks and the Python agent can exercise the real Rust tools
 //! without the desktop app. stdout carries protocol messages only; diagnostics go to stderr.
 //!

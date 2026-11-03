@@ -9,7 +9,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-PACKAGE = Path(__file__).resolve().parents[1] / "delveops_agent"
+PACKAGE = Path(__file__).resolve().parents[1] / "delveagent"
 # The protocol/ folder belongs to the sidecar-link piece and is checked by its own tests.
 SOURCES = [p for p in PACKAGE.rglob("*.py") if "protocol" not in p.relative_to(PACKAGE).parts]
 

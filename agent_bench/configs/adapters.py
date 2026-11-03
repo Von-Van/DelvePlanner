@@ -26,20 +26,14 @@ from ..mock_tools import PlannerState, load_fixture
 REPO = Path(__file__).resolve().parents[2]
 AGENT_PYTHON = REPO / "agent-python"
 
-# The agent package is renamed delveops_agent -> delveagent before wave 2; accept either.
-AGENT_PACKAGES = ("delveagent", "delveops_agent")
+AGENT_PACKAGE = "delveagent"
 
 
 def agent_package() -> Any:
     """Import the A1 agent package from the repository checkout (no install needed)."""
     if str(AGENT_PYTHON) not in sys.path:
         sys.path.insert(0, str(AGENT_PYTHON))
-    for name in AGENT_PACKAGES:
-        try:
-            return importlib.import_module(name)
-        except ModuleNotFoundError:
-            continue
-    raise ModuleNotFoundError(f"no agent package ({' or '.join(AGENT_PACKAGES)}) under {AGENT_PYTHON}")
+    return importlib.import_module(AGENT_PACKAGE)
 
 
 def _submodule(name: str) -> Any:

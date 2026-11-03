@@ -1,13 +1,13 @@
 name: Sidecar packaging probe
 
-# DelveOps piece D packaging gate: can the Python agent ship inside the desktop app on macOS and
+# DelveAgent piece D packaging gate: can the Python agent ship inside the desktop app on macOS and
 # Windows? Builds the agent two ways and drives each through the real Rust supervisor.
-# Results: the job summaries and the uploaded report artifacts; decision in docs/delveops/sidecar.md.
+# Results: the job summaries and the uploaded report artifacts; decision in docs/delveagent/sidecar.md.
 
 on:
   pull_request:
     paths:
-      - agent-python/delveops_agent/protocol/**
+      - agent-python/delveagent/protocol/**
       - src-tauri/src/sidecar.rs
       - src-tauri/src/sidecar/**
       - src-tauri/examples/sidecar_probe.rs
@@ -27,12 +27,12 @@ jobs:
           - os: macos-15
             label: macOS arm64
             pbs_target: aarch64-apple-darwin
-            exe: dist/delveops-agent/delveops-agent
+            exe: dist/delveagent/delveagent
             pbs_python: pbs/python/bin/python3
           - os: windows-2022
             label: Windows x64
             pbs_target: x86_64-pc-windows-msvc
-            exe: dist/delveops-agent/delveops-agent.exe
+            exe: dist/delveagent/delveagent.exe
             pbs_python: pbs/python/python.exe
     runs-on: ${{ matrix.os }}
     defaults:
@@ -52,7 +52,7 @@ jobs:
 
       - name: Protocol unit tests
         working-directory: agent-python
-        run: python -m unittest discover -s delveops_agent/protocol/tests -t . -v
+        run: python -m unittest discover -s delveagent/protocol/tests -t . -v
 
       - name: Build the probe
         run: cargo build --manifest-path src-tauri/Cargo.toml --example sidecar_probe
@@ -60,13 +60,13 @@ jobs:
       - name: "Option A: freeze with PyInstaller (one folder)"
         run: |
           python -m pip install pyinstaller==6.22.3
-          python -m PyInstaller --noconfirm --clean --onedir --name delveops-agent \
+          python -m PyInstaller --noconfirm --clean --onedir --name delveagent \
             --paths agent-python --exclude-module tkinter \
-            agent-python/delveops_agent/protocol/_frozen_entry.py
+            agent-python/delveagent/protocol/_frozen_entry.py
           python - <<'EOF'
           import os
           total = sum(os.path.getsize(os.path.join(root, name))
-                      for root, _, names in os.walk("dist/delveops-agent") for name in names)
+                      for root, _, names in os.walk("dist/delveagent") for name in names)
           print(f"PyInstaller folder: {total / 1e6:.1f} MB")
           open("size-pyinstaller.txt", "w").write(str(total))
           EOF
@@ -83,7 +83,7 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           codesign --verify --strict --verbose=2 "${{ matrix.exe }}"
-          find dist/delveops-agent -type f \( -name '*.dylib' -o -name '*.so' \) | wc -l | xargs echo "native libraries to sign:"
+          find dist/delveagent -type f \( -name '*.dylib' -o -name '*.so' \) | wc -l | xargs echo "native libraries to sign:"
 
       - name: "Option B: embedded interpreter (python-build-standalone)"
         id: pbs

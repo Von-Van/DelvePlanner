@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from delveops_agent.drafts import OP_SPECS
-from delveops_agent.verify.operations import normalize_payload, payload_problems
+from delveagent.drafts import OP_SPECS
+from delveagent.verify.operations import normalize_payload, payload_problems
 
 TZ = "America/New_York"
 

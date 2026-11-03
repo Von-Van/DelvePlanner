@@ -921,7 +921,7 @@ pub fn contract() -> Value {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "$id": "https://github.com/Von-Van/DelvePlanner/contracts/tools.v1.json",
         "version": CONTRACT_VERSION,
-        "description": "DelveOps read tools served by the Rust tool broker. Every tool is read-only. \
+        "description": "DelveAgent read tools served by the Rust tool broker. Every tool is read-only. \
             Records carry id and, where stored, revision. Times are UTC instants or local \
             YYYY-MM-DD days with the timeZone they were read in. Descriptions and notes are \
             left out unless the run's privacy policy allows them; read-only calendar events are \

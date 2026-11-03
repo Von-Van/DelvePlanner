@@ -1,7 +1,7 @@
-"""The DelveOps agent's link to DelvePlanner (piece D of the overhaul).
+"""DelveAgent's link to DelvePlanner (piece D of the overhaul).
 
 DelvePlanner starts the agent as a child process and talks to it over versioned
-newline-delimited JSON on stdin/stdout. See ``docs/delveops/sidecar.md``.
+newline-delimited JSON on stdin/stdout. See ``docs/delveagent/sidecar.md``.
 
 A runner is any callable ``run(task: dict, ctx: RunContext) -> dict`` that returns a
 ``run_result`` payload (``status``, ``answer``, ``drafts``...). ``ctx.tools.call(...)`` and

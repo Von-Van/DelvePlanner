@@ -2,8 +2,8 @@ import io
 import json
 import unittest
 
-from delveops_agent.protocol import envelope as wire
-from delveops_agent.protocol.envelope import Envelope, ProtocolError
+from delveagent.protocol import envelope as wire
+from delveagent.protocol.envelope import Envelope, ProtocolError
 
 
 class EnvelopeTests(unittest.TestCase):

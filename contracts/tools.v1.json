@@ -1461,7 +1461,7 @@
       "maxToolCalls": 24
     }
   },
-  "description": "DelveOps read tools served by the Rust tool broker. Every tool is read-only. Records carry id and, where stored, revision. Times are UTC instants or local YYYY-MM-DD days with the timeZone they were read in. Descriptions and notes are left out unless the run's privacy policy allows them; read-only calendar events are reduced to busy times with no titles.",
+  "description": "DelveAgent read tools served by the Rust tool broker. Every tool is read-only. Records carry id and, where stored, revision. Times are UTC instants or local YYYY-MM-DD days with the timeZone they were read in. Descriptions and notes are left out unless the run's privacy policy allows them; read-only calendar events are reduced to busy times with no titles.",
   "errorCodes": [
     {
       "code": "invalid_arguments",

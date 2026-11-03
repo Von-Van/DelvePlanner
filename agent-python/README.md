@@ -1,24 +1,24 @@
-# agent-python: DelveOps agent runtime
+# agent-python: DelveAgent runtime
 
-The Python side of the DelveOps overhaul (piece E of the overhaul plan). It holds the agent
+The Python side of the DelveAgent overhaul (piece E of the overhaul plan). It holds the agent
 architectures that get compared in experiments, starting with **A1: one local model choosing read-only tools**.
 
 Standard library only. No agent frameworks, no web server.
 
 ## What is here
 
-| File                        | What it does                                                                                              |
-| --------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `delveops_agent/types.py`   | `AgentTask`, `Budget`, `AgentResult`, `Draft`, `ToolError`: the shared shapes (plan contract 4).          |
-| `delveops_agent/model.py`   | `ModelClient` interface and `OllamaModelClient` (loopback only; records model, digest, options, latency). |
-| `delveops_agent/tools.py`   | Tool catalog from `contracts/tools.v1.json`, `ToolClient` interface, fixture-driven `MockToolClient`.     |
-| `delveops_agent/agent.py`   | `Agent` interface and the `A1Agent` loop with budgets and stop rules.                                     |
-| `delveops_agent/drafts.py`  | Draft validation against the Rust `MutationOperation` shapes, grounding, evidence (plan contract 2).      |
-| `delveops_agent/verify/`    | The self-check (milestone M4): safe fixes, fact checks, re-reads, one repair, then a clear stop.          |
-| `delveops_agent/trace.py`   | Trace events in the shared shape (plan contract 5); text only in opt-in debug traces.                     |
-| `delveops_agent/prompts.py` | Versioned prompt (`a1-v5`) and the JSON step format the model must reply in.                              |
-| `delveops_agent/cli.py`     | Run A1 once against a fixture file and a local Ollama, print the result and trace.                        |
-| `delveops_agent/protocol/`  | Python end of the Rust ↔ Python link. Owned by piece D, not this package's code.                          |
+| File                    | What it does                                                                                              |
+| ----------------------- | --------------------------------------------------------------------------------------------------------- |
+| `delveagent/types.py`   | `AgentTask`, `Budget`, `AgentResult`, `Draft`, `ToolError`: the shared shapes (plan contract 4).          |
+| `delveagent/model.py`   | `ModelClient` interface and `OllamaModelClient` (loopback only; records model, digest, options, latency). |
+| `delveagent/tools.py`   | Tool catalog from `contracts/tools.v1.json`, `ToolClient` interface, fixture-driven `MockToolClient`.     |
+| `delveagent/agent.py`   | `Agent` interface and the `A1Agent` loop with budgets and stop rules.                                     |
+| `delveagent/drafts.py`  | Draft validation against the Rust `MutationOperation` shapes, grounding, evidence (plan contract 2).      |
+| `delveagent/verify/`    | The self-check (milestone M4): safe fixes, fact checks, re-reads, one repair, then a clear stop.          |
+| `delveagent/trace.py`   | Trace events in the shared shape (plan contract 5); text only in opt-in debug traces.                     |
+| `delveagent/prompts.py` | Versioned prompt (`a1-v5`) and the JSON step format the model must reply in.                              |
+| `delveagent/cli.py`     | Run A1 once against a fixture file and a local Ollama, print the result and trace.                        |
+| `delveagent/protocol/`  | Python end of the Rust ↔ Python link. Owned by piece D, not this package's code.                          |
 
 ## How A1 works
 
@@ -99,7 +99,7 @@ python -m pytest
 ruff check . && ruff format --check .
 
 # Try A1 by hand (needs Ollama running locally with the model pulled):
-python -m delveops_agent.cli examples/reschedule_overdue.json --model qwen3:8b --port 11434
+python -m delveagent.cli examples/reschedule_overdue.json --model qwen3:8b --port 11434
 ```
 
 ## Not yet

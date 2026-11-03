@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from conftest import ScriptedModel
 
-from delveops_agent import A1Agent, AgentTask, Budget, MockToolClient, ToolError
-from delveops_agent.memory import (
+from delveagent import A1Agent, AgentTask, Budget, MockToolClient, ToolError
+from delveagent.memory import (
     GET_MEMORY_SPEC,
     MEMORY_KINDS,
     MemoryAgent,
@@ -11,7 +11,7 @@ from delveops_agent.memory import (
     compose_goal,
     recent_window,
 )
-from delveops_agent.memory.agent import MAX_TURN_CHARS, MAX_WINDOW_CHARS
+from delveagent.memory.agent import MAX_TURN_CHARS, MAX_WINDOW_CHARS
 
 ALL_TOOLS = ("get_day_context", "search_tasks", "get_memory")
 

@@ -1,4 +1,4 @@
-//! The Assistant's link to the Python agent (DelveOps piece I).
+//! The Assistant's link to the Python agent (DelveAgent piece I).
 //!
 //! A run goes: the Assistant screen sends a request, the app starts (or reuses) the agent through
 //! the sidecar supervisor, answers the agent's read-tool calls from the tool broker and its model
@@ -42,7 +42,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 /// The runner the sidecar entry point loads: the A1 agent adapted to the link.
-pub const RUNNER: &str = "delveops_agent.link_runner:run";
+pub const RUNNER: &str = "delveagent.link_runner:run";
 /// The window event that carries each trace event of a run in progress.
 pub const RUN_EVENT: &str = "assistant-run-event";
 /// The architecture the Assistant runs today.
@@ -69,26 +69,26 @@ pub use suggestions::{
 /// development.
 pub fn locate_agent(resource_dir: &Path) -> Option<(SidecarCommand, &'static str)> {
     let exe = if cfg!(windows) {
-        "delveops-agent.exe"
+        "delveagent.exe"
     } else {
-        "delveops-agent"
+        "delveagent"
     };
-    if let Some(path) = std::env::var_os("DELVEOPS_AGENT_EXE").map(PathBuf::from) {
+    if let Some(path) = std::env::var_os("DELVEAGENT_EXE").map(PathBuf::from) {
         return Some((SidecarCommand::frozen(path, RUNNER), "packaged"));
     }
-    let bundled = resource_dir.join("delveops-agent").join(exe);
+    let bundled = resource_dir.join("delveagent").join(exe);
     if bundled.is_file() {
         return Some((SidecarCommand::frozen(bundled, RUNNER), "packaged"));
     }
-    let source = std::env::var_os("DELVEOPS_AGENT_DIR")
+    let source = std::env::var_os("DELVEAGENT_DIR")
         .map(PathBuf::from)
         .or_else(|| {
             // Development builds run the agent straight from the repository.
             cfg!(debug_assertions)
                 .then(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../agent-python"))
         })
-        .filter(|dir| dir.join("delveops_agent").is_dir())?;
-    let python = std::env::var_os("DELVEOPS_AGENT_PYTHON")
+        .filter(|dir| dir.join("delveagent").is_dir())?;
+    let python = std::env::var_os("DELVEAGENT_PYTHON")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(if cfg!(windows) { "python" } else { "python3" }));
     let source = std::path::absolute(&source).unwrap_or(source);

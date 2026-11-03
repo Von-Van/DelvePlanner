@@ -1,4 +1,4 @@
-"""Entry point DelvePlanner starts: ``python -m delveops_agent.protocol --runner <runner>``.
+"""Entry point DelvePlanner starts: ``python -m delveagent.protocol --runner <runner>``.
 
 ``<runner>`` is ``module:function`` or ``diagnostic`` (the link's own test runner).
 """
@@ -13,7 +13,7 @@ from typing import Any, BinaryIO
 
 from .link import AgentLink, Runner
 
-BUILTIN_RUNNERS = {"diagnostic": "delveops_agent.protocol.diagnostic:run"}
+BUILTIN_RUNNERS = {"diagnostic": "delveagent.protocol.diagnostic:run"}
 
 
 def load_runner(spec: str) -> Runner:
@@ -50,7 +50,7 @@ def claim_stdio() -> tuple[BinaryIO, BinaryIO]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="delveops-agent")
+    parser = argparse.ArgumentParser(prog="delveagent")
     parser.add_argument("--runner", default="diagnostic")
     args = parser.parse_args(argv)
     # Claimed before the runner is imported, so a module that prints at import time can't put

@@ -1,13 +1,13 @@
 """Runs the A1 agent inside the desktop app, over the sidecar link (overhaul piece I).
 
-The app starts ``python -m delveops_agent.protocol --runner delveops_agent.link_runner:run``. This
+The app starts ``python -m delveagent.protocol --runner delveagent.link_runner:run``. This
 module only adapts: the link's live tool and model clients are wrapped in the interfaces the agent
 already uses (``ToolClient`` and ``ModelClient``), and every trace event the agent records is also
 streamed to the app as it happens, so the Assistant can show the run step by step.
 
 A request that continues a conversation also carries the app's chosen recent turns
 (``conversation``) and a digest of older ones (``conversationSummary``). They are put in front of the
-request the same way the memory wrapper does it (``delveops_agent.memory``), marked as context rather
+request the same way the memory wrapper does it (``delveagent.memory``), marked as context rather
 than instructions.
 
 Nothing here can write planner data. Drafts leave as drafts; the app re-validates them and asks the

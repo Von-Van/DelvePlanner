@@ -318,7 +318,7 @@ class AgentLink:
                     "protocolVersion": wire.PROTOCOL_VERSION,
                     "maxMessageBytes": wire.MAX_MESSAGE_BYTES,
                     "agent": {
-                        "name": "delveops-agent",
+                        "name": "delveagent",
                         "version": self.agent_version,
                         "runner": self.runner_name,
                     },
@@ -345,7 +345,7 @@ class AgentLink:
             if active is not None and message.payload.get("runId") == active.run_id:
                 self._cancel_active(str(message.payload.get("reason") or "cancelled"))
         elif message.type == wire.ERROR:
-            print(f"delveops-agent: the app reported {message.payload!r}", file=sys.stderr)
+            print(f"delveagent: the app reported {message.payload!r}", file=sys.stderr)
 
     def _start_run(self, message: Envelope) -> None:
         with self._state_lock:

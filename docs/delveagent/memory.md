@@ -48,7 +48,7 @@ facts, open problems and preferences) and you can see, correct and delete all of
 | Settings commands          | `src-tauri/src/memory.rs`                                                                |
 | "Remember this?" checks    | `src-tauri/src/assistant/suggestions.rs`, card in `src/MemorySuggestions.tsx`            |
 | Settings panel             | `src/MemorySettings.tsx`, `src/memoryApi.ts`                                             |
-| Agent side                 | `agent-python/delveops_agent/memory/` (conversation window + `get_memory`)               |
+| Agent side                 | `agent-python/delveagent/memory/` (conversation window + `get_memory`)                   |
 | Benchmark copy of the tool | `agent_bench/mock_tools.py` (`tool_get_memory`), kept identical by parity                |
 | Feedback and lessons       | `src-tauri/src/db/feedback.rs`, `src-tauri/src/feedback.rs`, `src/AssistantFeedback.tsx` |
 

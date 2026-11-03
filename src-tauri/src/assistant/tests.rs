@@ -421,7 +421,7 @@ fn only_one_run_at_a_time() {
 // scripted stand-in for Ollama behind the real model broker.
 
 fn python() -> Option<PathBuf> {
-    let candidates: Vec<OsString> = match std::env::var_os("DELVEOPS_PYTHON") {
+    let candidates: Vec<OsString> = match std::env::var_os("DELVEAGENT_TEST_PYTHON") {
         Some(path) => vec![path],
         None => vec!["python3".into(), "python".into()],
     };
@@ -510,7 +510,7 @@ fn read_from(
 #[tokio::test]
 async fn the_python_agent_reads_drafts_and_its_change_applies_through_the_planner() {
     let Some(python) = python() else {
-        eprintln!("skipping: no Python 3.11+ found (set DELVEOPS_PYTHON)");
+        eprintln!("skipping: no Python 3.11+ found (set DELVEAGENT_TEST_PYTHON)");
         return;
     };
     let agent_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../agent-python");

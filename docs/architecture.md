@@ -7,7 +7,7 @@ Delve Planner is a [Tauri 2](https://v2.tauri.app/) desktop app: a React and Typ
 ```mermaid
 flowchart TB
   subgraph renderer["Renderer — React + TypeScript (least trusted)"]
-    Views["Today, Week, Plans, Inbox, People, Calendars,<br/>planning sessions, What Delve Planner knows, Settings"]
+    Views["Assistant, Schedule (Today and Week), Projects, Inbox,<br/>People, Calendars, planning sessions, What Delve Planner knows,<br/>Model & Evaluation, Settings"]
     Pure["Pure planning helpers<br/>planning.ts · calendars.ts · proposals.ts · date.ts"]
     Client["api.ts — typed command client + strict Zod parsing"]
   end
@@ -77,12 +77,12 @@ The quick-capture shortcut, when one is recorded, is registered with the operati
 
 ### Background work
 
-| Worker                | Interval   | Job                                                                                                                                                                         |
-| --------------------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `reminder_worker`     | 15 seconds | Reconciles the reminder outbox and delivers due notifications                                                                                                               |
-| `calendar_worker`     | 60 seconds | Refreshes due calendars one at a time, re-windows at midnight, and emits `calendars-changed` when anything changed                                                          |
-| `runtime_idle_worker` | 30 seconds | Stops the Ollama server after five minutes without a planner request                                                                                                        |
-| `heads_up_worker`     | 5 minutes  | Runs the [heads-up](delveops/heads-ups.md) rules, emits `heads-ups-changed` when what's shown changed, and sends at most two urgent notifications a day outside quiet hours |
+| Worker                | Interval   | Job                                                                                                                                                                           |
+| --------------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `reminder_worker`     | 15 seconds | Reconciles the reminder outbox and delivers due notifications                                                                                                                 |
+| `calendar_worker`     | 60 seconds | Refreshes due calendars one at a time, re-windows at midnight, and emits `calendars-changed` when anything changed                                                            |
+| `runtime_idle_worker` | 30 seconds | Stops the Ollama server after five minutes without a planner request                                                                                                          |
+| `heads_up_worker`     | 5 minutes  | Runs the [heads-up](delveagent/heads-ups.md) rules, emits `heads-ups-changed` when what's shown changed, and sends at most two urgent notifications a day outside quiet hours |
 
 Closing the window hides it to the tray (so reminders keep working) and releases the model from memory. **Quit Delve Planner** exits, and the exit hook stops the Ollama server and its model runner.
 
@@ -132,7 +132,7 @@ Closing the window hides it to the tray (so reminders keep working) and releases
 | [`shortcuts.ts`](../src/shortcuts.ts), [`openTasks.ts`](../src/openTasks.ts)                                                                                                         | Recording and showing keyboard shortcuts; the open tasks that waits refer to                                                                      |
 | [`styles.css`](../src/styles.css), [`Geometry.tsx`](../src/Geometry.tsx)                                                                                                             | The visual design; icons drawn as CSS geometry instead of an icon library                                                                         |
 
-Keyboard shortcuts (⌘ on macOS, Ctrl on Windows): ⌘1 Today, ⌘2 Week, ⌘3 Plans, ⌘4 People, ⌘5 Inbox, ⌘6 Calendars, ⌘7 What Delve Planner knows, ⌘I quick capture, ⌘N a new task for the day, week, or plan in view, ⇧⌘N a new plan, ⌘← and ⌘→ the previous or next day (week in Week), ⌘↩ to save an editor or send a planner request, and ⌘, for Settings. The system-wide quick-capture shortcut is separate: the user records it in Settings.
+Keyboard shortcuts (⌘ on macOS, Ctrl on Windows): ⌘1 Assistant, ⌘2 Schedule (Today or Week, whichever was open last), ⌘3 Projects, ⌘4 People, ⌘5 Inbox, ⌘6 Calendars, ⌘7 What Delve Planner knows, ⌘I quick capture, ⌘N a new task for the day, week, or plan in view, ⇧⌘N a new plan, ⌘← and ⌘→ the previous or next day (week in Week), ⌘↩ to save an editor or send a request to the planner or the Assistant, and ⌘, for Settings. The system-wide quick-capture shortcut is separate: the user records it in Settings.
 
 ## State
 

@@ -1,6 +1,6 @@
 """Run the A1 agent once against fixture tool responses and a local Ollama model.
 
-    python -m delveops_agent.cli examples/overdue_tasks.json --model qwen3:8b --port 11434
+    python -m delveagent.cli examples/overdue_tasks.json --model qwen3:8b --port 11434
 
 The fixture holds the task, an optional budget, and canned responses for each tool (an
 `{"error": {...}}` object makes that tool fail). The result, including the trace, is printed as JSON.
