@@ -12,8 +12,15 @@ at the same time, free focus time, an overbooked day, work that keeps slipping, 
     assistant as a new conversation. The assistant reads the current planner data itself and drafts changes for
     your approval, as with anything you type;
   - **Not now** hides it until tomorrow's working hours start, and it comes back only if it is still true;
-  - **Dismiss** means don't show it again. The same heads-up (the same task and due date, the same clash, the same
-    day) is never brought up again.
+  - **Dismiss…** means don't show it again. The same heads-up (the same task and due date, the same clash, the same
+    day) is never brought up again. While dismissing you can also, both optionally:
+    - tick **Stop showing …** to stop that whole kind (for example all quiet-project heads-ups). The rules keep
+      running, but nothing they find of a stopped kind is stored or shown. **Settings → Heads-ups** lists every kind
+      and turns it back on, and then whatever is true of it comes up on the next check;
+    - say **why it isn't useful**. The reason is kept as feedback on the heads-up and offered back as a lesson,
+      exactly like feedback on a reply ([memory](memory.md)): **Remember for next time** stores it as something you
+      said, which the assistant then follows whenever it plans or answers (`get_preferences` lists it); **Just this
+      once** keeps nothing. A lesson doesn't change which heads-ups the fixed rules find; stopping a kind does.
 - A heads-up that stops being true clears by itself: plan time for the task, move the clash, and it is gone on the
   next check.
 - Urgent ones (a deadline today or tomorrow, a clash today) may also send a system notification: at most two a day,
@@ -52,7 +59,7 @@ unfinished work and tasks due today are still shown by the Assistant home's exis
 
 ## Storage
 
-`agent_suggestion` and `heads_up_settings` (schema 12) sit with the other [agent storage](../data-model.md#agent-storage)
+`agent_suggestion` and `heads_up_settings` (schema 12), and `heads_up_muted_kind` (schema 14) sit with the other [agent storage](../data-model.md#agent-storage)
 tables: not planner data, never exported, left alone by imports, and never written by the model.
 
 ## Tests
@@ -60,4 +67,6 @@ tables: not planner data, never exported, left alone by imports, and never writt
 `src-tauri/src/heads_up/tests.rs` checks the rules at fixed moments (clock-advance fixtures): a quiet week brings up
 nothing, a near deadline names the free time and clears once planned, a dismissed heads-up never returns, a
 snoozed one returns, an overloaded week names the worst day, clashes need one of our own items, focus time needs
-important work and working hours, the daily and notification limits hold, and turning heads-ups off stops checks.
+important work and working hours, the daily and notification limits hold, and turning heads-ups off stops checks, a stopped
+kind stays hidden until turned back on (and the dismissed one stays dismissed), and a reason on a dismissal becomes
+feedback whose lesson is stored only on **Remember**, while a refused reason leaves the heads-up showing.

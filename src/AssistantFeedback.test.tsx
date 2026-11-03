@@ -17,6 +17,7 @@ function feedback(overrides: Partial<Feedback> = {}): Feedback {
   return {
     id: "f1",
     runId: "run-1",
+    suggestionId: null,
     target: "change",
     about: "Review lease · Thu 4:30 pm",
     rating: "not_helpful",

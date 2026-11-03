@@ -603,6 +603,7 @@ fn turning_heads_ups_off_clears_them_and_stops_checks() {
             HeadsUpSettings {
                 enabled: false,
                 notify: true,
+                muted_kinds: Vec::new(),
             },
             thursday(9, 5),
         )
@@ -660,7 +661,8 @@ fn schema_eleven_gains_heads_ups_with_defaults() {
         migrated.heads_up_settings().unwrap(),
         HeadsUpSettings {
             enabled: true,
-            notify: true
+            notify: true,
+            muted_kinds: Vec::new(),
         }
     );
     assert!(migrated.all_heads_ups().unwrap().is_empty());
@@ -731,4 +733,233 @@ fn a_snooze_lasts_past_midnight_when_a_deadline_turns_overdue() {
     assert_eq!(back.len(), 1);
     assert_eq!(back[0].id, shown[0].id);
     assert_eq!(back[0].title, "“Venue deposit” was due yesterday");
+}
+
+// ---------------------------------------------------------------------------------------------
+// "Not useful": stopping a kind, and the reason as feedback
+
+fn quiet_projects(database: &PlannerDatabase, now: DateTime<Utc>) -> Vec<NewHeadsUp> {
+    let mut facts = collect(database, &NoCalendars, now, zone()).unwrap();
+    facts.quiet_plans = ["Charity Week", "Garden"]
+        .iter()
+        .enumerate()
+        .map(|(index, title)| QuietPlan {
+            plan_id: format!("p{index}"),
+            title: (*title).into(),
+            open_tasks: 2,
+            last_activity: now - Duration::days(30 - index as i64),
+        })
+        .collect();
+    detect(&facts)
+}
+
+fn shown_after(
+    database: &mut PlannerDatabase,
+    found: &[NewHeadsUp],
+    now: DateTime<Utc>,
+) -> Vec<HeadsUp> {
+    database
+        .record_heads_ups(found, now, day_start(now, zone()))
+        .unwrap();
+    database.active_heads_ups(now, MAX_SHOWN_HEADS_UPS).unwrap()
+}
+
+#[test]
+fn stopping_a_kind_hides_it_until_it_is_turned_back_on() {
+    let (_dir, mut database) = database();
+    add_task(
+        &mut database,
+        NewTask {
+            title: "Venue deposit",
+            due: Some("2026-11-06"),
+            ..NewTask::default()
+        },
+    );
+    let mut found = quiet_projects(&database, thursday(9, 0));
+    found.extend(detect(
+        &collect(&database, &NoCalendars, thursday(9, 0), zone()).unwrap(),
+    ));
+    let shown = shown_after(&mut database, &found, thursday(9, 0));
+    let quiet = shown
+        .iter()
+        .find(|h| h.kind == HeadsUpKind::QuietProject)
+        .unwrap();
+    assert_eq!(quiet.title, "“Charity Week” has gone quiet");
+
+    let dismissed = database
+        .dismiss_heads_up_because(
+            &quiet.id,
+            HeadsUpDismissal {
+                stop_kind: true,
+                reason: None,
+            },
+            thursday(9, 1),
+        )
+        .unwrap();
+    assert_eq!(dismissed.muted_kind, Some(HeadsUpKind::QuietProject));
+    assert_eq!(dismissed.heads_up.status, HeadsUpStatus::Dismissed);
+    assert!(dismissed.feedback.is_none());
+    assert_eq!(
+        database.heads_up_settings().unwrap().muted_kinds,
+        [HeadsUpKind::QuietProject]
+    );
+
+    // Garden would be next, but the kind is stopped; the deadline still shows.
+    let kinds: Vec<HeadsUpKind> = shown_after(&mut database, &found, thursday(9, 5))
+        .iter()
+        .map(|h| h.kind)
+        .collect();
+    assert_eq!(kinds, [HeadsUpKind::Deadline]);
+
+    // Turned back on in Settings: whatever is true now comes back, the dismissed one doesn't.
+    let mut settings = database.heads_up_settings().unwrap();
+    settings.muted_kinds.clear();
+    database
+        .update_heads_up_settings(settings, thursday(9, 10))
+        .unwrap();
+    let back = shown_after(&mut database, &found, thursday(9, 15));
+    let quiet: Vec<&str> = back
+        .iter()
+        .filter(|h| h.kind == HeadsUpKind::QuietProject)
+        .map(|h| h.title.as_str())
+        .collect();
+    assert_eq!(quiet, ["“Garden” has gone quiet"]);
+}
+
+#[test]
+fn stopping_a_kind_in_settings_clears_what_is_showing() {
+    let (_dir, mut database) = database();
+    add_task(
+        &mut database,
+        NewTask {
+            title: "Venue deposit",
+            due: Some("2026-11-06"),
+            ..NewTask::default()
+        },
+    );
+    assert_eq!(check(&mut database, thursday(9, 0)).len(), 1);
+    database
+        .update_heads_up_settings(
+            HeadsUpSettings {
+                enabled: true,
+                notify: true,
+                muted_kinds: vec![HeadsUpKind::Deadline, HeadsUpKind::Clash],
+            },
+            thursday(9, 5),
+        )
+        .unwrap();
+    assert!(database
+        .active_heads_ups(thursday(9, 5), MAX_SHOWN_HEADS_UPS)
+        .unwrap()
+        .is_empty());
+    assert!(check(&mut database, thursday(9, 10)).is_empty());
+    // Listed in the rules' order, whatever order they were given in.
+    assert_eq!(
+        database.heads_up_settings().unwrap().muted_kinds,
+        [HeadsUpKind::Deadline, HeadsUpKind::Clash]
+    );
+}
+
+#[test]
+fn a_reason_becomes_feedback_and_can_be_kept_as_a_lesson() {
+    let (_dir, mut database) = database();
+    let found = quiet_projects(&database, thursday(9, 0));
+    let shown = shown_after(&mut database, &found, thursday(9, 0));
+    let dismissed = database
+        .dismiss_heads_up_because(
+            &shown[0].id,
+            HeadsUpDismissal {
+                stop_kind: false,
+                reason: Some("  because Charity Week is paused until spring ".into()),
+            },
+            thursday(9, 1),
+        )
+        .unwrap();
+    assert_eq!(dismissed.muted_kind, None);
+    let feedback = dismissed.feedback.unwrap();
+    assert_eq!(feedback.target, crate::db::FeedbackTarget::Suggestion);
+    assert_eq!(
+        feedback.suggestion_id.as_deref(),
+        Some(shown[0].id.as_str())
+    );
+    assert_eq!(feedback.run_id, None);
+    assert_eq!(feedback.scope, crate::db::FeedbackScope::Pending);
+    assert_eq!(
+        feedback.about.as_deref(),
+        Some("“Charity Week” has gone quiet")
+    );
+    assert_eq!(
+        feedback.reason.as_deref(),
+        Some("because Charity Week is paused until spring")
+    );
+    let lesson = crate::db::propose_lesson(feedback.reason.as_deref().unwrap()).unwrap();
+    assert_eq!(lesson.content, "Charity Week is paused until spring.");
+
+    let kept = database
+        .learn_from_feedback(&feedback.id, lesson.kind, &lesson.content)
+        .unwrap();
+    let memory = database
+        .memory_record(kept.memory_id.as_deref().unwrap())
+        .unwrap();
+    assert_eq!(memory.content, "Charity Week is paused until spring.");
+    assert!(memory
+        .source_ref
+        .as_deref()
+        .unwrap()
+        .ends_with(&format!("on heads-up {}", shown[0].id)));
+    // The kind isn't stopped: the next quiet project still comes through.
+    assert_eq!(
+        shown_after(&mut database, &found, thursday(9, 5))[0].title,
+        "“Garden” has gone quiet"
+    );
+}
+
+#[test]
+fn a_refused_reason_leaves_the_heads_up_showing() {
+    let (_dir, mut database) = database();
+    let found = quiet_projects(&database, thursday(9, 0));
+    let shown = shown_after(&mut database, &found, thursday(9, 0));
+    let too_long = "x".repeat(crate::db::MAX_FEEDBACK_REASON_CHARS + 1);
+    assert!(database
+        .dismiss_heads_up_because(
+            &shown[0].id,
+            HeadsUpDismissal {
+                stop_kind: true,
+                reason: Some(too_long),
+            },
+            thursday(9, 1),
+        )
+        .is_err());
+    let still = database
+        .active_heads_ups(thursday(9, 2), MAX_SHOWN_HEADS_UPS)
+        .unwrap();
+    assert_eq!(still[0].id, shown[0].id);
+    assert!(database.heads_up_settings().unwrap().muted_kinds.is_empty());
+    // A blank reason is no reason: a plain dismissal, no feedback.
+    let plain = database
+        .dismiss_heads_up_because(
+            &shown[0].id,
+            HeadsUpDismissal {
+                stop_kind: false,
+                reason: Some("   ".into()),
+            },
+            thursday(9, 3),
+        )
+        .unwrap();
+    assert!(plain.feedback.is_none());
+}
+
+#[test]
+fn schema_thirteen_gains_stopped_kinds() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("dayplan.sqlite3");
+    drop(PlannerDatabase::open(&path).unwrap());
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    connection
+        .execute_batch("DROP TABLE heads_up_muted_kind; PRAGMA user_version = 13;")
+        .unwrap();
+    drop(connection);
+    let migrated = PlannerDatabase::open(&path).unwrap();
+    assert_eq!(migrated.schema_version().unwrap(), 14);
+    assert!(migrated.heads_up_settings().unwrap().muted_kinds.is_empty());
 }

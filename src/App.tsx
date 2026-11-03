@@ -1264,6 +1264,8 @@ export default function App() {
               inboxCount={inbox.length}
               onAttention={followAttention}
               onHeadsUp={(id, choice) => void chooseHeadsUp(id, choice)}
+              onHeadsUpDismissed={() => void refreshHeadsUps(false)}
+              onMessage={setError}
               onOpenSchedule={() => navigate({ kind: scheduleView })}
               onOpenProjects={() =>
                 navigate({ kind: "plans", archived: false })

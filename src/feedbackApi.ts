@@ -22,6 +22,8 @@ export const lessonKinds: MemoryKind[] = [
 export const feedbackSchema = z.object({
   id: z.string().min(1),
   runId: z.string().nullable(),
+  /** Set instead of runId for feedback on a heads-up. */
+  suggestionId: z.string().nullable(),
   target: z.enum(["answer", "change", "suggestion"]),
   about: z.string().nullable(),
   rating: z.enum(["helpful", "not_helpful"]),

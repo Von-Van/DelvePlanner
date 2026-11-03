@@ -244,7 +244,7 @@ A **task** is work that needs doing, kept separate from a **schedule event** (a 
 
 ## Agent storage
 
-The assistant's own records sit in the planner database next to planner data, but they are not planner data: exports leave them out, imports leave them alone, and every record can be deleted. The model never writes any of them; the app records them as the assistant works. Tables come from [`db/agent.rs`](../src-tauri/src/db/agent.rs) (schema 9), [`db/conversation.rs`](../src-tauri/src/db/conversation.rs) (schema 11), [`db/heads_up.rs`](../src-tauri/src/db/heads_up.rs) (schema 12), and [`db/feedback.rs`](../src-tauri/src/db/feedback.rs) (schema 13).
+The assistant's own records sit in the planner database next to planner data, but they are not planner data: exports leave them out, imports leave them alone, and every record can be deleted. The model never writes any of them; the app records them as the assistant works. Tables come from [`db/agent.rs`](../src-tauri/src/db/agent.rs) (schema 9), [`db/conversation.rs`](../src-tauri/src/db/conversation.rs) (schema 11), [`db/heads_up.rs`](../src-tauri/src/db/heads_up.rs) (schemas 12 and 14), and [`db/feedback.rs`](../src-tauri/src/db/feedback.rs) (schema 13).
 
 ```mermaid
 erDiagram
@@ -268,7 +268,8 @@ erDiagram
 | `agent_message`       | One message in a conversation, from the person or the assistant, numbered in order. An assistant message can point at the run that produced it and says how that run ended                                                                     |
 | `agent_suggestion`    | One [heads-up](delveagent/heads-ups.md) the assistant brought up: what kind, its wording and facts, what it is about, the request its action sends, a dedupe key, and whether it is showing, snoozed, dismissed, acted on, cleared, or expired |
 | `heads_up_settings`   | One record: whether heads-ups are on, and whether urgent ones may send a system notification                                                                                                                                                   |
-| `agent_feedback`      | "Helpful" or "not helpful because …" on one assistant reply, about the whole answer or one proposed change, and whether the lesson was kept: `pending`, `this_time`, or `lasting` (with the memory it became)                                  |
+| `heads_up_muted_kind` | Kinds of heads-up the person stopped (from **Dismiss…** or Settings); what the rules find of them is never stored                                                                                                                              |
+| `agent_feedback`      | "Helpful" or "not helpful because …" on one assistant reply (the whole answer or one proposed change) or on a dismissed heads-up, and whether the lesson was kept: `pending`, `this_time`, or `lasting` (with the memory it became)            |
 
 - **Retention.** The newest 500 live runs are kept; older finished runs are forgotten. A message whose run was forgotten keeps its text and loses only the link. Benchmark runs are kept until their experiment is deleted. Conversations are kept until the person deletes them.
 - **Deleting.** Deleting a conversation deletes its messages and the runs it started, with their traces, drafts, and results, so nothing typed in it is left behind. **Clear agent history** removes every conversation, run, and experiment.
@@ -286,7 +287,7 @@ erDiagram
 
 ## Schema versions and migrations
 
-The planner database schema is version 13 (`CURRENT_SCHEMA_VERSION` in [`db.rs`](../src-tauri/src/db.rs), stored in SQLite's `user_version`). Opening an older database checkpoints it, copies it to `backups/`, and migrates it in one transaction; a newer, unknown version is refused rather than guessed at. Each step is covered by a test that migrates a database from the previous shape.
+The planner database schema is version 14 (`CURRENT_SCHEMA_VERSION` in [`db.rs`](../src-tauri/src/db.rs), stored in SQLite's `user_version`). Opening an older database checkpoints it, copies it to `backups/`, and migrates it in one transaction; a newer, unknown version is refused rather than guessed at. Each step is covered by a test that migrates a database from the previous shape.
 
 | Schema | Adds                                                                                                                                                           |
 | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -303,6 +304,7 @@ The planner database schema is version 13 (`CURRENT_SCHEMA_VERSION` in [`db.rs`]
 | 11     | Assistant conversations: `agent_thread` and `agent_message`                                                                                                    |
 | 12     | Heads-ups: `agent_suggestion` and `heads_up_settings` (see [heads-ups](delveagent/heads-ups.md))                                                               |
 | 13     | Feedback on assistant replies: `agent_feedback`                                                                                                                |
+| 14     | Stopped heads-up kinds: `heads_up_muted_kind`                                                                                                                  |
 
 The calendar cache has its own, independent version (`STORE_VERSION` in [`calendar/store.rs`](../src-tauri/src/calendar/store.rs)).
 

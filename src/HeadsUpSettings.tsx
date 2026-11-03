@@ -1,10 +1,16 @@
 import { useEffect, useState } from "react";
-import { HeadsUpSettings as Settings, headsUpApi } from "./headsUpApi";
+import {
+  HeadsUpSettings as Settings,
+  headsUpApi,
+  headsUpKindLabels,
+  headsUpKinds,
+} from "./headsUpApi";
 import "./MemorySettings.css";
 
 /**
- * Settings → Heads-ups: whether the assistant brings things up before it is asked, and whether an
- * urgent one may also send a system notification.
+ * Settings → Heads-ups: whether the assistant brings things up before it is asked, which kinds it
+ * brings up (a kind stopped from "Dismiss…" can be turned back on here), and whether an urgent one
+ * may also send a system notification.
  */
 export function HeadsUpSettings({
   onMessage,
@@ -56,6 +62,29 @@ export function HeadsUpSettings({
           </small>
         </span>
       </label>
+      <fieldset className="heads-up-kinds" disabled={busy || !settings.enabled}>
+        <legend>Bring up</legend>
+        {headsUpKinds.map((kind) => {
+          const on = !settings.mutedKinds.includes(kind);
+          return (
+            <label key={kind} className="heads-up-kind">
+              <input
+                type="checkbox"
+                checked={on}
+                onChange={(input) =>
+                  void save({
+                    ...settings,
+                    mutedKinds: input.target.checked
+                      ? settings.mutedKinds.filter((k) => k !== kind)
+                      : [...settings.mutedKinds, kind],
+                  })
+                }
+              />
+              <span>{capitalize(headsUpKindLabels[kind])}</span>
+            </label>
+          );
+        })}
+      </fieldset>
       <label className="memory-toggle">
         <input
           type="checkbox"
@@ -75,4 +104,8 @@ export function HeadsUpSettings({
       </label>
     </div>
   );
+}
+
+function capitalize(text: string) {
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }
