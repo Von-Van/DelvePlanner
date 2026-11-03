@@ -1367,6 +1367,7 @@ export default function App() {
                   open={assistantOpen}
                   onOpenTaken={() => setAssistantOpen(null)}
                   onStarted={activity.started}
+                  onEnded={(runKey) => void activity.ended(runKey)}
                   onRunsChange={activity.report}
                   onChanged={dataChanged}
                   onMessage={setError}

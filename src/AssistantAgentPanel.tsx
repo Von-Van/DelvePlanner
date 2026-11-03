@@ -56,6 +56,7 @@ export function AssistantAgentPanel({
   open,
   onOpenTaken,
   onStarted,
+  onEnded,
   onRunsChange,
   onChanged,
   onMessage,
@@ -77,6 +78,8 @@ export function AssistantAgentPanel({
   onOpenTaken?: () => void;
   /** Called as a request starts, so the rest of the app can show it as working. */
   onStarted?: (runKey: string, request: string) => void;
+  /** Called when a request is over, however it ended, even if it never produced a run. */
+  onEnded?: (runKey: string) => void;
   /** Called with this session's runs whenever they change, so other screens stay current. */
   onRunsChange?: (runs: AgentRun[]) => void;
   /** Called after applied changes, so the rest of the app reloads. */
@@ -186,12 +189,20 @@ export function AssistantAgentPanel({
     // runRequest reads the latest state when it is called; only a new key should start a run.
   }, [ask?.key, running]);
 
-  // A requested run opens once per key, once this session's runs have loaded.
+  // A requested run opens once per key, once this session's runs have loaded. One that finished
+  // elsewhere after these runs loaded (a task started on the board) is fetched once.
   const handledOpen = useRef<number | null>(null);
+  const fetchedForOpen = useRef<number | null>(null);
   useEffect(() => {
     if (!open || handledOpen.current === open.key || running) return;
     const run = runs.find((item) => item.runKey === open.runKey);
-    if (!run) return;
+    if (!run) {
+      if (runsLoaded.current && fetchedForOpen.current !== open.key) {
+        fetchedForOpen.current = open.key;
+        void refreshRuns();
+      }
+      return;
+    }
     handledOpen.current = open.key;
     onOpenTaken?.();
     setThreadId(run.threadId);
@@ -244,6 +255,7 @@ export function AssistantAgentPanel({
     } finally {
       setLive(null);
       setCancelling(false);
+      onEnded?.(key);
     }
   }
 
